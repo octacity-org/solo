@@ -10,12 +10,15 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
+#[cfg(feature = "automation")]
+use std::time::Duration;
 
+use gpui::{canvas, px, Bounds, IntoElement, Pixels, Styled};
+#[cfg(feature = "automation")]
 use gpui::{
-    canvas, point, px, App, Bounds, InputEvent, IntoElement, KeyDownEvent, KeyUpEvent, Keystroke,
-    Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, ScrollDelta,
-    ScrollWheelEvent, Styled, TouchPhase, Window,
+    point, App, InputEvent, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ScrollDelta, ScrollWheelEvent, TouchPhase, Window,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -65,6 +68,7 @@ pub fn get_bounds(id: u64) -> Option<ElementBounds> {
     BOUNDS.with(|cell| cell.borrow().get(&id).copied())
 }
 
+#[cfg(feature = "automation")]
 pub fn all_bounds() -> HashMap<u64, ElementBounds> {
     BOUNDS.with(|cell| cell.borrow().clone())
 }
@@ -82,6 +86,7 @@ pub fn bounds_tracker(id: u64) -> impl IntoElement {
 
 enum ClockMode {
     Live,
+    #[cfg(feature = "automation")]
     Frozen { now: Instant },
 }
 
@@ -115,6 +120,7 @@ impl AutomationClock {
         let inner = self.inner.lock().unwrap();
         match inner.mode {
             ClockMode::Live => Instant::now(),
+            #[cfg(feature = "automation")]
             ClockMode::Frozen { now } => now,
         }
     }
@@ -128,6 +134,7 @@ impl AutomationClock {
             * 1000.0
     }
 
+    #[cfg(feature = "automation")]
     pub fn pause(&self) -> f64 {
         let mut inner = self.inner.lock().unwrap();
         let now = current_instant(&inner);
@@ -135,6 +142,7 @@ impl AutomationClock {
         now.saturating_duration_since(inner.origin).as_secs_f64() * 1000.0
     }
 
+    #[cfg(feature = "automation")]
     pub fn set_ms(&self, now_ms: f64) -> f64 {
         let mut inner = self.inner.lock().unwrap();
         let now = inner.origin + duration_ms(now_ms);
@@ -142,6 +150,7 @@ impl AutomationClock {
         now_ms
     }
 
+    #[cfg(feature = "automation")]
     pub fn fast_forward_ms(&self, delta_ms: f64) -> f64 {
         let mut inner = self.inner.lock().unwrap();
         let now = current_instant(&inner) + duration_ms(delta_ms);
@@ -149,6 +158,7 @@ impl AutomationClock {
         now.saturating_duration_since(inner.origin).as_secs_f64() * 1000.0
     }
 
+    #[cfg(feature = "automation")]
     pub fn resume(&self) -> f64 {
         let mut inner = self.inner.lock().unwrap();
         let elapsed = current_instant(&inner).saturating_duration_since(inner.origin);
@@ -161,14 +171,17 @@ impl AutomationClock {
 fn current_instant(inner: &ClockInner) -> Instant {
     match inner.mode {
         ClockMode::Live => Instant::now(),
+        #[cfg(feature = "automation")]
         ClockMode::Frozen { now } => now,
     }
 }
 
+#[cfg(feature = "automation")]
 fn duration_ms(ms: f64) -> Duration {
     Duration::from_secs_f64((ms / 1000.0).max(0.0))
 }
 
+#[cfg(feature = "automation")]
 pub fn mouse_button(button: u32) -> MouseButton {
     match button {
         1 => MouseButton::Middle,
@@ -177,6 +190,7 @@ pub fn mouse_button(button: u32) -> MouseButton {
     }
 }
 
+#[cfg(feature = "automation")]
 pub fn dispatch_click(window: &mut Window, cx: &mut App, x: f64, y: f64, button: u32) {
     let position = point(px(x as f32), px(y as f32));
     let button = mouse_button(button);
@@ -203,6 +217,7 @@ pub fn dispatch_click(window: &mut Window, cx: &mut App, x: f64, y: f64, button:
     );
 }
 
+#[cfg(feature = "automation")]
 pub fn dispatch_mouse_down(window: &mut Window, cx: &mut App, x: f64, y: f64, button: u32) {
     window.dispatch_event(
         MouseDownEvent {
@@ -217,6 +232,7 @@ pub fn dispatch_mouse_down(window: &mut Window, cx: &mut App, x: f64, y: f64, bu
     );
 }
 
+#[cfg(feature = "automation")]
 pub fn dispatch_mouse_up(window: &mut Window, cx: &mut App, x: f64, y: f64, button: u32) {
     window.dispatch_event(
         MouseUpEvent {
@@ -231,6 +247,7 @@ pub fn dispatch_mouse_up(window: &mut Window, cx: &mut App, x: f64, y: f64, butt
 }
 
 /// delta_x/delta_y are in pixels; negative moves up/left.
+#[cfg(feature = "automation")]
 pub fn dispatch_scroll_wheel(
     window: &mut Window,
     cx: &mut App,
@@ -251,6 +268,7 @@ pub fn dispatch_scroll_wheel(
     );
 }
 
+#[cfg(feature = "automation")]
 pub fn dispatch_mouse_move(
     window: &mut Window,
     cx: &mut App,
@@ -275,6 +293,7 @@ pub fn dispatch_mouse_move(
 ///
 /// Returns a human-readable message on failure: `Keystroke::parse` owns the
 /// grammar and its error carries no detail beyond the offending string.
+#[cfg(feature = "automation")]
 pub fn parse_keystroke(keystroke: &str) -> Result<Keystroke, String> {
     Keystroke::parse(keystroke)
         .map_err(|error| format!("Invalid keystroke '{keystroke}': {error}"))
@@ -284,6 +303,7 @@ pub fn parse_keystroke(keystroke: &str) -> Result<Keystroke, String> {
 ///
 /// Mirrors gpui's own `VisualTestAppContext::simulate_keystrokes` grammar.
 /// Empty tokens are dropped so a trailing or repeated space is not an error.
+#[cfg(feature = "automation")]
 pub fn parse_keystrokes(keystrokes: &str) -> Result<Vec<Keystroke>, String> {
     keystrokes
         .split(' ')
@@ -303,6 +323,7 @@ pub fn parse_keystrokes(keystrokes: &str) -> Result<Vec<Keystroke>, String> {
 ///
 /// Modifier keys (`cmd-a`, `backspace`) have no `key_char`, so they fall
 /// through to gpui's key bindings and run as actions instead.
+#[cfg(feature = "automation")]
 pub fn dispatch_keystrokes(window: &mut Window, cx: &mut App, keystrokes: &[Keystroke]) {
     for keystroke in keystrokes {
         window.dispatch_keystroke(keystroke.clone(), cx);
@@ -315,6 +336,7 @@ pub fn dispatch_keystrokes(window: &mut Window, cx: &mut App, keystrokes: &[Keys
 /// Deliberately does **not** go through `dispatch_keystroke`, so it never
 /// inserts text — matching `TestSoloRenderer::simulate_key_down`. Use
 /// [`dispatch_keystrokes`] to type; use this to observe key events.
+#[cfg(feature = "automation")]
 pub fn dispatch_key_down(
     window: &mut Window,
     cx: &mut App,
@@ -332,6 +354,7 @@ pub fn dispatch_key_down(
     );
 }
 
+#[cfg(feature = "automation")]
 pub fn dispatch_key_up(window: &mut Window, cx: &mut App, keystroke: &Keystroke) {
     window.dispatch_event(
         KeyUpEvent {
@@ -342,7 +365,7 @@ pub fn dispatch_key_up(window: &mut Window, cx: &mut App, keystroke: &Keystroke)
     );
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "automation"))]
 mod tests {
     use super::*;
 

@@ -40,6 +40,7 @@ struct RegEntry {
 
 thread_local! {
     static REGISTRY: RefCell<Vec<RegEntry>> = const { RefCell::new(Vec::new()) };
+    #[cfg(feature = "automation")]
     /// Every string painted this frame, selectable or not, in paint order.
     ///
     /// Native elements draw their text inside gpui, so it never appears in the
@@ -57,6 +58,7 @@ pub fn selection_frame_reset(selection: SharedSelection) -> impl IntoElement {
         |_, _, _| (),
         move |_, _, window, _| {
             REGISTRY.with(|r| r.borrow_mut().clear());
+            #[cfg(feature = "automation")]
             PAINTED.with(|p| p.borrow_mut().clear());
             register_copy_listener(window, &selection);
         },
@@ -67,13 +69,17 @@ pub fn selection_frame_reset(selection: SharedSelection) -> impl IntoElement {
 }
 
 /// Every string painted in the last frame, in paint order. Test-facing.
+#[cfg(feature = "automation")]
 pub fn painted_text() -> Vec<String> {
     PAINTED.with(|p| p.borrow().iter().map(|s| s.to_string()).collect())
 }
 
 /// Record text painted by a custom element that owns its text layout.
 pub fn log_painted_text(text: SharedString) {
+    #[cfg(feature = "automation")]
     PAINTED.with(|painted| painted.borrow_mut().push(text));
+    #[cfg(not(feature = "automation"))]
+    let _ = text;
 }
 
 /// Text that is deliberately NOT selectable: line-number gutters, language
@@ -84,14 +90,19 @@ pub fn chrome_text(text: SharedString, runs: Option<Vec<TextRun>>) -> gpui::AnyE
         Some(runs) => StyledText::new(text.clone()).with_runs(runs),
         None => StyledText::new(text.clone()),
     };
-    let log = canvas(
-        |_, _, _| (),
-        move |_, _, _, _| PAINTED.with(|p| p.borrow_mut().push(text.clone())),
-    )
-    .absolute()
-    .w(px(0.0))
-    .h(px(0.0));
-    div().relative().child(log).child(styled).into_any_element()
+    #[cfg(feature = "automation")]
+    {
+        let log = canvas(
+            |_, _, _| (),
+            move |_, _, _, _| PAINTED.with(|p| p.borrow_mut().push(text.clone())),
+        )
+        .absolute()
+        .w(px(0.0))
+        .h(px(0.0));
+        return div().relative().child(log).child(styled).into_any_element();
+    }
+    #[cfg(not(feature = "automation"))]
+    styled.into_any_element()
 }
 
 /// Selection key for an element. `sub` distinguishes multiple text runs painted
@@ -199,6 +210,7 @@ pub fn selectable_text(opts: SelectableText) -> gpui::AnyElement {
                 });
                 register_listeners(window, &key, &text, &layout, &selection);
             }
+            #[cfg(feature = "automation")]
             PAINTED.with(|p| p.borrow_mut().push(text.clone()));
             if let Some(on_link) = &on_link {
                 register_link_listener(window, &layout, &links, on_link, &selection);

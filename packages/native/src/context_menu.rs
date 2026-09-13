@@ -93,6 +93,7 @@ pub(crate) fn cancel_destroyed(ids: &[u64]) {
 }
 
 /// Automation follows the native menu's keyboard focus while it is tracking.
+#[cfg(feature = "automation")]
 pub(crate) fn dispatch_keys(keys: &[gpui::Keystroke]) -> bool {
     ACTIVE.with(|cell| {
         let active = cell.borrow();

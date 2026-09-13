@@ -13,6 +13,8 @@ pub mod runs;
 pub mod selection;
 
 pub use paint::{
-    chrome_text, log_painted_text, painted_text, range_rects, selectable_text,
-    selection_frame_reset, selection_key, SelectableText, SharedSelection,
+    chrome_text, log_painted_text, range_rects, selectable_text, selection_frame_reset,
+    selection_key, SelectableText, SharedSelection,
 };
+#[cfg(feature = "automation")]
+pub use paint::painted_text;

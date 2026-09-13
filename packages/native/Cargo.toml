@@ -24,24 +24,24 @@ url = "2"
 # All three crates must use the same repo + rev so Cargo resolves one graph.
 # The fork exists solely for gpui_macos's embedded macOS event loop; see
 # docs/gpui-dependency.md.
-gpui = { git = "https://github.com/remorses/zed", rev = "db0820f6756b9d789707a3de01cee72ff5251941", default-features = false, features = ["font-kit", "profiler"] }
+gpui = { git = "https://github.com/remorses/zed", rev = "db0820f6756b9d789707a3de01cee72ff5251941", default-features = false, features = ["font-kit"] }
 gpui_platform = { git = "https://github.com/remorses/zed", rev = "db0820f6756b9d789707a3de01cee72ff5251941", default-features = false, features = ["font-kit", "wayland", "x11"] }
 thiserror = "2"
-tree-sitter = "0.26.11"
-tree-sitter-highlight = "0.26.11"
-tree-sitter-rust = "0.24.2"
-tree-sitter-javascript = "0.25.0"
-tree-sitter-typescript = "0.23.2"
-tree-sitter-python = "0.25.0"
-tree-sitter-go = "0.25.0"
-tree-sitter-json = "0.24.8"
-tree-sitter-bash = "0.25.1"
-tree-sitter-toml-ng = "0.7.0"
-tree-sitter-md = "0.5.3"
-tree-sitter-html = "0.23.2"
-tree-sitter-css = "0.25.0"
-tree-sitter-yaml = "0.7.2"
-tree-sitter-c = "0.24.2"
+tree-sitter = { version = "0.26.11", optional = true }
+tree-sitter-highlight = { version = "0.26.11", optional = true }
+tree-sitter-rust = { version = "0.24.2", optional = true }
+tree-sitter-javascript = { version = "0.25.0", optional = true }
+tree-sitter-typescript = { version = "0.23.2", optional = true }
+tree-sitter-python = { version = "0.25.0", optional = true }
+tree-sitter-go = { version = "0.25.0", optional = true }
+tree-sitter-json = { version = "0.24.8", optional = true }
+tree-sitter-bash = { version = "0.25.1", optional = true }
+tree-sitter-toml-ng = { version = "0.7.0", optional = true }
+tree-sitter-md = { version = "0.5.3", optional = true }
+tree-sitter-html = { version = "0.23.2", optional = true }
+tree-sitter-css = { version = "0.25.0", optional = true }
+tree-sitter-yaml = { version = "0.7.2", optional = true }
+tree-sitter-c = { version = "0.24.2", optional = true }
 pulldown-cmark = { version = "0.12", default-features = false }
 unicode-segmentation = "1"
 
@@ -68,10 +68,48 @@ objc2-web-kit = { version = "0.3.2", default-features = false, features = ["std"
 raw-window-handle = "0.6"
 
 [features]
-# test-support is default so published binaries include TestGpuixRenderer,
-# letting users write GPU-backed tests for their apps.
-default = ["test-support"]
-test-support = ["gpui/test-support", "gpui_macos/test-support", "gpui_macos/font-kit"]
+# Cargo's default build keeps Solo's complete developer surface. The
+# application release script uses --no-default-features for the lean runtime.
+default = ["automation", "syntax-all"]
+automation = []
+profiling = ["gpui/profiler"]
+syntax = ["dep:tree-sitter", "dep:tree-sitter-highlight"]
+syntax-rust = ["syntax", "dep:tree-sitter-rust"]
+syntax-javascript = ["syntax", "dep:tree-sitter-javascript"]
+syntax-typescript = ["syntax-javascript", "dep:tree-sitter-typescript"]
+syntax-python = ["syntax", "dep:tree-sitter-python"]
+syntax-go = ["syntax", "dep:tree-sitter-go"]
+syntax-json = ["syntax", "dep:tree-sitter-json"]
+syntax-bash = ["syntax", "dep:tree-sitter-bash"]
+syntax-toml = ["syntax", "dep:tree-sitter-toml-ng"]
+syntax-markdown = ["syntax", "dep:tree-sitter-md"]
+syntax-html = ["syntax", "dep:tree-sitter-html"]
+syntax-css = ["syntax", "dep:tree-sitter-css"]
+syntax-yaml = ["syntax", "dep:tree-sitter-yaml"]
+syntax-c = ["syntax", "dep:tree-sitter-c"]
+syntax-all = [
+    "syntax-rust",
+    "syntax-javascript",
+    "syntax-typescript",
+    "syntax-python",
+    "syntax-go",
+    "syntax-json",
+    "syntax-bash",
+    "syntax-toml",
+    "syntax-markdown",
+    "syntax-html",
+    "syntax-css",
+    "syntax-yaml",
+    "syntax-c",
+]
+test-support = [
+    "automation",
+    "profiling",
+    "syntax-all",
+    "gpui/test-support",
+    "gpui_macos/test-support",
+    "gpui_macos/font-kit",
+]
 
 [build-dependencies]
 napi-build = "2"
@@ -81,4 +119,8 @@ name = "hello"
 path = "examples/hello.rs"
 
 [profile.release]
-lto = true
+lto = "fat"
+codegen-units = 1
+opt-level = "z"
+panic = "abort"
+strip = "symbols"

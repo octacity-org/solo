@@ -17,3 +17,10 @@ objc2-core-foundation = { version = "0.3.2", features = ["CFCGTypes"] }
 [[bin]]
 name = "solo-context-menu"
 path = "src/main.rs"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = "z"
+panic = "abort"
+strip = "symbols"

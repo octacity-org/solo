@@ -238,6 +238,7 @@ impl RetainedTree {
         self.elements.get(&id)?.custom_props.get(key)
     }
 
+    #[cfg(feature = "automation")]
     pub fn to_json(
         &self,
         bounds: &std::collections::HashMap<u64, crate::automation::ElementBounds>,
@@ -249,6 +250,7 @@ impl RetainedTree {
     }
 }
 
+#[cfg(feature = "automation")]
 fn element_to_json(
     id: u64,
     tree: &RetainedTree,

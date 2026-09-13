@@ -325,6 +325,7 @@ pub(crate) fn quit_macos_application() -> Result<()> {
     })
 }
 
+#[cfg(feature = "profiling")]
 pub(crate) fn parse_debug_frame_overlay_mode(mode: &str) -> Result<gpui::DebugFrameOverlayMode> {
     match mode {
         "hidden" => Ok(gpui::DebugFrameOverlayMode::Hidden),
@@ -336,6 +337,7 @@ pub(crate) fn parse_debug_frame_overlay_mode(mode: &str) -> Result<gpui::DebugFr
     }
 }
 
+#[cfg(feature = "profiling")]
 pub(crate) fn debug_frame_overlay_mode_name(mode: gpui::DebugFrameOverlayMode) -> &'static str {
     match mode {
         gpui::DebugFrameOverlayMode::Hidden => "hidden",
@@ -356,6 +358,7 @@ fn record_system_appearance(appearance: &str) {
 }
 
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+#[cfg(feature = "profiling")]
 fn recv_debug_frame_overlay_mode(
     receiver: std::sync::mpsc::Receiver<String>,
 ) -> Result<String> {
@@ -414,7 +417,7 @@ fn should_toggle_window_zoom(current: bool, requested: bool) -> bool {
 /// Update only the window, without leasing its root `SoloView` entity.
 /// Input dispatch can synchronously draw and render the root, so calling it
 /// from `WindowHandle<SoloView>::update` would lease `SoloView` twice.
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "automation"))]
 fn update_window_for_input<R>(
     update: impl FnOnce(&mut gpui::Window, &mut gpui::App) -> R,
 ) -> Result<R> {
@@ -463,13 +466,17 @@ fn invalidate_window() -> Result<()> {
 enum UiCommand {
     Invalidate,
     SetWindowTitle(String),
+    #[cfg(feature = "profiling")]
     SetDebugFrameOverlay(gpui::DebugFrameOverlayMode),
+    #[cfg(feature = "profiling")]
     CycleDebugFrameOverlay {
         response: SyncSender<String>,
     },
+    #[cfg(feature = "profiling")]
     GetDebugFrameOverlay {
         response: SyncSender<String>,
     },
+    #[cfg(feature = "profiling")]
     ResetDebugFrameOverlayStats,
     ScrollTo {
         id: u64,
@@ -481,6 +488,7 @@ enum UiCommand {
         index: usize,
     },
     /// Inject a scroll-wheel event at the GPUI event boundary (automation).
+    #[cfg(feature = "automation")]
     SimulateScrollWheel {
         x: f32,
         y: f32,
@@ -491,13 +499,16 @@ enum UiCommand {
     /// parsed keystrokes, not a string: parsing happens on the calling thread
     /// so a malformed key is reported to JS instead of being swallowed by the
     /// fire-and-forget channel.
+    #[cfg(feature = "automation")]
     SimulateKeystrokes {
         keys: Vec<gpui::Keystroke>,
     },
+    #[cfg(feature = "automation")]
     SimulateKeyDown {
         key: gpui::Keystroke,
         is_held: bool,
     },
+    #[cfg(feature = "automation")]
     SimulateKeyUp {
         key: gpui::Keystroke,
     },
@@ -534,9 +545,11 @@ async fn run_ui_commands(
                 cx.notify();
                 window.refresh();
             }),
+            #[cfg(feature = "profiling")]
             UiCommand::SetDebugFrameOverlay(mode) => window.update(cx, move |_view, window, _cx| {
                 window.set_debug_frame_overlay_mode(mode);
             }),
+            #[cfg(feature = "profiling")]
             UiCommand::CycleDebugFrameOverlay { response } => {
                 window.update(cx, move |_view, window, _cx| {
                     window.cycle_debug_frame_overlay_mode();
@@ -545,6 +558,7 @@ async fn run_ui_commands(
                         .ok();
                 })
             }
+            #[cfg(feature = "profiling")]
             UiCommand::GetDebugFrameOverlay { response } => {
                 window.update(cx, move |_view, window, _cx| {
                     response
@@ -552,6 +566,7 @@ async fn run_ui_commands(
                         .ok();
                 })
             }
+            #[cfg(feature = "profiling")]
             UiCommand::ResetDebugFrameOverlayStats => {
                 window.update(cx, |_view, window, _cx| {
                     window.reset_debug_frame_overlay_stats();
@@ -574,21 +589,25 @@ async fn run_ui_commands(
                 }
                 refresh_ui_window(window, cx)
             }
+            #[cfg(feature = "automation")]
             UiCommand::SimulateScrollWheel { x, y, delta_x, delta_y } => {
                 window.update(cx, move |_view, window, cx| {
                     crate::automation::dispatch_scroll_wheel(window, cx, x as f64, y as f64, delta_x as f64, delta_y as f64);
                 })
             }
+            #[cfg(feature = "automation")]
             UiCommand::SimulateKeystrokes { keys } => {
                 cx.update_window(window.into(), move |_view, window, cx| {
                     crate::automation::dispatch_keystrokes(window, cx, &keys);
                 })
             }
+            #[cfg(feature = "automation")]
             UiCommand::SimulateKeyDown { key, is_held } => {
                 cx.update_window(window.into(), move |_view, window, cx| {
                     crate::automation::dispatch_key_down(window, cx, &key, is_held);
                 })
             }
+            #[cfg(feature = "automation")]
             UiCommand::SimulateKeyUp { key } => {
                 cx.update_window(window.into(), move |_view, window, cx| {
                     crate::automation::dispatch_key_up(window, cx, &key);
@@ -1463,50 +1482,76 @@ impl SoloRenderer {
     /// `"hidden"` | `"minimal"` | `"full"`. Paints into the scene after layout.
     #[napi]
     pub fn set_debug_frame_overlay(&self, mode: String) -> Result<String> {
+        #[cfg(feature = "profiling")]
         let mode = parse_debug_frame_overlay_mode(&mode)?;
-        #[cfg(target_os = "macos")]
+        #[cfg(all(feature = "profiling", target_os = "macos"))]
         return update_window(move |_view, window, _cx| {
             window.set_debug_frame_overlay_mode(mode);
             debug_frame_overlay_mode_name(window.debug_frame_overlay_mode()).to_string()
         });
 
-        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+        #[cfg(all(
+            feature = "profiling",
+            any(target_os = "windows", target_os = "linux", target_os = "freebsd")
+        ))]
         {
             self.send_ui_command(UiCommand::SetDebugFrameOverlay(mode))?;
             return self.debug_frame_overlay_mode();
         }
 
-        #[cfg(not(any(
-            target_os = "macos",
-            target_os = "windows",
-            target_os = "linux",
-            target_os = "freebsd"
-        )))]
+        #[cfg(not(feature = "profiling"))]
+        {
+            let _ = mode;
+            Err(Error::from_reason(
+                "Debug frame overlays require a build with the profiling feature",
+            ))
+        }
+
+        #[cfg(all(
+            feature = "profiling",
+            not(any(
+                target_os = "macos",
+                target_os = "windows",
+                target_os = "linux",
+                target_os = "freebsd"
+            ))
+        ))]
         Err(Error::from_reason("Unsupported operating system"))
     }
 
     /// Hidden → minimal → full → hidden.
     #[napi]
     pub fn cycle_debug_frame_overlay(&self) -> Result<String> {
-        #[cfg(target_os = "macos")]
+        #[cfg(all(feature = "profiling", target_os = "macos"))]
         return update_window(move |_view, window, _cx| {
             window.cycle_debug_frame_overlay_mode();
             debug_frame_overlay_mode_name(window.debug_frame_overlay_mode()).to_string()
         });
 
-        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+        #[cfg(all(
+            feature = "profiling",
+            any(target_os = "windows", target_os = "linux", target_os = "freebsd")
+        ))]
         {
             let (response, receiver) = sync_channel(1);
             self.send_ui_command(UiCommand::CycleDebugFrameOverlay { response })?;
             return recv_debug_frame_overlay_mode(receiver);
         }
 
-        #[cfg(not(any(
-            target_os = "macos",
-            target_os = "windows",
-            target_os = "linux",
-            target_os = "freebsd"
-        )))]
+        #[cfg(not(feature = "profiling"))]
+        return Err(Error::from_reason(
+            "Debug frame overlays require a build with the profiling feature",
+        ));
+
+        #[cfg(all(
+            feature = "profiling",
+            not(any(
+                target_os = "macos",
+                target_os = "windows",
+                target_os = "linux",
+                target_os = "freebsd"
+            ))
+        ))]
         Err(Error::from_reason("Unsupported operating system"))
     }
 
@@ -1516,44 +1561,66 @@ impl SoloRenderer {
     }
 
     fn debug_frame_overlay_mode(&self) -> Result<String> {
-        #[cfg(target_os = "macos")]
+        #[cfg(all(feature = "profiling", target_os = "macos"))]
         return update_window(|_view, window, _cx| {
             debug_frame_overlay_mode_name(window.debug_frame_overlay_mode()).to_string()
         });
 
-        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+        #[cfg(all(
+            feature = "profiling",
+            any(target_os = "windows", target_os = "linux", target_os = "freebsd")
+        ))]
         {
             let (response, receiver) = sync_channel(1);
             self.send_ui_command(UiCommand::GetDebugFrameOverlay { response })?;
             recv_debug_frame_overlay_mode(receiver)
         }
 
-        #[cfg(not(any(
-            target_os = "macos",
-            target_os = "windows",
-            target_os = "linux",
-            target_os = "freebsd"
-        )))]
+        #[cfg(not(feature = "profiling"))]
+        return Err(Error::from_reason(
+            "Debug frame overlays require a build with the profiling feature",
+        ));
+
+        #[cfg(all(
+            feature = "profiling",
+            not(any(
+                target_os = "macos",
+                target_os = "windows",
+                target_os = "linux",
+                target_os = "freebsd"
+            ))
+        ))]
         Err(Error::from_reason("Unsupported operating system"))
     }
 
     /// Clears the last 1000 draw samples. Frame count stays.
     #[napi]
     pub fn reset_debug_frame_overlay_stats(&self) -> Result<()> {
-        #[cfg(target_os = "macos")]
+        #[cfg(all(feature = "profiling", target_os = "macos"))]
         return update_window(|_view, window, _cx| {
             window.reset_debug_frame_overlay_stats();
         });
 
-        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+        #[cfg(all(
+            feature = "profiling",
+            any(target_os = "windows", target_os = "linux", target_os = "freebsd")
+        ))]
         return self.send_ui_command(UiCommand::ResetDebugFrameOverlayStats);
 
-        #[cfg(not(any(
-            target_os = "macos",
-            target_os = "windows",
-            target_os = "linux",
-            target_os = "freebsd"
-        )))]
+        #[cfg(not(feature = "profiling"))]
+        return Err(Error::from_reason(
+            "Debug frame overlays require a build with the profiling feature",
+        ));
+
+        #[cfg(all(
+            feature = "profiling",
+            not(any(
+                target_os = "macos",
+                target_os = "windows",
+                target_os = "linux",
+                target_os = "freebsd"
+            ))
+        ))]
         Err(Error::from_reason("Unsupported operating system"))
     }
 
@@ -1774,6 +1841,12 @@ impl SoloRenderer {
         Err(Error::from_reason("Unsupported operating system"))
     }
 
+}
+
+#[cfg(feature = "automation")]
+#[napi]
+impl SoloRenderer {
+    #[cfg(feature = "automation")]
     #[napi]
     pub fn get_automation_tree(&self) -> Result<String> {
         self.request_invalidate()?;
@@ -1783,6 +1856,7 @@ impl SoloRenderer {
             .map_err(|e| Error::from_reason(format!("JSON serialization failed: {}", e)))
     }
 
+    #[cfg(feature = "automation")]
     #[napi]
     pub fn get_element_bounds(&self, id: f64) -> Result<Option<Vec<f64>>> {
         let id = to_element_id(id)?;
@@ -1791,6 +1865,7 @@ impl SoloRenderer {
         }))
     }
 
+    #[cfg(feature = "automation")]
     #[napi]
     pub fn get_all_text(&self) -> Vec<String> {
         let tree = self.tree.lock().unwrap();
@@ -1801,11 +1876,13 @@ impl SoloRenderer {
         texts
     }
 
+    #[cfg(feature = "automation")]
     #[napi]
     pub fn get_painted_text(&self) -> Vec<String> {
         crate::text::painted_text()
     }
 
+    #[cfg(feature = "automation")]
     #[napi]
     pub fn simulate_click(&self, x: f64, y: f64, button: Option<u32>) -> Result<()> {
         #[cfg(target_os = "macos")]
@@ -1820,6 +1897,7 @@ impl SoloRenderer {
         }
     }
 
+    #[cfg(feature = "automation")]
     #[napi]
     pub fn simulate_mouse_down(&self, x: f64, y: f64, button: Option<u32>) -> Result<()> {
         #[cfg(target_os = "macos")]
@@ -1834,6 +1912,7 @@ impl SoloRenderer {
         }
     }
 
+    #[cfg(feature = "automation")]
     #[napi]
     pub fn simulate_mouse_up(&self, x: f64, y: f64, button: Option<u32>) -> Result<()> {
         #[cfg(target_os = "macos")]
@@ -1848,6 +1927,7 @@ impl SoloRenderer {
         }
     }
 
+    #[cfg(feature = "automation")]
     #[napi]
     pub fn simulate_mouse_move(
         &self,
@@ -1867,6 +1947,7 @@ impl SoloRenderer {
         }
     }
 
+    #[cfg(feature = "automation")]
     #[napi]
     pub fn simulate_scroll_wheel(&self, x: f64, y: f64, delta_x: f64, delta_y: f64) -> Result<()> {
         #[cfg(target_os = "macos")]
@@ -1897,6 +1978,7 @@ impl SoloRenderer {
     /// element has focus. That is the point: this is a real key event, not a
     /// JS-bound value write, so `onChange` and `onKeyDown` fire as they would
     /// for a human. Focus the target first — see `focus_element`.
+    #[cfg(feature = "automation")]
     #[napi]
     pub fn simulate_keystrokes(&self, keystrokes: String) -> Result<()> {
         // Parsed here rather than inside the platform branches so a malformed
@@ -1934,6 +2016,7 @@ impl SoloRenderer {
     /// Fires `onKeyDown` but does **not** insert text — use
     /// [`Self::simulate_keystrokes`] to type. Matches
     /// `TestSoloRenderer::simulate_key_down`.
+    #[cfg(feature = "automation")]
     #[napi]
     pub fn simulate_key_down(&self, keystroke: String, is_held: Option<bool>) -> Result<()> {
         let key = crate::automation::parse_keystroke(&keystroke).map_err(Error::from_reason)?;
@@ -1965,6 +2048,7 @@ impl SoloRenderer {
     }
 
     /// A key up, paired with [`Self::simulate_key_down`].
+    #[cfg(feature = "automation")]
     #[napi]
     pub fn simulate_key_up(&self, keystroke: String) -> Result<()> {
         let key = crate::automation::parse_keystroke(&keystroke).map_err(Error::from_reason)?;
@@ -1989,6 +2073,7 @@ impl SoloRenderer {
         }
     }
 
+    #[cfg(feature = "automation")]
     #[napi]
     pub fn clock_pause(&self) -> Result<f64> {
         #[cfg(target_os = "macos")]
@@ -2002,6 +2087,7 @@ impl SoloRenderer {
         Err(Error::from_reason("clockPause is only implemented on macOS"))
     }
 
+    #[cfg(feature = "automation")]
     #[napi]
     pub fn clock_set(&self, now_ms: f64) -> Result<f64> {
         #[cfg(target_os = "macos")]
@@ -2018,6 +2104,7 @@ impl SoloRenderer {
         }
     }
 
+    #[cfg(feature = "automation")]
     #[napi]
     pub fn clock_fast_forward(&self, delta_ms: f64) -> Result<f64> {
         #[cfg(target_os = "macos")]
@@ -2036,6 +2123,7 @@ impl SoloRenderer {
         }
     }
 
+    #[cfg(feature = "automation")]
     #[napi]
     pub fn clock_resume(&self) -> Result<f64> {
         #[cfg(target_os = "macos")]
@@ -2049,6 +2137,7 @@ impl SoloRenderer {
         Err(Error::from_reason("clockResume is only implemented on macOS"))
     }
 
+    #[cfg(feature = "automation")]
     #[napi]
     pub fn capture_screenshot(&self, path: String) -> Result<()> {
         #[cfg(all(target_os = "macos", feature = "test-support"))]
@@ -2075,6 +2164,7 @@ impl SoloRenderer {
     }
 }
 
+#[cfg(feature = "automation")]
 fn collect_text(id: u64, tree: &RetainedTree, texts: &mut Vec<String>) {
     if let Some(element) = tree.elements.get(&id) {
         if let Some(ref content) = element.content {

@@ -18,6 +18,7 @@ use std::collections::BTreeSet;
 use std::ops::Range;
 use std::path::Path;
 
+#[cfg(feature = "syntax")]
 use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter};
 
 /// Sources larger than this are rendered plain. Highlighting a megabyte of
@@ -296,10 +297,17 @@ fn line_starts(source: &str) -> Vec<usize> {
 }
 
 /// Highlight a document with the default limits.
+#[cfg(feature = "syntax")]
 pub fn highlight(request: HighlightRequest<'_>) -> Result<HighlightedDocument, HighlightError> {
     highlight_with_limits(request, HighlightLimits::default())
 }
 
+#[cfg(not(feature = "syntax"))]
+pub fn highlight(_request: HighlightRequest<'_>) -> Result<HighlightedDocument, HighlightError> {
+    Err(HighlightError::UnknownLanguage)
+}
+
+#[cfg(feature = "syntax")]
 pub fn highlight_with_limits(
     request: HighlightRequest<'_>,
     limits: HighlightLimits,
@@ -366,6 +374,7 @@ pub fn highlight_with_limits(
     HighlightedDocument::from_absolute_spans(language, request.source, spans)
 }
 
+#[cfg(feature = "syntax")]
 fn injected_languages(parent: LanguageId) -> Vec<LanguageId> {
     use LanguageId::*;
     match parent {
@@ -378,6 +387,7 @@ fn injected_languages(parent: LanguageId) -> Vec<LanguageId> {
     }
 }
 
+#[cfg(feature = "syntax")]
 fn make_configuration(
     language: tree_sitter::Language,
     name: &str,
@@ -389,6 +399,7 @@ fn make_configuration(
         .map_err(|error| HighlightError::Parser(error.to_string()))
 }
 
+#[cfg(all(feature = "syntax", feature = "syntax-rust"))]
 fn rust_configuration() -> Result<HighlightConfiguration, HighlightError> {
     // The upstream Rust query groups numbers and booleans under
     // `constant.builtin`. Splitting them keeps a number amber and a bool its
@@ -415,10 +426,15 @@ fn rust_configuration() -> Result<HighlightConfiguration, HighlightError> {
     )
 }
 
+#[cfg(feature = "syntax")]
 fn configuration(language: LanguageId) -> Result<HighlightConfiguration, HighlightError> {
+    #[allow(unused_imports)]
     use LanguageId::*;
+    #[allow(unreachable_patterns)]
     match language {
+        #[cfg(feature = "syntax-rust")]
         Rust => rust_configuration(),
+        #[cfg(feature = "syntax-javascript")]
         JavaScript => make_configuration(
             tree_sitter_javascript::LANGUAGE.into(),
             "javascript",
@@ -426,6 +442,7 @@ fn configuration(language: LanguageId) -> Result<HighlightConfiguration, Highlig
             tree_sitter_javascript::INJECTIONS_QUERY,
             tree_sitter_javascript::LOCALS_QUERY,
         ),
+        #[cfg(feature = "syntax-javascript")]
         Jsx => make_configuration(
             tree_sitter_javascript::LANGUAGE.into(),
             "jsx",
@@ -442,6 +459,7 @@ fn configuration(language: LanguageId) -> Result<HighlightConfiguration, Highlig
         // colours a type annotation and leaves every keyword and string plain.
         // The JavaScript query has to be prepended. Comet ships the TS query
         // alone and its TypeScript blocks are correspondingly bare.
+        #[cfg(feature = "syntax-typescript")]
         TypeScript => make_configuration(
             tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
             "typescript",
@@ -453,6 +471,7 @@ fn configuration(language: LanguageId) -> Result<HighlightConfiguration, Highlig
             "",
             tree_sitter_typescript::LOCALS_QUERY,
         ),
+        #[cfg(feature = "syntax-typescript")]
         Tsx => make_configuration(
             tree_sitter_typescript::LANGUAGE_TSX.into(),
             "tsx",
@@ -465,6 +484,7 @@ fn configuration(language: LanguageId) -> Result<HighlightConfiguration, Highlig
             "",
             tree_sitter_typescript::LOCALS_QUERY,
         ),
+        #[cfg(feature = "syntax-python")]
         Python => make_configuration(
             tree_sitter_python::LANGUAGE.into(),
             "python",
@@ -472,6 +492,7 @@ fn configuration(language: LanguageId) -> Result<HighlightConfiguration, Highlig
             "",
             "",
         ),
+        #[cfg(feature = "syntax-go")]
         Go => make_configuration(
             tree_sitter_go::LANGUAGE.into(),
             "go",
@@ -479,6 +500,7 @@ fn configuration(language: LanguageId) -> Result<HighlightConfiguration, Highlig
             "",
             "",
         ),
+        #[cfg(feature = "syntax-json")]
         Json | Jsonc => make_configuration(
             tree_sitter_json::LANGUAGE.into(),
             "json",
@@ -486,6 +508,7 @@ fn configuration(language: LanguageId) -> Result<HighlightConfiguration, Highlig
             "",
             "",
         ),
+        #[cfg(feature = "syntax-bash")]
         Bash => make_configuration(
             tree_sitter_bash::LANGUAGE.into(),
             "bash",
@@ -493,6 +516,7 @@ fn configuration(language: LanguageId) -> Result<HighlightConfiguration, Highlig
             "",
             "",
         ),
+        #[cfg(feature = "syntax-toml")]
         Toml => make_configuration(
             tree_sitter_toml_ng::LANGUAGE.into(),
             "toml",
@@ -500,6 +524,7 @@ fn configuration(language: LanguageId) -> Result<HighlightConfiguration, Highlig
             "",
             "",
         ),
+        #[cfg(feature = "syntax-markdown")]
         Markdown => make_configuration(
             tree_sitter_md::LANGUAGE.into(),
             "markdown",
@@ -507,6 +532,7 @@ fn configuration(language: LanguageId) -> Result<HighlightConfiguration, Highlig
             tree_sitter_md::INJECTION_QUERY_BLOCK,
             "",
         ),
+        #[cfg(feature = "syntax-html")]
         Html => make_configuration(
             tree_sitter_html::LANGUAGE.into(),
             "html",
@@ -514,6 +540,7 @@ fn configuration(language: LanguageId) -> Result<HighlightConfiguration, Highlig
             tree_sitter_html::INJECTIONS_QUERY,
             "",
         ),
+        #[cfg(feature = "syntax-css")]
         Css => make_configuration(
             tree_sitter_css::LANGUAGE.into(),
             "css",
@@ -521,6 +548,7 @@ fn configuration(language: LanguageId) -> Result<HighlightConfiguration, Highlig
             "",
             "",
         ),
+        #[cfg(feature = "syntax-yaml")]
         Yaml => make_configuration(
             tree_sitter_yaml::LANGUAGE.into(),
             "yaml",
@@ -528,6 +556,7 @@ fn configuration(language: LanguageId) -> Result<HighlightConfiguration, Highlig
             "",
             "",
         ),
+        #[cfg(feature = "syntax-c")]
         C => make_configuration(
             tree_sitter_c::LANGUAGE.into(),
             "c",
@@ -535,6 +564,7 @@ fn configuration(language: LanguageId) -> Result<HighlightConfiguration, Highlig
             "",
             "",
         ),
+        _ => Err(HighlightError::UnknownLanguage),
     }
 }
 
