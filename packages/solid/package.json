@@ -57,16 +57,15 @@
     "build": "rm -rf dist *.tsbuildinfo && tsc",
     "dev": "tsc --watch",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "bench:list-driver": "bun --conditions=browser scripts/list-driver-benchmark.ts"
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@babel/core": "^7",
     "@solo/core": "workspace:^",
     "@solo/native": "workspace:^",
-    "@solidjs/universal": "2.0.0-rc.4",
-    "@solidjs/babel-plugin": "2.0.0-rc.4",
-    "solid-js": "2.0.0-rc.4"
+    "@solidjs/universal": "2.0.0-rc.15",
+    "@solidjs/babel-plugin": "2.0.0-rc.15",
+    "solid-js": "2.0.0-rc.15"
   },
   "devDependencies": {
     "@babel/parser": "^7.29.7",

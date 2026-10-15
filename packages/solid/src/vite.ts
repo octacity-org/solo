@@ -3,7 +3,6 @@ import type { ParserPlugin } from "@babel/parser"
 import { createRequire } from "node:module"
 import { dirname } from "node:path"
 import type { Plugin } from "vite"
-import { universalPatchCompiler } from "./universal-patch.js"
 
 // Solid's package exports select the server build under Node. Native Solo apps
 // need the reactive client builds even though Vite produces an SSR bundle.
@@ -15,15 +14,17 @@ const nativeBridge = "@solo/solid/_native"
 // compiled, so passing the string would make every consumer depend on
 // hoisting.
 const babelPluginSolid = req.resolve("@solidjs/babel-plugin")
-const signalsDist = dirname(
-  createRequire(req.resolve("solid-js")).resolve("@solidjs/signals"),
-)
+// Anchor on package.json: the signals entry lives under dist/prod/, but the
+// dev build is dist/dev.js.
+const signalsDist = `${dirname(
+  createRequire(req.resolve("solid-js")).resolve("@solidjs/signals/package.json"),
+)}/dist`
 const universalDist = dirname(req.resolve("@solidjs/universal"))
 
 const PINNED: Record<string, string> = {
-  "solid-js": `${solidJsDist}/dev.js`,
+  "solid-js": `${solidJsDist}/solid.dev.js`,
   "@solidjs/signals": `${signalsDist}/dev.js`,
-  "@solidjs/universal": `${universalDist}/dev.js`,
+  "@solidjs/universal": `${universalDist}/universal.dev.js`,
 }
 
 /** Compile Solid JSX for Solo and keep native implementation details external. */
@@ -57,10 +58,8 @@ export function solidUniversal(): Plugin {
             {
               generate: "universal",
               moduleName: "@solo/solid/runtime",
-              patchDriver: true,
             },
           ],
-          universalPatchCompiler,
         ],
         sourceMaps: true,
       })
