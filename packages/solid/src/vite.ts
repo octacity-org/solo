@@ -21,27 +21,39 @@ const signalsDist = `${dirname(
 )}/dist`
 const universalDist = dirname(req.resolve("@solidjs/universal"))
 
-const PINNED: Record<string, string> = {
+// Tests and development keep Solid's dev builds for their diagnostics.
+const DEV_BUILDS: Record<string, string> = {
   "solid-js": `${solidJsDist}/solid.dev.js`,
   "@solidjs/signals": `${signalsDist}/dev.js`,
   "@solidjs/universal": `${universalDist}/universal.dev.js`,
 }
 
+// Production app builds ship the smaller, faster client builds.
+const PRODUCTION_BUILDS: Record<string, string> = {
+  "solid-js": `${solidJsDist}/solid.js`,
+  "@solidjs/signals": `${signalsDist}/prod/index.js`,
+  "@solidjs/universal": `${universalDist}/universal.js`,
+}
+
 /** Compile Solid JSX for Solo and keep native implementation details external. */
 export function solidUniversal(): Plugin {
   let useNativeBridge = false
+  let pinned = DEV_BUILDS
 
   return {
     name: "solo:solid-universal",
     enforce: "pre",
     config(_config, env) {
       useNativeBridge = env.command === "build"
+      pinned = env.command === "build" && env.mode === "production"
+        ? PRODUCTION_BUILDS
+        : DEV_BUILDS
     },
     async resolveId(id) {
       if (useNativeBridge && id === "@solo/native") {
         return { id: nativeBridge, external: true }
       }
-      return PINNED[id] ?? null
+      return pinned[id] ?? null
     },
     transform(code, id) {
       const [path] = id.split("?")
