@@ -127,8 +127,9 @@ token rather than being swallowed by the `UiCommand` channel.
 - Layout ground-truth: `packages/native/tests/layout_probe.rs` draws the
   real builder chain headlessly and asserts ScrollHandle geometry.
 - Run: `bun run test` inside packages/solid or packages/core;
-  `cargo test --lib --test layout_probe` in packages/native. Use `bun run
-  test`, not `bun test` (vitest).
+  `cargo test --features test-support --lib --test layout_probe` in
+  packages/native (plain `cargo test` skips the macOS GPU test-renderer
+  tests). Use `bun run test`, not `bun test` (vitest).
 
 ## Native child views (`<webview>`)
 

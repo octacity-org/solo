@@ -114,6 +114,11 @@ test-support = [
 [build-dependencies]
 napi-build = "2"
 
+[dev-dependencies]
+# Tests use gpui's TestAppContext. A dev-dependency feature reaches only test,
+# example and bench builds, so the lean release addon stays without it.
+gpui = { git = "https://github.com/remorses/zed", rev = "db0820f6756b9d789707a3de01cee72ff5251941", default-features = false, features = ["font-kit", "test-support"] }
+
 [[example]]
 name = "hello"
 path = "examples/hello.rs"

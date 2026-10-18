@@ -166,7 +166,7 @@ jobs:
         working-directory: packages/core
 
       - name: Run native tests
-        run: cargo nextest run --lib --test layout_probe
+        run: cargo nextest run --features test-support --lib --test layout_probe
         working-directory: packages/native
 
       - name: Run @solo/solid tests
