@@ -37,7 +37,8 @@ await build({
   ssr: { noExternal: true },
   build: { ssr: `src/__tests__/fixtures/${fixture}.tsx`, outDir: join(output, "js"), target: "node20" },
 })
-execFileSync("bun", ["build", join(output, "js", `${fixture}.js`), "--compile", "--outfile", executable], { cwd: output, stdio: "inherit" })
+// The bootstrap runs the app in a Worker, which Bun embeds only as an entrypoint.
+execFileSync("bun", ["build", join(output, "js", `${fixture}.js`), join(output, "js", `${fixture}.app.js`), "--compile", "--outfile", executable], { cwd: output, stdio: "inherit" })
 chmodSync(executable, 0o755)
 writeFileSync(join(bundle, "Contents", "Info.plist"), `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">

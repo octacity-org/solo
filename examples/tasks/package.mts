@@ -28,7 +28,9 @@ run("bun", ["run", "build"])
 
 console.log("[package] bun build --compile")
 mkdirSync(dirname(executable), { recursive: true })
-run("bun", ["build", "dist/index.js", "--compile", "--minify", "--outfile", executable])
+// index.js is the bootstrap; the app runs in a Worker from index.app.js, and
+// Bun embeds a Worker only when it is listed as an entrypoint.
+run("bun", ["build", "dist/index.js", "dist/index.app.js", "--compile", "--minify", "--outfile", executable])
 writeFileSync(join(bundle, "Contents", "Info.plist"), `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>

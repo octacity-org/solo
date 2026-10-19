@@ -48,6 +48,9 @@ pub fn open_external_url(url: String) -> Result<()> {
     let url = validate_browser_url(&url)?;
     #[cfg(target_os = "macos")]
     {
+        if crate::renderer::worker_main::must_forward() {
+            return crate::renderer::on_main(move || open_external_url(url));
+        }
         macos::require_main_thread()?;
         let url =
             objc2_foundation::NSURL::URLWithString(&objc2_foundation::NSString::from_str(&url))
@@ -71,6 +74,9 @@ pub fn open_external_url(url: String) -> Result<()> {
 pub fn write_clipboard_text(text: String) -> Result<()> {
     #[cfg(target_os = "macos")]
     {
+        if crate::renderer::worker_main::must_forward() {
+            return crate::renderer::on_main(move || write_clipboard_text(text));
+        }
         macos::require_main_thread()?;
         macos::write_text(&objc2_app_kit::NSPasteboard::generalPasteboard(), &text)
     }

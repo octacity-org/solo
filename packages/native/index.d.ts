@@ -372,6 +372,12 @@ export declare class TestSoloRenderer {
   getRootId(): number | null
 }
 
+/**
+ * Select worker mode for this process. The generated bootstrap calls this
+ * before it starts the app Worker, so the Worker never sees embedded mode.
+ */
+export declare function enableWorkerMainThread(): void
+
 export interface EventModifiers {
   shift: boolean
   ctrl: boolean
@@ -490,6 +496,18 @@ export interface MenuBarOptions {
  * Success means the OS accepted the request, not that the page loaded.
  */
 export declare function openExternalUrl(url: string): void
+
+/**
+ * Worker mode: end the process with `code`. The Worker calls this from its
+ * `exit` handler, after its own JS `exit` handlers have run.
+ */
+export declare function requestProcessExit(code: number): void
+
+/**
+ * Run GPUI's ordinary blocking macOS loop on the calling (main) thread.
+ * Never returns while the application runs.
+ */
+export declare function runMainLoop(): void
 
 export interface WindowOptions {
   title?: string

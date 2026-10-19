@@ -224,6 +224,253 @@ thread_local! {
     static VIRTUAL_LIST_STATES: RefCell<HashMap<u64, gpui::ListState>> = RefCell::new(HashMap::new());
 }
 
+// ── Worker mode (macOS) ─────────────────────────────────────────────
+// GPUI/AppKit owns the process main thread through its ordinary blocking loop
+// (`runMainLoop`), and the app's JS runs in a Worker. Worker-side renderer
+// methods forward closures to the main thread, where the macOS thread-local
+// code runs unchanged. The main thread never waits on the Worker; only the
+// reverse, so a forwarded call cannot deadlock.
+#[cfg(target_os = "macos")]
+pub(crate) mod worker_main {
+    use futures::channel::mpsc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{LazyLock, Mutex};
+
+    static WORKER_MODE: AtomicBool = AtomicBool::new(false);
+    pub(crate) static INVALIDATE_PENDING: AtomicBool = AtomicBool::new(false);
+    pub(crate) type Task = Box<dyn FnOnce() + Send>;
+    #[allow(clippy::type_complexity)]
+    pub(crate) static TASKS: LazyLock<(
+        mpsc::UnboundedSender<Task>,
+        Mutex<Option<mpsc::UnboundedReceiver<Task>>>,
+    )> = LazyLock::new(|| {
+        let (tx, rx) = mpsc::unbounded();
+        (tx, Mutex::new(Some(rx)))
+    });
+
+    pub(crate) fn enable() {
+        WORKER_MODE.store(true, Ordering::SeqCst);
+    }
+    pub(crate) fn enabled() -> bool {
+        WORKER_MODE.load(Ordering::SeqCst)
+    }
+    pub(crate) fn is_main_thread() -> bool {
+        // SAFETY: a plain query of the calling thread.
+        unsafe { libc::pthread_main_np() == 1 }
+    }
+    /// True on the Worker side of worker mode: calls must hop to main.
+    pub(crate) fn must_forward() -> bool {
+        enabled() && !is_main_thread()
+    }
+}
+
+#[cfg(target_os = "macos")]
+thread_local! {
+    static MAIN_APP: RefCell<Option<gpui::AsyncApp>> = const { RefCell::new(None) };
+    // Never dropped: worker mode ends with the process, not with the loop.
+    static MAIN_SHUTDOWN: RefCell<Option<crate::macos_shutdown::ShutdownGuard>> = const { RefCell::new(None) };
+}
+
+/// Run `f` on the main thread and wait for its result (worker mode). `f` owns
+/// everything it touches: after a timeout the Worker moves on while `f` may
+/// still run later.
+#[cfg(target_os = "macos")]
+pub(crate) fn on_main<R: Send + 'static>(
+    f: impl FnOnce() -> Result<R> + Send + 'static,
+) -> Result<R> {
+    let (tx, rx) = std::sync::mpsc::sync_channel::<std::result::Result<R, String>>(1);
+    worker_main::TASKS
+        .0
+        .unbounded_send(Box::new(move || {
+            tx.send(f().map_err(|error| error.reason.clone())).ok();
+        }))
+        .map_err(|_| Error::from_reason("The main-thread GPUI loop is not running"))?;
+    rx.recv_timeout(std::time::Duration::from_secs(5))
+        .map_err(|_| Error::from_reason("Timed out waiting for the main-thread GPUI loop"))?
+        .map_err(Error::from_reason)
+}
+
+/// Run `f` on the main thread without waiting (worker mode).
+#[cfg(target_os = "macos")]
+pub(crate) fn on_main_async(f: impl FnOnce() + Send + 'static) -> Result<()> {
+    worker_main::TASKS
+        .0
+        .unbounded_send(Box::new(f))
+        .map_err(|_| Error::from_reason("The main-thread GPUI loop is not running"))
+}
+
+/// `App` access through the embedded handle, or the worker-mode main loop.
+#[cfg(target_os = "macos")]
+fn app_update<R>(f: impl FnOnce(&mut gpui::App) -> R) -> Result<R> {
+    if GPUI_APP.with(|app| app.borrow().is_some()) {
+        return GPUI_APP.with(|app| {
+            let app = app.borrow();
+            Ok(app.as_ref().expect("checked above").update(f))
+        });
+    }
+    let app = MAIN_APP
+        .with(|app| app.borrow().clone())
+        .ok_or_else(|| Error::from_reason("GPUI application is not initialized"))?;
+    Ok(app.update(f))
+}
+
+/// Select worker mode for this process. The generated bootstrap calls this
+/// before it starts the app Worker, so the Worker never sees embedded mode.
+#[cfg(target_os = "macos")]
+#[napi]
+pub fn enable_worker_main_thread() {
+    worker_main::enable();
+}
+
+/// Element-0 event asking the Worker to exit, so its JS `exit` handlers run.
+#[cfg(target_os = "macos")]
+const APPLICATION_QUIT_REQUESTED_EVENT: &str = "applicationQuitRequested";
+
+/// How long an AppKit-initiated quit waits for the Worker to exit.
+#[cfg(target_os = "macos")]
+const WORKER_QUIT_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// End the process from the main thread after the cleanup `on_app_quit` does.
+#[cfg(target_os = "macos")]
+fn exit_process(code: i32) -> ! {
+    crate::context_menu::cancel_all();
+    crate::native_view::with_registry(|registry| registry.destroy_all());
+    std::process::exit(code)
+}
+
+/// Worker mode: end the process with `code`. The Worker calls this from its
+/// `exit` handler, after its own JS `exit` handlers have run.
+#[cfg(target_os = "macos")]
+#[napi]
+pub fn request_process_exit(code: i32) -> Result<()> {
+    if !worker_main::enabled() {
+        return Err(Error::from_reason("requestProcessExit needs worker mode"));
+    }
+    on_main_async(move || {
+        exit_process(code);
+    })
+}
+
+/// Worker mode: AppKit asked to quit. Ask the Worker to exit through its own
+/// `exit` path, and exit anyway when it has not done so within the grace period.
+#[cfg(target_os = "macos")]
+pub(crate) fn request_worker_quit() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static REQUESTED: AtomicBool = AtomicBool::new(false);
+    if REQUESTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let callback = MAC_APPLICATION
+        .with(|state| state.borrow().as_ref().and_then(|state| state.window.callback.clone()));
+    if callback.is_none() {
+        exit_process(0);
+    }
+    emit_event_full(&callback, 0, APPLICATION_QUIT_REQUESTED_EVENT, |_| {});
+    std::thread::spawn(|| {
+        std::thread::sleep(WORKER_QUIT_GRACE);
+        let _ = on_main_async(|| {
+            exit_process(0);
+        });
+    });
+}
+
+/// Run GPUI's ordinary blocking macOS loop on the calling (main) thread.
+/// Never returns while the application runs.
+#[cfg(target_os = "macos")]
+#[napi]
+pub fn run_main_loop() -> Result<()> {
+    use futures::StreamExt as _;
+    use gpui::Platform as _;
+    if !worker_main::is_main_thread() {
+        return Err(Error::from_reason("runMainLoop must be called on the main thread"));
+    }
+    worker_main::enable();
+    let mut tasks = worker_main::TASKS
+        .1
+        .lock()
+        .unwrap()
+        .take()
+        .ok_or_else(|| Error::from_reason("runMainLoop was already called"))?;
+    // Built here rather than through gpui_platform::application() so Solo can
+    // install its menu validator, as the embedded path does.
+    let platform = Rc::new(gpui_macos::MacPlatform::new(false));
+    platform.on_validate_app_menu_command(Box::new(|action| {
+        app_update(|cx| crate::application_commands::is_menu_action_available(action, cx))
+            .unwrap_or(false)
+    }));
+    gpui::Application::with_platform(platform).run(move |cx| {
+        init_key_bindings(cx);
+        crate::custom_elements::input::init(cx);
+        MAIN_APP.with(|app| *app.borrow_mut() = Some(cx.to_async()));
+        match crate::macos_shutdown::install() {
+            Ok(guard) => MAIN_SHUTDOWN.with(|slot| *slot.borrow_mut() = Some(guard)),
+            Err(error) => log::error!("Failed to install the shutdown delegate: {error}"),
+        }
+        cx.spawn(async move |_cx| {
+            while let Some(task) = tasks.next().await {
+                task();
+            }
+        })
+        .detach();
+    });
+    Ok(())
+}
+
+/// Window-close and app-quit cleanup shared by the embedded and worker loops.
+#[cfg(target_os = "macos")]
+fn register_macos_lifecycle(cx: &mut gpui::App) {
+    let closed = cx.on_window_closed(|_cx, window_id| {
+        let matches_current = GPUI_WINDOW.with(|stored| {
+            stored.borrow().is_some_and(|window| {
+                gpui::AnyWindowHandle::from(window).window_id() == window_id
+            })
+        });
+        if matches_current {
+            crate::context_menu::cancel_all();
+            MAC_APPLICATION.with(|state| {
+                if let Some(state) = state.borrow_mut().as_mut() {
+                    state.window_closed = true;
+                }
+            });
+            GPUI_WINDOW.with(|stored| stored.borrow_mut().take());
+            SCROLL_HANDLES.with(|handles| handles.borrow_mut().clear());
+            VIRTUAL_LIST_STATES.with(|states| states.borrow_mut().clear());
+            crate::native_view::with_registry(|registry| registry.destroy_all());
+        }
+    });
+    let quitting = cx.on_app_quit(|_cx| {
+        crate::context_menu::cancel_all();
+        MAC_APPLICATION.with(|state| {
+            if let Some(state) = state.borrow_mut().as_mut() {
+                state.window_closed = true;
+            }
+        });
+        GPUI_WINDOW.with(|window| window.borrow_mut().take());
+        crate::native_view::with_registry(|registry| registry.destroy_all());
+        async {}
+    });
+    MAC_APPLICATION.with(|state| {
+        if let Some(state) = state.borrow_mut().as_mut() {
+            state.subscriptions.extend([closed, quitting]);
+        }
+    });
+}
+
+/// Create the status item when the window options ask for a menu-bar app.
+#[cfg(target_os = "macos")]
+fn create_macos_menu_bar(title: &str) -> Result<()> {
+    MAC_APPLICATION.with(|state| {
+        let mut state = state.borrow_mut();
+        let Some(state) = state.as_mut() else {
+            return Ok(());
+        };
+        if let Some(menu_options) = state.window.options.menu_bar.as_ref() {
+            state.menu_bar = Some(crate::menu_bar::MenuBar::new(menu_options, title)?);
+        }
+        Ok(())
+    })
+}
+
 #[cfg(target_os = "macos")]
 fn open_macos_window(cx: &mut gpui::App) -> Result<gpui::WindowHandle<SoloView>> {
     let config = MAC_APPLICATION
@@ -304,25 +551,83 @@ fn show_macos_window_in_app(cx: &mut gpui::App) -> Result<()> {
 
 #[cfg(target_os = "macos")]
 pub(crate) fn show_macos_window() -> Result<()> {
-    GPUI_APP.with(|app| {
-        let app = app.borrow();
-        let app = app
-            .as_ref()
-            .ok_or_else(|| Error::from_reason("GPUI application is not initialized"))?;
-        app.update(show_macos_window_in_app)
-    })
+    if worker_main::must_forward() {
+        return on_main(show_macos_window);
+    }
+    app_update(show_macos_window_in_app)?
+}
+
+#[cfg(target_os = "macos")]
+fn close_macos_window() -> Result<()> {
+    let window = GPUI_WINDOW
+        .with(|window| *window.borrow())
+        .ok_or_else(|| Error::from_reason("GPUI window is not open"))?;
+    app_update(|cx| {
+        cx.update_window(window.into(), |_view, window, _cx| window.remove_window())
+            .map_err(|error| Error::from_reason(error.to_string()))
+    })?
 }
 
 #[cfg(target_os = "macos")]
 pub(crate) fn quit_macos_application() -> Result<()> {
-    GPUI_APP.with(|app| {
-        let app = app.borrow();
-        let app = app
-            .as_ref()
+    if worker_main::must_forward() {
+        return on_main(quit_macos_application);
+    }
+    app_update(|cx| cx.quit())
+}
+
+#[cfg(target_os = "macos")]
+fn set_macos_menu_bar(json: Option<String>) -> Result<()> {
+    if worker_main::must_forward() {
+        return on_main(move || set_macos_menu_bar(json));
+    }
+    MAC_APPLICATION.with(|application| {
+        let mut application = application.borrow_mut();
+        let state = application
+            .as_mut()
             .ok_or_else(|| Error::from_reason("GPUI application is not initialized"))?;
-        app.update(|cx| cx.quit());
-        Ok(())
+        let callback = state.window.callback.clone();
+        let menu_bar = state.menu_bar.as_mut().ok_or_else(|| {
+            Error::from_reason("The application was not created with menuBar options")
+        })?;
+        menu_bar.update(json.as_deref(), callback)
     })
+}
+
+#[cfg(target_os = "macos")]
+fn set_macos_system_appearance_subscription(token: Option<String>) -> Result<String> {
+    if worker_main::must_forward() {
+        return on_main(move || set_macos_system_appearance_subscription(token));
+    }
+    if token.as_deref().is_some_and(str::is_empty) {
+        return Err(Error::from_reason(
+            "System appearance subscription token must not be empty",
+        ));
+    }
+    MAC_APPLICATION.with(|state| {
+        if let Some(state) = state.borrow_mut().as_mut() {
+            state.appearance_token = token.clone();
+        }
+    });
+    if GPUI_WINDOW.with(|window| window.borrow().is_none()) {
+        return MAC_APPLICATION
+            .with(|state| {
+                state
+                    .borrow()
+                    .as_ref()
+                    .map(|state| state.last_appearance.clone())
+            })
+            .ok_or_else(|| Error::from_reason("GPUI application is not initialized"));
+    }
+    let appearance = update_window(move |view, window, cx| {
+        view.set_system_appearance_subscription(token, window, cx)
+    })??;
+    MAC_APPLICATION.with(|state| {
+        if let Some(state) = state.borrow_mut().as_mut() {
+            state.last_appearance = appearance.clone();
+        }
+    });
+    Ok(appearance)
 }
 
 #[cfg(feature = "profiling")]
@@ -374,24 +679,31 @@ fn recv_debug_frame_overlay_mode(
 }
 
 #[cfg(target_os = "macos")]
-fn update_window<R>(
+fn update_window<R: Send + 'static>(
+    update: impl FnOnce(&mut SoloView, &mut gpui::Window, &mut gpui::Context<SoloView>) -> R
+        + Send
+        + 'static,
+) -> Result<R> {
+    if worker_main::must_forward() {
+        return on_main(move || update_window_local(update));
+    }
+    update_window_local(update)
+}
+
+/// Non-forwarding body of `update_window`.
+#[cfg(target_os = "macos")]
+fn update_window_local<R>(
     update: impl FnOnce(&mut SoloView, &mut gpui::Window, &mut gpui::Context<SoloView>) -> R,
 ) -> Result<R> {
     let window = GPUI_WINDOW
         .with(|window| *window.borrow())
         .ok_or_else(|| Error::from_reason("GPUI window is not initialized"))?;
 
-    GPUI_APP.with(|app| {
-        let app = app.borrow();
-        let app = app
-            .as_ref()
-            .ok_or_else(|| Error::from_reason("GPUI application is not initialized"))?;
-        app.update(|cx| {
-            window
-                .update(cx, update)
-                .map_err(|error| Error::from_reason(error.to_string()))
-        })
-    })
+    app_update(|cx| {
+        window
+            .update(cx, update)
+            .map_err(|error| Error::from_reason(error.to_string()))
+    })?
 }
 
 #[cfg(target_os = "macos")]
@@ -418,27 +730,36 @@ fn should_toggle_window_zoom(current: bool, requested: bool) -> bool {
 /// Input dispatch can synchronously draw and render the root, so calling it
 /// from `WindowHandle<SoloView>::update` would lease `SoloView` twice.
 #[cfg(all(target_os = "macos", feature = "automation"))]
-fn update_window_for_input<R>(
-    update: impl FnOnce(&mut gpui::Window, &mut gpui::App) -> R,
+fn update_window_for_input<R: Send + 'static>(
+    update: impl FnOnce(&mut gpui::Window, &mut gpui::App) -> R + Send + 'static,
 ) -> Result<R> {
+    if worker_main::must_forward() {
+        return on_main(move || update_window_for_input(update));
+    }
     let window = GPUI_WINDOW
         .with(|window| *window.borrow())
         .ok_or_else(|| Error::from_reason("GPUI window is not initialized"))?;
 
-    GPUI_APP.with(|app| {
-        let app = app.borrow();
-        let app = app
-            .as_ref()
-            .ok_or_else(|| Error::from_reason("GPUI application is not initialized"))?;
-        app.update(|cx| {
-            cx.update_window(window.into(), move |_view, window, cx| update(window, cx))
-                .map_err(|error| Error::from_reason(error.to_string()))
-        })
-    })
+    app_update(|cx| {
+        cx.update_window(window.into(), move |_view, window, cx| update(window, cx))
+            .map_err(|error| Error::from_reason(error.to_string()))
+    })?
 }
 
 #[cfg(target_os = "macos")]
 fn invalidate_window() -> Result<()> {
+    if worker_main::must_forward() {
+        use std::sync::atomic::Ordering;
+        if worker_main::INVALIDATE_PENDING.swap(true, Ordering::AcqRel) {
+            return Ok(());
+        }
+        return on_main_async(|| {
+            worker_main::INVALIDATE_PENDING.store(false, Ordering::Release);
+            if let Err(error) = invalidate_window() {
+                log::error!("worker-mode invalidate failed: {error}");
+            }
+        });
+    }
     let has_window = GPUI_WINDOW.with(|window| window.borrow().is_some());
     if !has_window {
         let closed = MAC_APPLICATION.with(|state| {
@@ -771,10 +1092,66 @@ impl SoloRenderer {
         }
 
         #[cfg(target_os = "macos")]
+        if worker_main::enabled() {
+            return self.init_worker_mode(options);
+        }
+        #[cfg(target_os = "macos")]
         return self.init_macos(options);
 
         #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
         return self.init_threaded(options);
+    }
+
+    /// Open the window on the worker-mode main loop. Startup errors return
+    /// here, so the Worker's `init()` throws.
+    #[cfg(target_os = "macos")]
+    fn init_worker_mode(&self, options: Option<WindowOptions>) -> Result<()> {
+        let options = options.unwrap_or_default();
+        if let Some(menu_bar) = options.menu_bar.as_ref() {
+            validate_menu_bar_options(menu_bar)?;
+        }
+        if *self.initialized.lock().unwrap() {
+            return Err(Error::from_reason("Renderer is already initialized"));
+        }
+        let title = options.title.clone().unwrap_or_else(|| "Solo".to_string());
+        let config = MacWindowConfig {
+            options,
+            tree: self.tree.clone(),
+            callback: self.event_callback_for_view(),
+            selection: self.selection.clone(),
+        };
+        on_main(move || {
+            if MAC_APPLICATION.with(|state| state.borrow().is_some()) {
+                return Err(Error::from_reason(
+                    "A GPUI application already exists in this process",
+                ));
+            }
+            let quit_mode = quit_mode_for_options(&config.options);
+            MAC_APPLICATION.with(|state| {
+                *state.borrow_mut() = Some(MacApplicationState {
+                    window: config,
+                    menu_bar: None,
+                    subscriptions: Vec::new(),
+                    appearance_token: None,
+                    last_appearance: "light".to_string(),
+                    window_closed: false,
+                });
+            });
+            let launched = app_update(|cx| -> Result<()> {
+                cx.set_quit_mode(quit_mode);
+                open_macos_window(cx)?;
+                cx.activate(true);
+                register_macos_lifecycle(cx);
+                create_macos_menu_bar(&title)
+            })
+            .and_then(|launched| launched);
+            if launched.is_err() {
+                MAC_APPLICATION.with(|state| state.borrow_mut().take());
+            }
+            launched
+        })?;
+        *self.initialized.lock().unwrap() = true;
+        Ok(())
     }
 
     #[cfg(target_os = "macos")]
@@ -836,50 +1213,11 @@ impl SoloRenderer {
                 }
             }
 
-            let closed = cx.on_window_closed(|_cx, window_id| {
-                let matches_current = GPUI_WINDOW.with(|stored| {
-                    stored.borrow().is_some_and(|window| {
-                        gpui::AnyWindowHandle::from(window).window_id() == window_id
-                    })
-                });
-                if matches_current {
-                    crate::context_menu::cancel_all();
-                    MAC_APPLICATION.with(|state| {
-                        if let Some(state) = state.borrow_mut().as_mut() {
-                            state.window_closed = true;
-                        }
-                    });
-                    GPUI_WINDOW.with(|stored| stored.borrow_mut().take());
-                    SCROLL_HANDLES.with(|handles| handles.borrow_mut().clear());
-                    VIRTUAL_LIST_STATES.with(|states| states.borrow_mut().clear());
-                    crate::native_view::with_registry(|registry| registry.destroy_all());
-                }
-            });
-            let quitting = cx.on_app_quit(|_cx| {
-                crate::context_menu::cancel_all();
-                MAC_APPLICATION.with(|state| {
-                    if let Some(state) = state.borrow_mut().as_mut() {
-                        state.window_closed = true;
-                    }
-                });
-                GPUI_WINDOW.with(|window| window.borrow_mut().take());
-                crate::native_view::with_registry(|registry| registry.destroy_all());
-                async {}
-            });
-            MAC_APPLICATION.with(|state| {
-                if let Some(state) = state.borrow_mut().as_mut() {
-                    state.subscriptions.extend([closed, quitting]);
-                    if let Some(menu_options) = state.window.options.menu_bar.as_ref() {
-                        match crate::menu_bar::MenuBar::new(menu_options, &title) {
-                            Ok(menu_bar) => state.menu_bar = Some(menu_bar),
-                            Err(error) => {
-                                *startup_error_for_app.borrow_mut() = Some(error.to_string());
-                                cx.quit();
-                            }
-                        }
-                    }
-                }
-            });
+            register_macos_lifecycle(cx);
+            if let Err(error) = create_macos_menu_bar(&title) {
+                *startup_error_for_app.borrow_mut() = Some(error.to_string());
+                cx.quit();
+            }
         });
 
         let startup_result = match startup_error.borrow_mut().take() {
@@ -1171,6 +1509,12 @@ impl SoloRenderer {
             ));
         }
 
+        // Worker mode: the main thread runs GPUI's own loop; nothing to pump.
+        #[cfg(target_os = "macos")]
+        if worker_main::enabled() {
+            return Ok(true);
+        }
+
         #[cfg(target_os = "macos")]
         {
             crate::macos_shutdown::poll()?;
@@ -1221,6 +1565,10 @@ impl SoloRenderer {
     /// Whether JavaScript must drive the native event loop with tick().
     #[napi]
     pub fn requires_tick(&self) -> bool {
+        #[cfg(target_os = "macos")]
+        if worker_main::enabled() {
+            return false;
+        }
         cfg!(target_os = "macos")
     }
 
@@ -1240,26 +1588,17 @@ impl SoloRenderer {
     #[napi]
     pub fn close_window(&self) -> Result<()> {
         #[cfg(target_os = "macos")]
-        return GPUI_APP.with(|app| {
-            let app = app.borrow();
-            let app = app
-                .as_ref()
-                .ok_or_else(|| Error::from_reason("GPUI application is not initialized"))?;
-            let window = GPUI_WINDOW
-                .with(|window| *window.borrow())
-                .ok_or_else(|| Error::from_reason("GPUI window is not open"))?;
-            app.update(|cx| {
-                cx.update_window(window.into(), |_view, window, _cx| window.remove_window())
-                    .map_err(|error| Error::from_reason(error.to_string()))
-            })
-        });
+        if worker_main::must_forward() {
+            return on_main(close_macos_window);
+        }
+        #[cfg(target_os = "macos")]
+        return close_macos_window();
 
         #[cfg(not(target_os = "macos"))]
         Err(Error::from_reason(
             "Background window lifecycle is supported only on macOS",
         ))
     }
-
     /// Enter or leave the standard macOS zoomed state. AppKit owns the saved
     /// normal frame, so restoring uses exactly the platform's previous frame.
     #[napi]
@@ -1347,17 +1686,7 @@ impl SoloRenderer {
     pub fn set_menu_bar(&self, json: Option<String>) -> Result<()> {
         #[cfg(target_os = "macos")]
         {
-            return MAC_APPLICATION.with(|application| {
-                let mut application = application.borrow_mut();
-                let state = application
-                    .as_mut()
-                    .ok_or_else(|| Error::from_reason("GPUI application is not initialized"))?;
-                let callback = state.window.callback.clone();
-                let menu_bar = state.menu_bar.as_mut().ok_or_else(|| {
-                    Error::from_reason("The application was not created with menuBar options")
-                })?;
-                menu_bar.update(json.as_deref(), callback)
-            });
+            return set_macos_menu_bar(json);
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -1440,35 +1769,7 @@ impl SoloRenderer {
     pub fn set_system_appearance_subscription(&self, token: Option<String>) -> Result<String> {
         #[cfg(target_os = "macos")]
         {
-            if token.as_deref().is_some_and(str::is_empty) {
-                return Err(Error::from_reason(
-                    "System appearance subscription token must not be empty",
-                ));
-            }
-            MAC_APPLICATION.with(|state| {
-                if let Some(state) = state.borrow_mut().as_mut() {
-                    state.appearance_token = token.clone();
-                }
-            });
-            if GPUI_WINDOW.with(|window| window.borrow().is_none()) {
-                return MAC_APPLICATION
-                    .with(|state| {
-                        state
-                            .borrow()
-                            .as_ref()
-                            .map(|state| state.last_appearance.clone())
-                    })
-                    .ok_or_else(|| Error::from_reason("GPUI application is not initialized"));
-            }
-            let appearance = update_window(move |view, window, cx| {
-                view.set_system_appearance_subscription(token, window, cx)
-            })??;
-            MAC_APPLICATION.with(|state| {
-                if let Some(state) = state.borrow_mut().as_mut() {
-                    state.last_appearance = appearance.clone();
-                }
-            });
-            Ok(appearance)
+            set_macos_system_appearance_subscription(token)
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -1713,23 +2014,11 @@ impl SoloRenderer {
     pub fn scroll_to(&self, element_id: f64, x: f64, y: f64) -> Result<()> {
         let id = to_element_id(element_id)?;
         #[cfg(target_os = "macos")]
-        if !VIRTUAL_LIST_STATES.with(|cell| {
-            let states = cell.borrow();
-            let Some(state) = states.get(&id) else {
-                return false;
-            };
-            state.set_offset_from_scrollbar(gpui::point(gpui::px(x as f32), gpui::px(y as f32)));
-            true
-        }) {
-            SCROLL_HANDLES.with(|cell| {
-                let handles = cell.borrow();
-                if let Some(handle) = handles.get(&id) {
-                    handle.set_offset(gpui::point(gpui::px(x as f32), gpui::px(y as f32)));
-                }
-            });
+        if worker_main::must_forward() {
+            return on_main(move || macos_scroll_to(id, x, y));
         }
         #[cfg(target_os = "macos")]
-        return invalidate_window();
+        return macos_scroll_to(id, x, y);
 
         #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
         return self.send_ui_command(UiCommand::ScrollTo {
@@ -1751,30 +2040,16 @@ impl SoloRenderer {
     #[napi]
     pub fn scroll_to_item(&self, element_id: f64, index: f64) -> Result<()> {
         let id = to_element_id(element_id)?;
+        #[cfg(target_os = "macos")]
         let index = index as usize;
         #[cfg(target_os = "macos")]
-        if !VIRTUAL_LIST_STATES.with(|cell| {
-            let states = cell.borrow();
-            let Some(state) = states.get(&id) else {
-                return false;
-            };
-            state.scroll_to(gpui::ListOffset {
-                item_ix: index,
-                offset_in_item: gpui::px(0.0),
-            });
-            true
-        }) {
-            SCROLL_HANDLES.with(|cell| {
-                let handles = cell.borrow();
-                if let Some(handle) = handles.get(&id) {
-                    if !scroll_retained_child_into_view(&self.tree, handle, id, index) {
-                        handle.scroll_to_item(index);
-                    }
-                }
-            });
+        {
+            let tree = self.tree.clone();
+            if worker_main::must_forward() {
+                return on_main(move || macos_scroll_to_item(&tree, id, index));
+            }
+            return macos_scroll_to_item(&tree, id, index);
         }
-        #[cfg(target_os = "macos")]
-        return invalidate_window();
 
         #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
         return self.send_ui_command(UiCommand::ScrollToItem { id, index });
@@ -1794,28 +2069,11 @@ impl SoloRenderer {
     pub fn get_scroll_offset(&self, element_id: f64) -> Result<Option<Vec<f64>>> {
         let id = to_element_id(element_id)?;
         #[cfg(target_os = "macos")]
-        return Ok(VIRTUAL_LIST_STATES
-            .with(|cell| {
-                cell.borrow().get(&id).map(|state| {
-                    let offset = state.scroll_px_offset_for_scrollbar();
-                    vec![
-                        f64::from(f32::from(offset.x)),
-                        f64::from(f32::from(offset.y)),
-                    ]
-                })
-            })
-            .or_else(|| {
-                SCROLL_HANDLES.with(|cell| {
-                    let handles = cell.borrow();
-                    handles.get(&id).map(|handle| {
-                        let offset = handle.offset();
-                        vec![
-                            f64::from(f32::from(offset.x)),
-                            f64::from(f32::from(offset.y)),
-                        ]
-                    })
-                })
-            }));
+        if worker_main::must_forward() {
+            return on_main(move || Ok(macos_scroll_offset(id)));
+        }
+        #[cfg(target_os = "macos")]
+        return Ok(macos_scroll_offset(id));
 
         #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
         {
@@ -1843,6 +2101,70 @@ impl SoloRenderer {
 
 }
 
+#[cfg(target_os = "macos")]
+fn macos_scroll_to(id: u64, x: f64, y: f64) -> Result<()> {
+    if !VIRTUAL_LIST_STATES.with(|cell| {
+        let states = cell.borrow();
+        let Some(state) = states.get(&id) else {
+            return false;
+        };
+        state.set_offset_from_scrollbar(gpui::point(gpui::px(x as f32), gpui::px(y as f32)));
+        true
+    }) {
+        SCROLL_HANDLES.with(|cell| {
+            let handles = cell.borrow();
+            if let Some(handle) = handles.get(&id) {
+                handle.set_offset(gpui::point(gpui::px(x as f32), gpui::px(y as f32)));
+            }
+        });
+    }
+    invalidate_window()
+}
+
+#[cfg(target_os = "macos")]
+fn macos_scroll_to_item(tree: &Arc<Mutex<RetainedTree>>, id: u64, index: usize) -> Result<()> {
+    if !VIRTUAL_LIST_STATES.with(|cell| {
+        let states = cell.borrow();
+        let Some(state) = states.get(&id) else {
+            return false;
+        };
+        state.scroll_to(gpui::ListOffset {
+            item_ix: index,
+            offset_in_item: gpui::px(0.0),
+        });
+        true
+    }) {
+        SCROLL_HANDLES.with(|cell| {
+            let handles = cell.borrow();
+            if let Some(handle) = handles.get(&id) {
+                if !scroll_retained_child_into_view(tree, handle, id, index) {
+                    handle.scroll_to_item(index);
+                }
+            }
+        });
+    }
+    invalidate_window()
+}
+
+#[cfg(target_os = "macos")]
+fn macos_scroll_offset(id: u64) -> Option<Vec<f64>> {
+    VIRTUAL_LIST_STATES
+        .with(|cell| {
+            cell.borrow().get(&id).map(|state| {
+                let offset = state.scroll_px_offset_for_scrollbar();
+                vec![f64::from(f32::from(offset.x)), f64::from(f32::from(offset.y))]
+            })
+        })
+        .or_else(|| {
+            SCROLL_HANDLES.with(|cell| {
+                cell.borrow().get(&id).map(|handle| {
+                    let offset = handle.offset();
+                    vec![f64::from(f32::from(offset.x)), f64::from(f32::from(offset.y))]
+                })
+            })
+        })
+}
+
 #[cfg(feature = "automation")]
 #[napi]
 impl SoloRenderer {
@@ -1850,8 +2172,16 @@ impl SoloRenderer {
     #[napi]
     pub fn get_automation_tree(&self) -> Result<String> {
         self.request_invalidate()?;
+        #[cfg(target_os = "macos")]
+        let bounds = if worker_main::must_forward() {
+            on_main(|| Ok(crate::automation::all_bounds()))?
+        } else {
+            crate::automation::all_bounds()
+        };
+        #[cfg(not(target_os = "macos"))]
+        let bounds = crate::automation::all_bounds();
         let tree = self.tree.lock().unwrap();
-        let json = tree.to_json(&crate::automation::all_bounds());
+        let json = tree.to_json(&bounds);
         serde_json::to_string(&json)
             .map_err(|e| Error::from_reason(format!("JSON serialization failed: {}", e)))
     }
@@ -1860,6 +2190,11 @@ impl SoloRenderer {
     #[napi]
     pub fn get_element_bounds(&self, id: f64) -> Result<Option<Vec<f64>>> {
         let id = to_element_id(id)?;
+        #[cfg(target_os = "macos")]
+        if worker_main::must_forward() {
+            return on_main(move || Ok(crate::automation::get_bounds(id)))
+                .map(|b| b.map(|bounds| vec![bounds.x, bounds.y, bounds.width, bounds.height]));
+        }
         Ok(crate::automation::get_bounds(id).map(|bounds| {
             vec![bounds.x, bounds.y, bounds.width, bounds.height]
         }))
@@ -1878,8 +2213,12 @@ impl SoloRenderer {
 
     #[cfg(feature = "automation")]
     #[napi]
-    pub fn get_painted_text(&self) -> Vec<String> {
-        crate::text::painted_text()
+    pub fn get_painted_text(&self) -> Result<Vec<String>> {
+        #[cfg(target_os = "macos")]
+        if worker_main::must_forward() {
+            return on_main(|| Ok(crate::text::painted_text()));
+        }
+        Ok(crate::text::painted_text())
     }
 
     #[cfg(feature = "automation")]
@@ -4308,9 +4647,11 @@ impl SoloRenderer {
         &self,
         json: String,
     ) -> Result<AsyncTask<crate::context_menu::ContextMenuTask>> {
-        update_window(|_view, window, _cx| {
-            crate::context_menu::show(&json, &self.tree.lock().unwrap(), window)
-        })?
+        let tree = self.tree.clone();
+        let task = update_window(move |_view, window, _cx| {
+            crate::context_menu::show(&json, &tree.lock().unwrap(), window)
+        })??;
+        Ok(AsyncTask::new(task))
     }
 
     #[napi]
@@ -4332,7 +4673,7 @@ impl SoloRenderer {
                 "Renderer is not initialized. Call init() first.",
             ));
         }
-        let receiver = update_window(|_view, _window, _cx| {
+        let receiver = update_window(move |_view, _window, _cx| {
             crate::native_view::with_registry(|registry| {
                 registry
                     .evaluate_javascript(element_id, &script)
@@ -4354,7 +4695,7 @@ impl SoloRenderer {
                 "Renderer is not initialized. Call init() first.",
             ));
         }
-        let receiver = update_window(|_view, _window, _cx| {
+        let receiver = update_window(move |_view, _window, _cx| {
             crate::native_view::with_registry(|registry| {
                 registry
                     .wait_for_ready(element_id)
@@ -4384,7 +4725,7 @@ impl SoloRenderer {
     ) -> Result<()> {
         let element_id = to_element_id(element_id)?;
         let navigation_id = to_element_id(navigation_id)?;
-        update_window(|_view, _window, _cx| {
+        update_window(move |_view, _window, _cx| {
             let resolved = crate::native_view::with_registry(|registry| {
                 registry.decide_navigation(element_id, navigation_id, allow)
             });

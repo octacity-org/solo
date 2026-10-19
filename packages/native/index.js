@@ -578,5 +578,8 @@ if (!nativeBinding) {
 module.exports = nativeBinding
 module.exports.SoloRenderer = nativeBinding.SoloRenderer
 module.exports.TestSoloRenderer = nativeBinding.TestSoloRenderer
+module.exports.enableWorkerMainThread = nativeBinding.enableWorkerMainThread
 module.exports.openExternalUrl = nativeBinding.openExternalUrl
+module.exports.requestProcessExit = nativeBinding.requestProcessExit
+module.exports.runMainLoop = nativeBinding.runMainLoop
 module.exports.writeClipboardText = nativeBinding.writeClipboardText

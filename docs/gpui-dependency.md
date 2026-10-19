@@ -52,6 +52,13 @@ The Solid suite includes bounded child-process regressions for idle ticks,
 repeated input, painting, and WKWebView creation/destruction. The watchdog is
 outside the native process so a blocked `tick()` cannot freeze the test runner.
 
+## Worker mode
+
+macOS worker mode (see `AGENTS.md`) needs no fork API: it builds the platform
+with upstream `MacPlatform::new(false)` and runs
+`gpui::Application::with_platform(...).run(...)` on the main thread. Only the
+embedded `tick` path depends on `new_embedded`.
+
 ## Fork vs upstream
 
 The fork branch is upstream `zed-industries/zed@fd82517a11` plus four commits:

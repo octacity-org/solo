@@ -364,6 +364,7 @@ impl TestSoloRenderer {
             })
             .map_err(|error| Error::from_reason(error.to_string()))?
         })
+        .map(AsyncTask::new)
     }
 
     #[napi]

@@ -14,8 +14,9 @@ struct DelegateIvars {
 }
 
 define_class!(
-    // SAFETY: NSObject has no subclassing requirements. AppKit delegate calls
-    // and the embedded frame pump both run on the macOS main thread.
+    // SAFETY: NSObject has no subclassing requirements. AppKit delegate calls,
+    // the embedded frame pump and worker-mode main tasks all run on the macOS
+    // main thread.
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
     #[ivars = DelegateIvars]
@@ -36,10 +37,17 @@ define_class!(
             if crate::context_menu::has_pending_cleanup() {
                 QUIT_PENDING.set(true);
                 // TerminateLater starts an AppKit modal run loop, blocking JS.
-                // Cancel this attempt and retry from the regular frame pump.
+                // Cancel this attempt and retry from the regular frame pump, or
+                // in worker mode when the last menu session completes.
                 return NSApplicationTerminateReply::TerminateCancel;
             }
             QUIT_PENDING.set(false);
+            if crate::renderer::worker_main::enabled() {
+                // The Worker exits first so its JS `exit` handlers run; it then
+                // ends the process through requestProcessExit.
+                crate::renderer::request_worker_quit();
+                return NSApplicationTerminateReply::TerminateCancel;
+            }
             let original = &self.ivars().original;
             if original.respondsToSelector(sel!(applicationShouldTerminate:)) {
                 original.applicationShouldTerminate(app)

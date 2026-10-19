@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
-use napi::bindgen_prelude::{AsyncTask, Error, Result, Task};
+use napi::bindgen_prelude::{Error, Result, Task};
 use napi_derive::napi;
 use objc2_app_kit::NSView;
 use objc2_core_foundation::CGPoint;
@@ -51,10 +51,23 @@ struct Completion<'a>(&'a Session);
 impl Drop for Completion<'_> {
     fn drop(&mut self) {
         self.0.completed.store(true, Ordering::Release);
+        // Worker mode has no frame pump to retry a quit deferred for cleanup.
+        if crate::renderer::worker_main::enabled() {
+            let _ = crate::renderer::on_main_async(|| {
+                if let Err(error) = crate::macos_shutdown::poll() {
+                    log::error!("Deferred quit failed: {error}");
+                }
+            });
+        }
     }
 }
 
 pub(crate) fn cancel(request_id: u64) {
+    // Menu state lives on the main thread, where `show` ran.
+    if crate::renderer::worker_main::must_forward() {
+        forward(move || cancel(request_id));
+        return;
+    }
     ACTIVE.with(|cell| {
         if let Some(active) = cell.borrow().as_ref() {
             if active.id == request_id {
@@ -82,6 +95,11 @@ pub(crate) fn cancel_all() {
 }
 
 pub(crate) fn cancel_destroyed(ids: &[u64]) {
+    if crate::renderer::worker_main::must_forward() {
+        let ids = ids.to_vec();
+        forward(move || cancel_destroyed(&ids));
+        return;
+    }
     let should_cancel = ACTIVE.with(|cell| {
         cell.borrow()
             .as_ref()
@@ -95,6 +113,10 @@ pub(crate) fn cancel_destroyed(ids: &[u64]) {
 /// Automation follows the native menu's keyboard focus while it is tracking.
 #[cfg(feature = "automation")]
 pub(crate) fn dispatch_keys(keys: &[gpui::Keystroke]) -> bool {
+    if crate::renderer::worker_main::must_forward() {
+        let keys = keys.to_vec();
+        return crate::renderer::on_main(move || Ok(dispatch_keys(&keys))).unwrap_or(false);
+    }
     ACTIVE.with(|cell| {
         let active = cell.borrow();
         let Some(session) = active.as_ref().and_then(|a| a.session.upgrade()) else {
@@ -114,6 +136,12 @@ pub(crate) fn dispatch_keys(keys: &[gpui::Keystroke]) -> bool {
         }
         true
     })
+}
+
+fn forward(f: impl FnOnce() + Send + 'static) {
+    if let Err(error) = crate::renderer::on_main_async(f) {
+        log::error!("Context menu update failed: {error}");
+    }
 }
 
 fn helper_path() -> Result<PathBuf> {
@@ -167,7 +195,7 @@ pub(crate) fn show(
     json: &str,
     tree: &crate::retained_tree::RetainedTree,
     window: &gpui::Window,
-) -> Result<AsyncTask<ContextMenuTask>> {
+) -> Result<ContextMenuTask> {
     if crate::macos_shutdown::is_quitting() {
         return Err(Error::from_reason("Application is quitting"));
     }
@@ -238,11 +266,11 @@ pub(crate) fn show(
             session: Arc::downgrade(&session),
         })
     });
-    Ok(AsyncTask::new(ContextMenuTask {
+    Ok(ContextMenuTask {
         payload,
         helper,
         session,
-    }))
+    })
 }
 
 pub struct ContextMenuTask {

@@ -73,6 +73,11 @@ function createNativeRenderer(
       return
     }
     if (event) {
+      // Worker mode: AppKit asked to quit. Exit through the Worker so JS
+      // `exit` handlers run, as they do when the embedded frame loop ends.
+      if (event.elementId === 0 && event.eventType === "applicationQuitRequested") {
+        process.exit(0)
+      }
       handleSoloEvent(event)
       onEvent?.(event)
     }
