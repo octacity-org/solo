@@ -12,3 +12,4 @@ packages/native/solo-context-menu.darwin-*
 packages/native/target
 # Temporary implementation plans (octapowers).
 /docs/octapowers/plans/
+/docs/octapowers
