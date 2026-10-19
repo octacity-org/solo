@@ -2484,12 +2484,14 @@ impl SoloView {
 
         let tree_arc = self.tree.clone();
         let tree = tree_arc.lock().unwrap();
-        let child_matches = tree
+        // Rows can move between this list's snapshot and its layout. Build the
+        // snapshot's row while it is still in the list: an empty stand-in is
+        // measured as zero height and keeps it until the row is laid out again.
+        let child_in_list = tree
             .elements
-            .get(&list_id)
-            .and_then(|list| list.children.get(index))
-            == Some(&expected_child_id);
-        if !child_matches {
+            .get(&expected_child_id)
+            .is_some_and(|child| child.parent == Some(list_id));
+        if !child_in_list {
             return gpui::Empty.into_any_element();
         }
 
@@ -2774,7 +2776,8 @@ impl VirtualListEntry {
             return;
         }
 
-        if self.child_ids != child_ids {
+        let mut spliced = self.child_ids != child_ids;
+        if spliced {
             let prefix = self
                 .child_ids
                 .iter()
@@ -2793,12 +2796,6 @@ impl VirtualListEntry {
                     .iter()
                     .cloned(),
             );
-            if let Some(height) = config.estimated_item_height {
-                self.state = self
-                    .state
-                    .clone()
-                    .with_uniform_item_height(gpui::px(height));
-            }
         }
 
         for (index, (&id, focus_handle)) in child_ids.iter().zip(&row_focus_handles).enumerate() {
@@ -2808,6 +2805,16 @@ impl VirtualListEntry {
             if focusability_changed {
                 self.state
                     .splice_focusable(index..index + 1, std::iter::once(focus_handle.clone()));
+                spliced = true;
+            }
+        }
+        // Spliced rows start without a size hint.
+        if spliced {
+            if let Some(height) = config.estimated_item_height {
+                self.state = self
+                    .state
+                    .clone()
+                    .with_uniform_item_height(gpui::px(height));
             }
         }
 
@@ -3290,12 +3297,94 @@ fn build_virtual_list(
         };
         view.build_virtual_child(list_id, index, child_id, inherited, window, cx)
     });
-    let mut list =
-        gpui::list(list_state, render_item).with_sizing_behavior(gpui::ListSizingBehavior::Auto);
+    let mut list = gpui::list(list_state.clone(), render_item)
+        .with_sizing_behavior(gpui::ListSizingBehavior::Auto);
     if let Some(style) = element.style.as_ref() {
         list = apply_styles(list, style);
     }
-    list.into_any_element()
+    match config.estimated_item_height {
+        Some(height) => EstimatedHeightList {
+            list,
+            state: list_state,
+            height: gpui::px(height),
+        }
+        .into_any_element(),
+        None => list.into_any_element(),
+    }
+}
+
+/// GPUI's list drops every row's size hint when its width changes, including
+/// its first layout, so unmeasured rows count as zero height and pixel scrolls
+/// and the scrollbar stop short. Re-apply the estimate after that reset.
+struct EstimatedHeightList {
+    list: gpui::List,
+    state: gpui::ListState,
+    height: gpui::Pixels,
+}
+
+impl gpui::Element for EstimatedHeightList {
+    type RequestLayoutState = ();
+    type PrepaintState = <gpui::List as gpui::Element>::PrepaintState;
+
+    fn id(&self) -> Option<gpui::ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        id: Option<&gpui::GlobalElementId>,
+        inspector_id: Option<&gpui::InspectorElementId>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) -> (gpui::LayoutId, ()) {
+        self.list.request_layout(id, inspector_id, window, cx)
+    }
+
+    fn prepaint(
+        &mut self,
+        id: Option<&gpui::GlobalElementId>,
+        inspector_id: Option<&gpui::InspectorElementId>,
+        bounds: gpui::Bounds<gpui::Pixels>,
+        request_layout: &mut (),
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) -> Self::PrepaintState {
+        let previous_width = self.state.viewport_bounds().size.width;
+        let prepaint = self
+            .list
+            .prepaint(id, inspector_id, bounds, request_layout, window, cx);
+        if bounds.size.width != previous_width {
+            // Fills only rows without a size, so measured heights are kept.
+            let _ = self.state.clone().with_uniform_item_height(self.height);
+        }
+        prepaint
+    }
+
+    fn paint(
+        &mut self,
+        id: Option<&gpui::GlobalElementId>,
+        inspector_id: Option<&gpui::InspectorElementId>,
+        bounds: gpui::Bounds<gpui::Pixels>,
+        request_layout: &mut (),
+        prepaint: &mut Self::PrepaintState,
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) {
+        self.list
+            .paint(id, inspector_id, bounds, request_layout, prepaint, window, cx);
+    }
+}
+
+impl gpui::IntoElement for EstimatedHeightList {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
 }
 
 fn virtual_row_ancestor(tree: &RetainedTree, list_id: u64, element_id: u64) -> Option<u64> {

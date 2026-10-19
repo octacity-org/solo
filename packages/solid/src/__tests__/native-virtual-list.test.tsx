@@ -117,6 +117,49 @@ describeNative("<virtual-list>", () => {
     expect(painted).not.toContain("row-0")
   })
 
+  it("keeps estimated heights for pixel scrolls after the first layout", () => {
+    const { render, renderer } = createSolidNativeTestRoot()
+    render(() => (
+      <virtual-list
+        overdraw={0}
+        estimatedItemHeight={40}
+        style={{ width: 400, height: 160 }}
+      >
+        {Rows({ count: 100 })}
+      </virtual-list>
+    ))
+
+    // GPUI drops size hints on its first layout; unmeasured rows must still
+    // count at the estimated height, or the scroll clamps near the top.
+    const list = renderer.findByType("virtual-list")[0]
+    renderer.scrollTo(list.id, 0, -3000)
+    expect(renderer.getScrollOffset(list.id)?.[1]).toBe(-3000)
+    expect(renderer.getPaintedText()).toContain("row-75")
+  })
+
+  it("keeps estimated heights when existing rows become focusable", () => {
+    const t = createSolidNativeTestRoot()
+    const rows = (focusable: boolean) => (
+      <virtual-list
+        overdraw={0}
+        estimatedItemHeight={40}
+        style={{ width: 400, height: 160 }}
+      >
+        {Array.from({ length: 100 }, (_, index) => (
+          <div style={{ height: 40, flexShrink: 0 }}>
+            {focusable ? <input value={`row-${index}`} /> : <Text>{`row-${index}`}</Text>}
+          </div>
+        ))}
+      </virtual-list>
+    )
+    t.render(() => rows(false))
+    t.render(() => rows(true))
+
+    const list = t.renderer.findByType("virtual-list")[0]
+    t.renderer.scrollTo(list.id, 0, -3000)
+    expect(t.renderer.getScrollOffset(list.id)?.[1]).toBe(-3000)
+  })
+
   it("lazily builds custom elements inside rows", () => {
     const { render, renderer } = createSolidNativeTestRoot()
     render(() => (
