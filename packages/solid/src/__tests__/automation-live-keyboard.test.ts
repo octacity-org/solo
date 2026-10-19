@@ -53,10 +53,6 @@ function recordingRenderer(
     clockSet: (ms) => ms,
     clockFastForward: (ms) => ms,
     clockResume: () => 0,
-    // The adapter must pump the frame loop after every input.
-    tick() {
-      calls.push("tick")
-    },
     simulateKeystrokes(keys) {
       calls.push(`keystrokes:${keys}`)
     },
@@ -91,13 +87,13 @@ async function appOver(backend: InProcessBackend): Promise<App> {
 const selectAll = process.platform === "darwin" ? "cmd-a" : "ctrl-a"
 
 describe("live keyboard injection", () => {
-  it("types into the focused element and pumps the frame loop", () => {
+  it("types into the focused element", () => {
     const { renderer, calls } = recordingRenderer()
     const test = liveRendererAsTest(renderer)
 
     test.nativeSimulateKeystrokes(INPUT_ID, "n e w s")
 
-    expect(calls).toEqual([`focus:${INPUT_ID}`, "keystrokes:n e w s", "tick"])
+    expect(calls).toEqual([`focus:${INPUT_ID}`, "keystrokes:n e w s"])
   })
 
   it("types without an element when nothing is targeted", () => {
@@ -108,7 +104,7 @@ describe("live keyboard injection", () => {
 
     // No focus call: the caller did not name an element, so whatever is
     // already focused receives the keys.
-    expect(calls).toEqual(["keystrokes:enter", "tick"])
+    expect(calls).toEqual(["keystrokes:enter"])
   })
 
   it("dispatches key down and key up separately, honouring isHeld", () => {
@@ -121,10 +117,8 @@ describe("live keyboard injection", () => {
     expect(calls).toEqual([
       `focus:${INPUT_ID}`,
       "keyDown:shift:true",
-      "tick",
       `focus:${INPUT_ID}`,
       "keyUp:shift",
-      "tick",
     ])
   })
 
@@ -169,19 +163,14 @@ describe("live keyboard injection", () => {
     expect(calls).toEqual([
       `focus:${INPUT_ID}`,
       `keystrokes:${selectAll} n e w s`,
-      "tick",
       `focus:${INPUT_ID}`,
       "keystrokes:cmd-a",
-      "tick",
       `focus:${INPUT_ID}`,
       "keystrokes:backspace",
-      "tick",
       `focus:${INPUT_ID}`,
       `keystrokes:${selectAll} İ s t a n b u l space 世 界`,
-      "tick",
       `focus:${INPUT_ID}`,
       "keystrokes:enter",
-      "tick",
     ])
   })
 })

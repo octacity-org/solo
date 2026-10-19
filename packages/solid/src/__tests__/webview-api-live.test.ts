@@ -8,7 +8,7 @@ const fixture = fileURLToPath(new URL("./fixtures/webview-api-live.mjs", import.
 
 describe.skipIf(process.platform !== "darwin")("live macOS WebView API", () => {
   it("loads generated HTML and safely evaluates JavaScript across lifecycle changes", async () => {
-    const { stdout } = await run(process.execPath, [fixture], {
+    const { stdout } = await run("bun", [fixture], {
       timeout: 20_000,
       killSignal: "SIGKILL",
     }).catch((error) => {

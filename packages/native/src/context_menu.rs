@@ -51,7 +51,7 @@ struct Completion<'a>(&'a Session);
 impl Drop for Completion<'_> {
     fn drop(&mut self) {
         self.0.completed.store(true, Ordering::Release);
-        // Worker mode has no frame pump to retry a quit deferred for cleanup.
+        // Retry a quit that was deferred until menu helpers finished.
         if crate::renderer::worker_main::enabled() {
             let _ = crate::renderer::on_main_async(|| {
                 if let Err(error) = crate::macos_shutdown::poll() {

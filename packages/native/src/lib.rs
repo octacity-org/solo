@@ -12,8 +12,6 @@ mod context_menu;
 #[cfg(target_os = "macos")]
 mod macos_shutdown;
 #[cfg(target_os = "macos")]
-mod macos_event_pump;
-#[cfg(target_os = "macos")]
 mod menu_bar;
 mod markdown;
 mod motion;

@@ -87,12 +87,11 @@ export function solidUniversal(): Plugin {
     },
     load(id) {
       if (!split) return
-      // Node has no stdio-preserving Worker, so it keeps the embedded loop.
       if (id === BOOT_ID) {
         return [
-          `import { runAppWorker, supportsWorkerMode } from ${JSON.stringify(workerModule)}`,
+          `import { runAppWorker, usesWorkerMode } from ${JSON.stringify(workerModule)}`,
           `const app = new URL(${JSON.stringify(APP_FILE)}, import.meta.url)`,
-          `if (supportsWorkerMode()) runAppWorker(app)`,
+          `if (usesWorkerMode()) runAppWorker(app)`,
           `else await import(app.href)`,
         ].join("\n")
       }

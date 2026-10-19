@@ -466,7 +466,6 @@ export interface LiveAutomationRenderer {
   simulateKeystrokes?(keystrokes: string): void
   simulateKeyDown?(keystroke: string, isHeld?: boolean): void
   simulateKeyUp?(keystroke: string): void
-  tick?(): void
   focusElement(elementId: number): void
   blur(): void
   scrollTo(elementId: number, x: number, y: number): void
@@ -487,10 +486,6 @@ export interface LiveAutomationRenderer {
 export function liveRendererAsTest(
   renderer: LiveAutomationRenderer
 ): TestAutomationRenderer {
-  const afterInput = (): void => {
-    renderer.tick?.()
-  }
-
   /** A renderer built without keyboard support at all. */
   const noKeyboard = (): AutomationError =>
     new AutomationError(
@@ -517,19 +512,15 @@ export function liveRendererAsTest(
   return {
     nativeSimulateClick(x, y) {
       renderer.simulateClick(x, y)
-      afterInput()
     },
     nativeSimulateMouseDown(x, y, button) {
       renderer.simulateMouseDown(x, y, button)
-      afterInput()
     },
     nativeSimulateMouseUp(x, y, button) {
       renderer.simulateMouseUp(x, y, button)
-      afterInput()
     },
     nativeSimulateMouseMove(x, y, pressedButton) {
       renderer.simulateMouseMove(x, y, pressedButton)
-      afterInput()
     },
     nativeSimulateScrollWheel(x, y, deltaX, deltaY) {
       if (!renderer.simulateScrollWheel) {
@@ -540,7 +531,6 @@ export function liveRendererAsTest(
       }
       try {
         renderer.simulateScrollWheel(x, y, deltaX, deltaY)
-        afterInput()
       } catch (error) {
         // The native gate is per-platform (renderer.rs compiles simulate_*
         // only for macOS); surface that as Unsupported, not Protocol noise.
@@ -555,7 +545,6 @@ export function liveRendererAsTest(
       if (!renderer.simulateKeystrokes) throw noKeyboard()
       try {
         renderer.simulateKeystrokes(keystrokes)
-        afterInput()
       } catch (error) {
         throw keyboardFailure("keystrokes", error)
       }
@@ -569,7 +558,6 @@ export function liveRendererAsTest(
         // test harness in packages/solid/src/testing.ts.
         renderer.focusElement(elementId)
         renderer.simulateKeystrokes(keystrokes)
-        afterInput()
       } catch (error) {
         throw keyboardFailure("keystrokes", error)
       }
@@ -579,7 +567,6 @@ export function liveRendererAsTest(
       try {
         renderer.focusElement(elementId)
         renderer.simulateKeyDown(keystroke, isHeld)
-        afterInput()
       } catch (error) {
         throw keyboardFailure("keyDown", error)
       }
@@ -589,7 +576,6 @@ export function liveRendererAsTest(
       try {
         renderer.focusElement(elementId)
         renderer.simulateKeyUp(keystroke)
-        afterInput()
       } catch (error) {
         throw keyboardFailure("keyUp", error)
       }

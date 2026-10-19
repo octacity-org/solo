@@ -13,9 +13,16 @@ import { enableWorkerMainThread, requestProcessExit, runMainLoop } from "@solo/n
 
 const STDIN_IS_TTY = "soloStdinIsTTY"
 
-/** Whether this process can run the app in a Worker. */
-export function supportsWorkerMode(): boolean {
-  return process.platform === "darwin" && typeof process.versions.bun === "string"
+/**
+ * Whether the app runs in a Worker: always on macOS, where GPUI needs the
+ * process main thread. Elsewhere GPUI owns its own UI thread.
+ */
+export function usesWorkerMode(): boolean {
+  if (process.platform !== "darwin") return false
+  if (typeof process.versions.bun !== "string") {
+    throw new Error("On macOS, Solo apps run under Bun: Node has no Worker that keeps stdio working.")
+  }
+  return true
 }
 
 /** Main thread: start the app Worker, then run the native loop. Never returns. */

@@ -1,7 +1,7 @@
 // Solo — Solid bindings for Solo.
 
 export { render } from "./root.js"
-export type { Root, RenderOptions, FrameLoop } from "./root.js"
+export type { Root, RenderOptions } from "./root.js"
 export { registerApplicationCommand } from "./commands.js"
 export { configureMenuBar } from "./menu-bar.js"
 export type { MenuBarConfiguration, MenuBarItem } from "./menu-bar.js"

@@ -1,18 +1,17 @@
 /// Solo — render Solid apps into a native Solo window.
 ///
 /// Creates the napi SoloRenderer, opens the window, wires native events into
-/// Solid's handler registry, batches mutations, and drives the frame loop
-/// where the platform needs it.
+/// Solid's handler registry, and batches mutations.
 
 import { SoloRenderer } from "@solo/native"
 import type { EventPayload, WindowOptions } from "@solo/native"
-import { clearEventHandlers, handleSoloEvent, startFrameLoop } from "@solo/core"
+import { clearEventHandlers, handleSoloEvent } from "@solo/core"
 import {
   InProcessBackend,
   liveRendererAsTest,
   serveAutomationStdio,
 } from "@solo/core/automation"
-import type { FrameLoop, NativeRenderer } from "@solo/core"
+import type { NativeRenderer } from "@solo/core"
 import type { LiveAutomationRenderer } from "@solo/core/automation"
 import type { Element as SolidElement } from "solid-js"
 import { mount, resetIdCounter } from "./runtime.js"
@@ -35,8 +34,6 @@ export interface Root {
   quitApplication: () => void
 }
 
-export type { FrameLoop }
-
 export interface RenderOptions extends WindowOptions {
   onEvent?: (event: EventPayload) => void
   /** Inject a renderer (tests). Defaults to a real SoloRenderer window. */
@@ -48,7 +45,6 @@ const RENDER_HOST_KEY = "__soloSolidRenderHost"
 type RenderSlot = {
   renderer?: NativeRenderer
   root?: Root
-  loop?: FrameLoop
 }
 
 function renderSlot(): RenderSlot {
@@ -73,8 +69,8 @@ function createNativeRenderer(
       return
     }
     if (event) {
-      // Worker mode: AppKit asked to quit. Exit through the Worker so JS
-      // `exit` handlers run, as they do when the embedded frame loop ends.
+      // macOS: AppKit asked to quit. Exit through the Worker so JS `exit`
+      // handlers run before the process ends.
       if (event.elementId === 0 && event.eventType === "applicationQuitRequested") {
         process.exit(0)
       }
@@ -153,17 +149,6 @@ export function render(code: () => SolidElement, options: RenderOptions = {}): R
     },
   }
 
-  if (
-    !options.renderer &&
-    host instanceof SoloRenderer &&
-    typeof host.requiresTick === "function" &&
-    host.requiresTick()
-  ) {
-    slot.loop?.stop()
-    slot.loop = startFrameLoop(host, {
-      onTerminated: () => process.exit(0),
-    })
-  }
   console.log("[solo] mount complete")
   return slot.root
 }

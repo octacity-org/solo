@@ -51,11 +51,7 @@ export declare class SoloRenderer {
    * Acquires the tree mutex ONCE for the entire batch.
    */
   applyBatch(json: string): Array<number>
-  /** Pump the native event loop. Returns false after the last window closes. */
-  tick(): boolean
   isInitialized(): boolean
-  /** Whether JavaScript must drive the native event loop with tick(). */
-  requiresTick(): boolean
   /** Reopen a closed background window or activate the existing window. */
   showWindow(): void
   /** Close the current macOS window. Background applications keep running. */
@@ -374,7 +370,7 @@ export declare class TestSoloRenderer {
 
 /**
  * Select worker mode for this process. The generated bootstrap calls this
- * before it starts the app Worker, so the Worker never sees embedded mode.
+ * before it starts the app Worker, so the Worker's calls always forward.
  */
 export declare function enableWorkerMainThread(): void
 

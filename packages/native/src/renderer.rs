@@ -10,10 +10,9 @@
 //!   renderer.createElement(1, "div")     // mutations from Solid renderer
 //!   renderer.appendChild(0, 1)
 //!   renderer.commitMutations()           // signal batch complete
-//!   setTimeout(function loop() {         // drive AppKit on macOS
-//!     if (!renderer.tick()) process.exit(0)
-//!     setTimeout(loop, 8)
-//!   })
+//!
+//! On macOS the renderer runs in a Worker while the main thread runs GPUI's
+//! loop (`runMainLoop`); see the worker-mode section below.
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
 use futures::{channel::mpsc, StreamExt as _};
 use gpui::AppContext as _;
@@ -195,19 +194,7 @@ struct MacApplicationState {
     window_closed: bool,
 }
 
-#[cfg(target_os = "macos")]
-struct EmbeddedPlatform {
-    // Fields drop in declaration order: restore the original AppKit delegate
-    // before releasing the final platform reference, including at thread exit.
-    _shutdown: Option<crate::macos_shutdown::ShutdownGuard>,
-    platform: Rc<gpui_macos::MacPlatform>,
-}
-
 thread_local! {
-    #[cfg(target_os = "macos")]
-    static MAC_PLATFORM: RefCell<Option<EmbeddedPlatform>> = const { RefCell::new(None) };
-    #[cfg(target_os = "macos")]
-    static GPUI_APP: RefCell<Option<gpui::ApplicationHandle>> = const { RefCell::new(None) };
     #[cfg(target_os = "macos")]
     static GPUI_WINDOW: RefCell<Option<gpui::WindowHandle<SoloView>>> = const { RefCell::new(None) };
     #[cfg(target_os = "macos")]
@@ -299,15 +286,9 @@ pub(crate) fn on_main_async(f: impl FnOnce() + Send + 'static) -> Result<()> {
         .map_err(|_| Error::from_reason("The main-thread GPUI loop is not running"))
 }
 
-/// `App` access through the embedded handle, or the worker-mode main loop.
+/// `App` access on the main thread, inside the running main loop.
 #[cfg(target_os = "macos")]
 fn app_update<R>(f: impl FnOnce(&mut gpui::App) -> R) -> Result<R> {
-    if GPUI_APP.with(|app| app.borrow().is_some()) {
-        return GPUI_APP.with(|app| {
-            let app = app.borrow();
-            Ok(app.as_ref().expect("checked above").update(f))
-        });
-    }
     let app = MAIN_APP
         .with(|app| app.borrow().clone())
         .ok_or_else(|| Error::from_reason("GPUI application is not initialized"))?;
@@ -315,7 +296,7 @@ fn app_update<R>(f: impl FnOnce(&mut gpui::App) -> R) -> Result<R> {
 }
 
 /// Select worker mode for this process. The generated bootstrap calls this
-/// before it starts the app Worker, so the Worker never sees embedded mode.
+/// before it starts the app Worker, so the Worker's calls always forward.
 #[cfg(target_os = "macos")]
 #[napi]
 pub fn enable_worker_main_thread() {
@@ -392,7 +373,8 @@ pub fn run_main_loop() -> Result<()> {
         .take()
         .ok_or_else(|| Error::from_reason("runMainLoop was already called"))?;
     // Built here rather than through gpui_platform::application() so Solo can
-    // install its menu validator, as the embedded path does.
+    // install its menu validator. GPUI's default validator checks only action
+    // types; Solo commands share one type but have independent enabled states.
     let platform = Rc::new(gpui_macos::MacPlatform::new(false));
     platform.on_validate_app_menu_command(Box::new(|action| {
         app_update(|cx| crate::application_commands::is_menu_action_available(action, cx))
@@ -416,7 +398,7 @@ pub fn run_main_loop() -> Result<()> {
     Ok(())
 }
 
-/// Window-close and app-quit cleanup shared by the embedded and worker loops.
+/// Window-close and app-quit cleanup for the main loop.
 #[cfg(target_os = "macos")]
 fn register_macos_lifecycle(cx: &mut gpui::App) {
     let closed = cx.on_window_closed(|_cx, window_id| {
@@ -1092,11 +1074,15 @@ impl SoloRenderer {
         }
 
         #[cfg(target_os = "macos")]
-        if worker_main::enabled() {
+        {
+            if !worker_main::enabled() {
+                return Err(Error::from_reason(
+                    "On macOS, Solo apps run in a Worker started by the bootstrap that \
+                     @solo/solid/vite generates. Build with Vite and run the built entry with Bun.",
+                ));
+            }
             return self.init_worker_mode(options);
         }
-        #[cfg(target_os = "macos")]
-        return self.init_macos(options);
 
         #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
         return self.init_threaded(options);
@@ -1150,126 +1136,6 @@ impl SoloRenderer {
             }
             launched
         })?;
-        *self.initialized.lock().unwrap() = true;
-        Ok(())
-    }
-
-    #[cfg(target_os = "macos")]
-    fn init_macos(&self, options: Option<WindowOptions>) -> Result<()> {
-        let options = options.unwrap_or_default();
-
-        if let Some(menu_bar) = options.menu_bar.as_ref() {
-            validate_menu_bar_options(menu_bar)?;
-        }
-
-        {
-            let initialized = self.initialized.lock().unwrap();
-            if *initialized {
-                return Err(Error::from_reason("Renderer is already initialized"));
-            }
-        }
-        if MAC_PLATFORM.with(|platform| platform.borrow().is_some()) {
-            return Err(Error::from_reason(
-                "A GPUI application already exists on this thread",
-            ));
-        }
-
-        let title = options.title.clone().unwrap_or_else(|| "Solo".to_string());
-
-        let platform = Rc::new(gpui_macos::MacPlatform::new_embedded());
-        let callback = self.event_callback_for_view();
-        let opened_window = Rc::new(RefCell::new(None));
-        let startup_error = Rc::new(RefCell::new(None));
-        let opened_window_for_app = opened_window.clone();
-        let startup_error_for_app = startup_error.clone();
-        MAC_APPLICATION.with(|state| {
-            *state.borrow_mut() = Some(MacApplicationState {
-                window: MacWindowConfig {
-                    options: options.clone(),
-                    tree: self.tree.clone(),
-                    callback,
-                    selection: self.selection.clone(),
-                },
-                menu_bar: None,
-                subscriptions: Vec::new(),
-                appearance_token: None,
-                last_appearance: "light".to_string(),
-                window_closed: false,
-            });
-        });
-
-        let app = gpui::Application::with_platform(platform.clone())
-            .with_quit_mode(quit_mode_for_options(&options));
-        let app_handle = app.run_embedded(move |cx: &mut gpui::App| {
-            init_key_bindings(cx);
-            crate::custom_elements::input::init(cx);
-            match open_macos_window(cx) {
-                Ok(window_handle) => {
-                    *opened_window_for_app.borrow_mut() = Some(window_handle);
-                    cx.activate(true);
-                }
-                Err(error) => {
-                    *startup_error_for_app.borrow_mut() = Some(error.to_string());
-                }
-            }
-
-            register_macos_lifecycle(cx);
-            if let Err(error) = create_macos_menu_bar(&title) {
-                *startup_error_for_app.borrow_mut() = Some(error.to_string());
-                cx.quit();
-            }
-        });
-
-        let startup_result = match startup_error.borrow_mut().take() {
-            Some(error) => Err(Error::from_reason(format!(
-                "Failed to open the GPUI window: {error}"
-            ))),
-            None => opened_window
-                .borrow_mut()
-                .take()
-                .ok_or_else(|| Error::from_reason("GPUI did not open the application window")),
-        };
-        let window_handle = match startup_result {
-            Ok(window_handle) => window_handle,
-            Err(error) => {
-                MAC_APPLICATION.with(|state| state.borrow_mut().take());
-                app_handle.update(|cx| cx.quit());
-                if crate::macos_event_pump::pump_events(&platform)? {
-                    MAC_PLATFORM.with(|stored| {
-                        *stored.borrow_mut() = Some(EmbeddedPlatform {
-                            _shutdown: None,
-                            platform: platform.clone(),
-                        });
-                    });
-                }
-                return Err(error);
-            }
-        };
-
-        // GPUI's default menu validator checks only action types. Solo commands
-        // share one type but have independent enabled states and lifetimes.
-        use gpui::Platform as _;
-        platform.on_validate_app_menu_command(Box::new(|action| {
-            GPUI_APP.with(|app| {
-                app.borrow().as_ref().is_some_and(|app| {
-                    app.update(|cx| crate::application_commands::is_menu_action_available(action, cx))
-                })
-            })
-        }));
-        let shutdown = crate::macos_shutdown::install()?;
-        MAC_PLATFORM.with(|stored| {
-            *stored.borrow_mut() = Some(EmbeddedPlatform {
-                _shutdown: Some(shutdown),
-                platform,
-            });
-        });
-        GPUI_APP.with(|a| {
-            *a.borrow_mut() = Some(app_handle);
-        });
-        GPUI_WINDOW.with(|w| {
-            *w.borrow_mut() = Some(window_handle);
-        });
-
         *self.initialized.lock().unwrap() = true;
         Ok(())
     }
@@ -1497,79 +1363,9 @@ impl SoloRenderer {
         Ok(destroyed)
     }
 
-    // ── Frame loop ───────────────────────────────────────────────────
-
-    /// Pump the native event loop. Returns false after the last window closes.
-    #[napi]
-    pub fn tick(&self) -> Result<bool> {
-        let initialized = *self.initialized.lock().unwrap();
-        if !initialized {
-            return Err(Error::from_reason(
-                "Renderer not initialized. Call init() first.",
-            ));
-        }
-
-        // Worker mode: the main thread runs GPUI's own loop; nothing to pump.
-        #[cfg(target_os = "macos")]
-        if worker_main::enabled() {
-            return Ok(true);
-        }
-
-        #[cfg(target_os = "macos")]
-        {
-            crate::macos_shutdown::poll()?;
-            let running = MAC_PLATFORM.with(|p| {
-                p.borrow()
-                    .as_ref()
-                    .map(|platform| crate::macos_event_pump::pump_events(&platform.platform))
-                    .unwrap_or(Ok(false))
-            })?;
-            if !running {
-                GPUI_WINDOW.with(|window| window.borrow_mut().take());
-                GPUI_APP.with(|app| app.borrow_mut().take());
-                MAC_APPLICATION.with(|state| {
-                    if let Some(mut state) = state.borrow_mut().take() {
-                        if let Some(menu_bar) = state.menu_bar.take() {
-                            // A menu target may have initiated Quit. Release it only
-                            // after the event pump returns, never from inside its own
-                            // Objective-C action method.
-                            menu_bar.remove();
-                        }
-                    }
-                });
-                MAC_PLATFORM.with(|platform| platform.borrow_mut().take());
-                *self.initialized.lock().unwrap() = false;
-            }
-            Ok(running)
-        }
-
-        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
-        return Ok(true);
-
-        #[cfg(not(any(
-            target_os = "macos",
-            target_os = "windows",
-            target_os = "linux",
-            target_os = "freebsd"
-        )))]
-        Err(Error::from_reason(
-            "The production Solo renderer does not support this operating system",
-        ))
-    }
-
     #[napi]
     pub fn is_initialized(&self) -> bool {
         *self.initialized.lock().unwrap()
-    }
-
-    /// Whether JavaScript must drive the native event loop with tick().
-    #[napi]
-    pub fn requires_tick(&self) -> bool {
-        #[cfg(target_os = "macos")]
-        if worker_main::enabled() {
-            return false;
-        }
-        cfg!(target_os = "macos")
     }
 
     /// Reopen a closed background window or activate the existing window.

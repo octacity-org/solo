@@ -27,7 +27,7 @@ TypeScript / TSX
   implementation. The
   mutation protocol vocabulary (`StyleDesc`, `NativeRenderer`), event-handler
   registry, `wrapWithBatching` (queues ops → one `applyBatch` FFI call),
-  frame loop, event-prop mapping, `MockNativeRenderer`, and the automation
+  event-prop mapping, `MockNativeRenderer`, and the automation
   client/protocol. Application code must not import this package directly;
   it remains framework-free as an internal architectural boundary.
 - **`packages/solid`** (`@solo/solid`): Solid custom renderer. `src/runtime.ts`
@@ -63,19 +63,18 @@ signal write → Solid effects → runtime ops → batching queue
 
 ## macOS worker mode
 
-On macOS under Bun, a production build (`@solo/solid/vite` with
-`build.ssr`) emits two entries: `<name>.js`, a bootstrap, and `<name>.app.js`,
-the app. The bootstrap (`packages/solid/src/worker.ts`) calls
-`enableWorkerMainThread()`, starts the app in a Bun web `Worker`, and enters
-`runMainLoop()`, GPUI's ordinary blocking loop on the process main thread.
-Under Node, and in dev/test, the bootstrap imports the app directly and the
-embedded loop (`tick`) runs as before. Compile both files with
-`bun build --compile`.
+On macOS, a production build (`@solo/solid/vite` with `build.ssr`) emits two
+entries: `<name>.js`, a bootstrap, and `<name>.app.js`, the app. The
+bootstrap (`packages/solid/src/worker.ts`) calls `enableWorkerMainThread()`,
+starts the app in a Bun web `Worker`, and enters `runMainLoop()`, GPUI's
+ordinary blocking loop on the process main thread. This is the only macOS
+path: `SoloRenderer.init` refuses to run without it, and Node is not
+supported on macOS. Compile both files with `bun build --compile`.
 
 - The main thread never waits synchronously on the Worker. Main → Worker
   traffic is events only.
 - Forwarding rule: any napi method that touches GPUI thread-locals
-  (`GPUI_APP`, `GPUI_WINDOW`, `MAC_APPLICATION`, context-menu state) or needs
+  (`MAIN_APP`, `GPUI_WINDOW`, `MAC_APPLICATION`, context-menu state) or needs
   `MainThreadMarker` must start with
   `if worker_main::must_forward() { return on_main(move || …) }`
   (`on_main_async` when no result is needed). Forwarded closures own their
@@ -209,9 +208,8 @@ checked-out crate (e.g. temporary gpui tracing) clear
 
 ## GPUI dependency
 
-Pinned git revision of `remorses/zed` (branch `gpui-macos-embedded`),
-same rev for `gpui`, `gpui_platform`, `gpui_macos`. The fork exists only
-for the embedded macOS event loop. See docs/gpui-dependency.md.
+Pinned git revision of upstream `zed-industries/zed`, same rev for `gpui`,
+`gpui_platform`, `gpui_macos`. No fork. See docs/gpui-dependency.md.
 `rust-toolchain.toml` must match the revision's channel.
 
 ## Auto-generated files

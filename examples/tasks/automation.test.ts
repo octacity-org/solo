@@ -15,8 +15,9 @@ import type { App } from "@solo/solid/automation"
 
 const ENTRY = new URL("./dist/index.js", import.meta.url).pathname
 
+// Vitest runs under Node, but on macOS a built Solo app runs under Bun.
 async function launchTasksApp(): Promise<App> {
-  const app = await launch({ command: process.execPath, args: [ENTRY] })
+  const app = await launch({ command: "bun", args: [ENTRY] })
   return app
 }
 

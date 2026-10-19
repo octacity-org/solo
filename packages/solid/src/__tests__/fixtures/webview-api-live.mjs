@@ -1,10 +1,14 @@
-// Run outside Vitest so the native macOS event pump can own the main thread.
+// Run outside Vitest under Bun: GPUI owns the main thread, so this file
+// re-runs itself as the app Worker, the way a built Solo app does.
 import assert from "node:assert/strict"
-import { createRequire } from "node:module"
 import { setTimeout as delay } from "node:timers/promises"
+import { isMainThread } from "node:worker_threads"
+import { SoloRenderer } from "@solo/native"
+import { prepareAppWorker, runAppWorker } from "../../worker.ts"
 
-const require = createRequire(import.meta.url)
-const { SoloRenderer } = require("@solo/native")
+if (isMainThread) runAppWorker(new URL(import.meta.url))
+prepareAppWorker()
+
 const events = []
 const renderer = new SoloRenderer((error, event) => {
   if (error) throw error
@@ -33,7 +37,6 @@ async function awaitWebKit(promise, label) {
   let settled = false
   promise.finally(() => { settled = true }).catch(() => {})
   for (let attempt = 0; !settled && attempt < 1_000; attempt += 1) {
-    renderer.tick()
     await delay(5)
   }
   assert.ok(settled, `${label} did not settle`)
@@ -42,7 +45,6 @@ async function awaitWebKit(promise, label) {
 
 async function awaitNavigationRequest(predicate, label) {
   for (let attempt = 0; attempt < 1_000; attempt += 1) {
-    renderer.tick()
     const matchIndex = events.findIndex(
       (event) => event.eventType === "navigationRequest" && predicate(event)
     )
@@ -108,10 +110,7 @@ assert.throws(
   () => renderer.cancelWebviewNavigation(2, sameDocument.navigationId),
   /no longer pending/i
 )
-for (let attempt = 0; attempt < 20; attempt += 1) {
-  renderer.tick()
-  await delay(5)
-}
+await delay(100)
 assert.equal(
   JSON.parse(await awaitWebKit(renderer.evaluateWebviewJavaScript(2, "location.hash"), "same-document location")),
   "#section"
@@ -134,7 +133,6 @@ assert.throws(
 const stale = renderer.evaluateWebviewJavaScript(2, "new Promise(() => {})")
 renderer.setCustomProp(2, "html", JSON.stringify("<!doctype html><title>Replacement</title>"))
 renderer.commitMutations()
-renderer.tick()
 await assert.rejects(awaitWebKit(stale, "stale evaluation"), /document changed/i)
 await awaitWebKit(renderer.waitWebviewReady(2), "replacement readiness")
 
@@ -142,7 +140,6 @@ const destroyed = renderer.evaluateWebviewJavaScript(2, "new Promise(() => {})")
 renderer.removeChild(1, 2)
 renderer.destroyElement(2)
 renderer.commitMutations()
-renderer.tick()
 await assert.rejects(awaitWebKit(destroyed, "destroyed evaluation"), /document changed|destroyed/i)
 assert.throws(() => renderer.evaluateWebviewJavaScript(2, "1"), /not mounted/i)
 

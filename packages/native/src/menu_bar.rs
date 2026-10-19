@@ -169,9 +169,9 @@ impl SoloMenuBarActionTarget {
     }
 }
 
-/// Owns every weakly referenced AppKit object for one status item.
+/// Owns every weakly referenced AppKit object for one status item. The item
+/// stays in the status bar until the process exits.
 pub(crate) struct MenuBar {
-    status_bar: Retained<NSStatusBar>,
     status_item: Retained<NSStatusItem>,
     target: Retained<SoloMenuBarTarget>,
     action_targets: Vec<Retained<SoloMenuBarActionTarget>>,
@@ -205,7 +205,6 @@ impl MenuBar {
         status_item.setMenu(Some(&menu));
 
         Ok(Self {
-            status_bar,
             status_item,
             target,
             action_targets,
@@ -250,11 +249,6 @@ impl MenuBar {
         self.status_item.setMenu(Some(&menu));
         self.action_targets = action_targets;
         Ok(())
-    }
-
-    pub(crate) fn remove(self) {
-        self.status_item.setMenu(None);
-        self.status_bar.removeStatusItem(&self.status_item);
     }
 }
 

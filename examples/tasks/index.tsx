@@ -1,7 +1,7 @@
 /**
  * Solo Tasks — entry point. See app.tsx for the application itself.
  *
- * Run: bun run build && node dist/index.js
+ * Run: bun run build && bun dist/index.js
  */
 
 import { render } from "@solo/solid"

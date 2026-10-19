@@ -5,7 +5,7 @@ use std::cell::Cell;
 use napi::{Error, Result};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject, Sel};
-use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly};
+use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{NSApplication, NSApplicationDelegate, NSApplicationTerminateReply};
 use objc2_foundation::{NSObject, NSObjectProtocol};
 
@@ -14,9 +14,8 @@ struct DelegateIvars {
 }
 
 define_class!(
-    // SAFETY: NSObject has no subclassing requirements. AppKit delegate calls,
-    // the embedded frame pump and worker-mode main tasks all run on the macOS
-    // main thread.
+    // SAFETY: NSObject has no subclassing requirements. AppKit delegate calls
+    // and forwarded main tasks all run on the macOS main thread.
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
     #[ivars = DelegateIvars]
@@ -32,28 +31,20 @@ define_class!(
 
     unsafe impl NSApplicationDelegate for SoloShutdownDelegate {
         #[unsafe(method(applicationShouldTerminate:))]
-        fn should_terminate(&self, app: &NSApplication) -> NSApplicationTerminateReply {
+        fn should_terminate(&self, _app: &NSApplication) -> NSApplicationTerminateReply {
             crate::context_menu::cancel_all();
             if crate::context_menu::has_pending_cleanup() {
                 QUIT_PENDING.set(true);
-                // TerminateLater starts an AppKit modal run loop, blocking JS.
-                // Cancel this attempt and retry from the regular frame pump, or
-                // in worker mode when the last menu session completes.
+                // TerminateLater starts an AppKit modal run loop on the main
+                // thread. Cancel this attempt and retry when the last menu
+                // session completes (see context_menu's Completion).
                 return NSApplicationTerminateReply::TerminateCancel;
             }
             QUIT_PENDING.set(false);
-            if crate::renderer::worker_main::enabled() {
-                // The Worker exits first so its JS `exit` handlers run; it then
-                // ends the process through requestProcessExit.
-                crate::renderer::request_worker_quit();
-                return NSApplicationTerminateReply::TerminateCancel;
-            }
-            let original = &self.ivars().original;
-            if original.respondsToSelector(sel!(applicationShouldTerminate:)) {
-                original.applicationShouldTerminate(app)
-            } else {
-                NSApplicationTerminateReply::TerminateNow
-            }
+            // The Worker exits first so its JS `exit` handlers run; it then
+            // ends the process through requestProcessExit.
+            crate::renderer::request_worker_quit();
+            NSApplicationTerminateReply::TerminateCancel
         }
     }
 

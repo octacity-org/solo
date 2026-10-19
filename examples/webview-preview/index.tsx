@@ -9,7 +9,7 @@
  * native side logs "Unknown element type: webview" each frame.
  *
  * Run:
- *   bun run build && node dist/index.js   (or: bun run start)
+ *   bun run build && bun dist/index.js   (or: bun run start)
  */
 
 import { createSignal } from "solid-js"

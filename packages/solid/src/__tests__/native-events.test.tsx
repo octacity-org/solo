@@ -1,8 +1,5 @@
 /// End-to-end event pipeline tests. Faithful port of packages/react
 /// events.test.tsx ("events" describe) — macOS-only (GPU-backed renderer).
-///
-/// The "frame loop" describe from that file lives in
-/// packages/core/src/__tests__/frame-loop.test.ts.
 
 import fs from "fs"
 import { createSignal } from "solid-js"

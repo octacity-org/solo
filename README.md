@@ -120,17 +120,17 @@ Metal Toolchain on macOS (`xcodebuild -downloadComponent MetalToolchain`).
 ```bash
 bun install
 bun run build:native        # napi release build (~minutes)
-cd examples/tasks && bun run build && node dist/index.js
+cd examples/tasks && bun run build && bun dist/index.js
 ```
 
-GPUI comes from a pinned git revision of `remorses/zed` (branch
-`gpui-macos-embedded`); see [docs/gpui-dependency.md](docs/gpui-dependency.md).
+GPUI comes from a pinned git revision of upstream `zed-industries/zed`; see
+[docs/gpui-dependency.md](docs/gpui-dependency.md).
 
 ## Platform status
 
 | platform | windows | input | notes |
 |---|---|---|---|
-| macOS | ✅ | ✅ incl. synthetic input & GPU test renderer | embedded AppKit loop driven from Node; only platform with `<webview>` |
+| macOS | ✅ | ✅ incl. synthetic input & GPU test renderer | GPUI on the main thread, app in a Bun Worker (Bun required); only platform with `<webview>` |
 | Linux (Wayland/X11) | ✅ | ✅ physical input; synthetic wheel via automation | blocking UI thread |
 | Windows | ✅ builds | ⚠️ untested | same blocking-thread model |
 
