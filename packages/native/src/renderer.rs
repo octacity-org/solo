@@ -1147,7 +1147,7 @@ fn invalidate_window() -> Result<()> {
 /// draws on the display link (or, behind other windows, when AppKit
 /// displays), so a click or keystroke that follows a mutation could otherwise
 /// act on the previous frame.
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "automation"))]
 fn draw_windows_now() -> Result<()> {
     if worker_main::must_forward() {
         return on_main(draw_windows_now);
@@ -2242,20 +2242,6 @@ impl SoloRenderer {
         ))
     }
 
-    /// Draw the latest committed tree in every window before returning, so
-    /// automation input and reads see it. The live counterpart of
-    /// `TestSoloRenderer::flush`. Off macOS frames arrive asynchronously
-    /// through the UI thread, and this does nothing.
-    #[cfg(feature = "automation")]
-    #[napi]
-    pub fn flush(&self) -> Result<()> {
-        #[cfg(target_os = "macos")]
-        return draw_windows_now();
-
-        #[cfg(not(target_os = "macos"))]
-        Ok(())
-    }
-
     #[napi]
     pub fn focus_element(&self, element_id: f64) -> Result<()> {
         let id = to_element_id(element_id)?;
@@ -2450,6 +2436,19 @@ fn macos_scroll_offset(id: u64) -> Option<Vec<f64>> {
 #[cfg(feature = "automation")]
 #[napi]
 impl SoloRenderer {
+    /// Draw the latest committed tree in every window before returning, so
+    /// automation input and reads see it. The live counterpart of
+    /// `TestSoloRenderer::flush`. Off macOS frames arrive asynchronously
+    /// through the UI thread, and this does nothing.
+    #[napi]
+    pub fn flush(&self) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        return draw_windows_now();
+
+        #[cfg(not(target_os = "macos"))]
+        Ok(())
+    }
+
     #[cfg(feature = "automation")]
     #[napi]
     pub fn get_automation_tree(&self) -> Result<String> {
