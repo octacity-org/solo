@@ -1140,6 +1140,42 @@ fn invalidate_window() -> Result<()> {
     })
 }
 
+/// Draw every window now instead of at its next display frame.
+///
+/// Automation hit-tests input and reads bounds against the last drawn frame,
+/// and focus handles only exist once a render has seen their element. GPUI
+/// draws on the display link (or, behind other windows, when AppKit
+/// displays), so a click or keystroke that follows a mutation could otherwise
+/// act on the previous frame.
+#[cfg(target_os = "macos")]
+fn draw_windows_now() -> Result<()> {
+    if worker_main::must_forward() {
+        return on_main(draw_windows_now);
+    }
+    app_update(|cx| {
+        for window in all_window_handles() {
+            // A window may close between the lookup and these updates.
+            window
+                .update(cx, |_view, window, cx| {
+                    cx.notify();
+                    window.refresh();
+                })
+                .ok();
+            // Drawn through the untyped handle: rendering the view needs it
+            // not to be leased by the update above.
+            cx.update_window(window.into(), |_root, window, cx| {
+                window.draw(cx).clear(cx);
+                // The frame is drawn but not yet shown. A visible window
+                // presents it on its next display link tick.
+                if !window.is_visible() {
+                    request_appkit_display(window);
+                }
+            })
+            .ok();
+        }
+    })
+}
+
 #[cfg(target_os = "macos")]
 fn request_appkit_display(window: &gpui::Window) {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -2204,6 +2240,20 @@ impl SoloRenderer {
         Err(Error::from_reason(
             "The production Solo renderer does not support this operating system",
         ))
+    }
+
+    /// Draw the latest committed tree in every window before returning, so
+    /// automation input and reads see it. The live counterpart of
+    /// `TestSoloRenderer::flush`. Off macOS frames arrive asynchronously
+    /// through the UI thread, and this does nothing.
+    #[cfg(feature = "automation")]
+    #[napi]
+    pub fn flush(&self) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        return draw_windows_now();
+
+        #[cfg(not(target_os = "macos"))]
+        Ok(())
     }
 
     #[napi]

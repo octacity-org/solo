@@ -516,6 +516,8 @@ export interface LiveAutomationRenderer {
   clockSet(nowMs: number): number
   clockFastForward(deltaMs: number): number
   clockResume(): number
+  /** Draw pending changes now; see `liveRendererAsTest`. */
+  flush?(): void
 }
 
 export function liveRendererAsTest(
@@ -544,20 +546,34 @@ export function liveRendererAsTest(
     )
   }
 
+  /**
+   * Draw the latest committed tree before acting on or reading the window.
+   * Input is hit-tested and bounds are read against the last drawn frame,
+   * and focus handles exist only after a render, while a live window draws on
+   * its next display frame. Mirrors `native.flush()` in
+   * packages/solid/src/testing.ts.
+   */
+  const flush = (): void => renderer.flush?.()
+
   return {
     nativeSimulateClick(x, y, elementId) {
+      flush()
       renderer.simulateClick(x, y, undefined, elementId)
     },
     nativeSimulateMouseDown(x, y, button, elementId) {
+      flush()
       renderer.simulateMouseDown(x, y, button, elementId)
     },
     nativeSimulateMouseUp(x, y, button, elementId) {
+      flush()
       renderer.simulateMouseUp(x, y, button, elementId)
     },
     nativeSimulateMouseMove(x, y, pressedButton, elementId) {
+      flush()
       renderer.simulateMouseMove(x, y, pressedButton, elementId)
     },
     nativeSimulateScrollWheel(x, y, deltaX, deltaY, elementId) {
+      flush()
       if (!renderer.simulateScrollWheel) {
         throw new AutomationError(
           "Unsupported",
@@ -577,6 +593,7 @@ export function liveRendererAsTest(
       }
     },
     simulateKeystrokes(keystrokes) {
+      flush()
       if (!renderer.simulateKeystrokes) throw noKeyboard()
       try {
         renderer.simulateKeystrokes(keystrokes)
@@ -585,6 +602,7 @@ export function liveRendererAsTest(
       }
     },
     nativeSimulateKeystrokes(elementId, keystrokes) {
+      flush()
       if (!renderer.simulateKeystrokes) throw noKeyboard()
       try {
         // Focus before typing. Keystrokes are dispatched to whatever has
@@ -598,6 +616,7 @@ export function liveRendererAsTest(
       }
     },
     nativeSimulateKeyDown(elementId, keystroke, isHeld) {
+      flush()
       if (!renderer.simulateKeyDown) throw noKeyboard()
       try {
         renderer.focusElement(elementId)
@@ -607,6 +626,7 @@ export function liveRendererAsTest(
       }
     },
     nativeSimulateKeyUp(elementId, keystroke) {
+      flush()
       if (!renderer.simulateKeyUp) throw noKeyboard()
       try {
         renderer.focusElement(elementId)
@@ -615,26 +635,50 @@ export function liveRendererAsTest(
         throw keyboardFailure("keyUp", error)
       }
     },
-    scrollTo: (id, x, y) => renderer.scrollTo(id, x, y),
+    scrollTo: (id, x, y) => {
+      flush()
+      renderer.scrollTo(id, x, y)
+    },
     getScrollOffset: (id) => {
+      flush()
       const offset = renderer.getScrollOffset(id)
       return offset ? [offset[0], offset[1]] : null
     },
     getAllText: () => renderer.getAllText(),
-    getPaintedText: () => renderer.getPaintedText(),
-    getSelectedText: () => renderer.getSelectedText(),
+    getPaintedText: () => {
+      flush()
+      return renderer.getPaintedText()
+    },
+    getSelectedText: () => {
+      flush()
+      return renderer.getSelectedText()
+    },
     clearSelection: () => renderer.clearSelection(),
-    captureScreenshot: (file) => renderer.captureScreenshot(file),
-    getAutomationTree: () => renderer.getAutomationTree(),
+    captureScreenshot: (file) => {
+      flush()
+      return renderer.captureScreenshot(file)
+    },
+    // Draws every window, so the window trees `getTree` reads next are
+    // current too.
+    getAutomationTree: () => {
+      flush()
+      return renderer.getAutomationTree()
+    },
     getWindowAutomationTrees: renderer.getWindowAutomationTrees
       ? () => renderer.getWindowAutomationTrees!()
       : undefined,
-    getElementBounds: (id) => renderer.getElementBounds(id),
+    getElementBounds: (id) => {
+      flush()
+      return renderer.getElementBounds(id)
+    },
     clockPause: () => renderer.clockPause(),
     clockSet: (nowMs) => renderer.clockSet(nowMs),
     clockFastForward: (deltaMs) => renderer.clockFastForward(deltaMs),
     clockResume: () => renderer.clockResume(),
-    focusElement: (id) => renderer.focusElement(id),
+    focusElement: (id) => {
+      flush()
+      return renderer.focusElement(id)
+    },
     blur: () => renderer.blur(),
   }
 }

@@ -172,6 +172,13 @@ Both need the target focused first: an element only installs its input handler
 during paint, and only while focused. `liveRendererAsTest` focuses before
 dispatching.
 
+Input and painted-state reads act on the last drawn frame, and focus handles
+exist only after a render. A live window draws on its next display frame, so
+`liveRendererAsTest` calls `SoloRenderer.flush()` (draw every window now)
+before each of them, as `testing.ts` calls `TestSoloRenderer.flush()`.
+Without it, a command that follows a mutation sees the previous frame: "no
+painted bounds", or keystrokes into an input that never got focus.
+
 Keystrokes are parsed on the calling thread, before the platform split, so a
 malformed key reaches the controller as `Unsupported` with the offending
 token rather than being swallowed by the `UiCommand` channel.

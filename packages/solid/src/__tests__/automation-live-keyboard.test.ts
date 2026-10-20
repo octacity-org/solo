@@ -173,6 +173,47 @@ describe("live keyboard injection", () => {
       "keystrokes:enter",
     ])
   })
+
+  it("draws pending changes before acting on or reading the window", async () => {
+    // A live window draws on its next display frame, so input and bounds
+    // that follow a mutation must flush first or they see the previous frame.
+    const order: string[] = []
+    const { renderer } = recordingRenderer({
+      flush: () => order.push("flush"),
+      getAutomationTree: () => {
+        order.push("tree")
+        return JSON.stringify({ id: INPUT_ID, type: "input", testId: "search-input" })
+      },
+      getElementBounds: () => {
+        order.push("bounds")
+        return [0, 0, 100, 20]
+      },
+      simulateClick: () => order.push("click"),
+      focusElement: () => order.push("focus"),
+      simulateKeystrokes: () => order.push("keystrokes"),
+      getPaintedText: () => {
+        order.push("paintedText")
+        return []
+      },
+    })
+    const app = await appOver(new InProcessBackend(liveRendererAsTest(renderer)))
+    try {
+      const input = app.getByTestId("search-input")
+      await input.click()
+      await input.fill("news")
+      await app.call("getPaintedText", {})
+    } finally {
+      await app.close()
+    }
+
+    expect(order).toContain("click")
+    order.forEach((call, index) => {
+      if (call === "flush") return
+      // Typing follows the focus it belongs to, inside one flushed command.
+      const previous = call === "keystrokes" ? order[index - 2] : order[index - 1]
+      expect(previous, `${call} at ${index} in ${order.join(",")}`).toBe("flush")
+    })
+  })
 })
 
 function capture(run: () => void): unknown {
