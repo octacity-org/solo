@@ -224,6 +224,8 @@ pub(crate) mod worker_main {
     use std::sync::{LazyLock, Mutex};
 
     static WORKER_MODE: AtomicBool = AtomicBool::new(false);
+    /// Set by `solo dev`: a new app Worker may take over the running window.
+    static APP_RELOAD: AtomicBool = AtomicBool::new(false);
     pub(crate) static INVALIDATE_PENDING: AtomicBool = AtomicBool::new(false);
     pub(crate) type Task = Box<dyn FnOnce() + Send>;
     #[allow(clippy::type_complexity)]
@@ -237,6 +239,12 @@ pub(crate) mod worker_main {
 
     pub(crate) fn enable() {
         WORKER_MODE.store(true, Ordering::SeqCst);
+    }
+    pub(crate) fn enable_reload() {
+        APP_RELOAD.store(true, Ordering::SeqCst);
+    }
+    pub(crate) fn reload_enabled() -> bool {
+        APP_RELOAD.load(Ordering::SeqCst)
     }
     pub(crate) fn enabled() -> bool {
         WORKER_MODE.load(Ordering::SeqCst)
@@ -301,6 +309,14 @@ fn app_update<R>(f: impl FnOnce(&mut gpui::App) -> R) -> Result<R> {
 #[napi]
 pub fn enable_worker_main_thread() {
     worker_main::enable();
+}
+
+/// Dev mode (`solo dev`): a later `init` from a new app Worker replaces the
+/// running app's renderer in the same window instead of failing.
+#[cfg(target_os = "macos")]
+#[napi]
+pub fn enable_app_reload() {
+    worker_main::enable_reload();
 }
 
 /// Element-0 event asking the Worker to exit, so its JS `exit` handlers run.
@@ -508,6 +524,52 @@ fn open_macos_window(cx: &mut gpui::App) -> Result<gpui::WindowHandle<SoloView>>
         });
     }
     Ok(window)
+}
+
+/// Dev reload: point the running application at a new app Worker's renderer.
+/// The process, GPUI and the window survive; everything the previous app
+/// created is dropped with its root view or reset here. Window size and
+/// `menuBar` options keep their first values until the process restarts.
+#[cfg(target_os = "macos")]
+fn reattach_macos_application(config: MacWindowConfig, cx: &mut gpui::App) -> Result<()> {
+    crate::context_menu::cancel_all();
+    crate::native_view::with_registry(|registry| registry.destroy_all());
+    SCROLL_HANDLES.with(|handles| handles.borrow_mut().clear());
+    VIRTUAL_LIST_STATES.with(|states| states.borrow_mut().clear());
+    crate::application_commands::reset_application_commands(config.callback.clone(), cx)?;
+    cx.set_quit_mode(quit_mode_for_options(&config.options));
+    let callback = config.callback.clone();
+    MAC_APPLICATION.with(|state| -> Result<()> {
+        let mut state = state.borrow_mut();
+        let state = state
+            .as_mut()
+            .ok_or_else(|| Error::from_reason("GPUI application is not initialized"))?;
+        if let Some(menu_bar) = state.menu_bar.as_mut() {
+            menu_bar.update(None, callback)?;
+        }
+        state.appearance_token = None;
+        state.window = config.clone();
+        Ok(())
+    })?;
+    let title = config
+        .options
+        .title
+        .clone()
+        .unwrap_or_else(|| "Solo".to_string());
+    let replaced = GPUI_WINDOW.with(|stored| *stored.borrow()).is_some_and(|window| {
+        cx.update_window(window.into(), |_root, window, cx| {
+            window.set_window_title(&title);
+            window.replace_root(cx, |_, _| {
+                SoloView::new(config.tree, config.callback, title, config.selection)
+            });
+        })
+        .is_ok()
+    });
+    if !replaced {
+        GPUI_WINDOW.with(|stored| stored.borrow_mut().take());
+        open_macos_window(cx)?;
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
@@ -1108,6 +1170,9 @@ impl SoloRenderer {
         };
         on_main(move || {
             if MAC_APPLICATION.with(|state| state.borrow().is_some()) {
+                if worker_main::reload_enabled() {
+                    return app_update(|cx| reattach_macos_application(config, cx))?;
+                }
                 return Err(Error::from_reason(
                     "A GPUI application already exists in this process",
                 ));

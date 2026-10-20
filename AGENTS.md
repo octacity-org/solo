@@ -85,6 +85,16 @@ supported on macOS. Compile both files with `bun build --compile`.
   `process.exit(0)`, with a 2 s fallback in Rust.
 - Use the web `Worker`, not `node:worker_threads`: the latter relays stdio
   through the main thread's event loop, which stops in `runMainLoop`.
+- `solo dev` (`packages/solid/src/cli.ts`, `dev.ts`) adds a supervisor Worker
+  between main and the app: Vite rebuilds in watch mode, and each good build
+  terminates the app Worker and starts a new one. `enableAppReload()` lets the
+  new Worker's `init` reattach (`reattach_macos_application`): it swaps the
+  window's root view with `replace_root` and resets commands, menu-bar items,
+  native views and scroll state. Anything new that an app installs into
+  process-wide native state must be reset there too. The supervisor owns
+  process exit: a clean app exit ends the process, a crash waits for the next
+  build. Events sent to a terminated Worker's callback are dropped safely
+  (Bun finalizes its threadsafe functions).
 
 ## Layout invariants
 
@@ -197,7 +207,8 @@ anything below it is invisible.
 
 ## Iterating on the Rust side
 
-No hot reload: `require()` of a `.node` dlopens permanently; the UI thread,
+No native hot reload (`solo dev` reloads app JS only): `require()` of a
+`.node` dlopens permanently; the UI thread,
 GPU device and registries live in its thread-locals. Use
 `bun scripts/dev.ts` to rebuild and rerun screenshot tests (~4 s to fresh
 PNGs on macOS). After a native rebuild restart the app.

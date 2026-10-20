@@ -458,6 +458,19 @@ pub(crate) fn replace_application_commands(
     Ok(())
 }
 
+/// Dev reload: drop the previous app's commands and menu items, and send later
+/// command events to the new app. A no-op until an app has set commands.
+#[cfg(target_os = "macos")]
+pub(crate) fn reset_application_commands(
+    callback: Option<crate::renderer::EventCallback>,
+    cx: &mut gpui::App,
+) -> Result<()> {
+    if !cx.has_global::<CommandState>() {
+        return Ok(());
+    }
+    replace_application_commands(Vec::new(), callback, cx)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

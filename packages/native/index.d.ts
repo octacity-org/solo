@@ -369,6 +369,12 @@ export declare class TestSoloRenderer {
 }
 
 /**
+ * Dev mode (`solo dev`): a later `init` from a new app Worker replaces the
+ * running app's renderer in the same window instead of failing.
+ */
+export declare function enableAppReload(): void
+
+/**
  * Select worker mode for this process. The generated bootstrap calls this
  * before it starts the app Worker, so the Worker's calls always forward.
  */

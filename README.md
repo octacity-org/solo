@@ -123,6 +123,12 @@ bun run build:native        # napi release build (~minutes)
 cd examples/tasks && bun run build && bun dist/index.js
 ```
 
+While editing app code on macOS, `bun run dev` in an example runs `solo dev`:
+each save rebuilds the app and restarts only its Worker, so the process, GPUI
+and the window stay up (about 0.4 s from save to repaint on the counter). App
+state starts fresh on every reload; Rust changes still need a native rebuild
+and a restart.
+
 GPUI comes from a pinned git revision of upstream `zed-industries/zed`; see
 [docs/gpui-dependency.md](docs/gpui-dependency.md).
 

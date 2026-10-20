@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
+    "dev": "solo dev",
     "start": "vite build && bun dist/index.js",
     "diagnose": "bun diagnose-scroll.mts",
     "package": "bun package.mts",

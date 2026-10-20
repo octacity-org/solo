@@ -578,6 +578,7 @@ if (!nativeBinding) {
 module.exports = nativeBinding
 module.exports.SoloRenderer = nativeBinding.SoloRenderer
 module.exports.TestSoloRenderer = nativeBinding.TestSoloRenderer
+module.exports.enableAppReload = nativeBinding.enableAppReload
 module.exports.enableWorkerMainThread = nativeBinding.enableWorkerMainThread
 module.exports.openExternalUrl = nativeBinding.openExternalUrl
 module.exports.requestProcessExit = nativeBinding.requestProcessExit

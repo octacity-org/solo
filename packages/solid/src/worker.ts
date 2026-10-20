@@ -12,6 +12,8 @@ import { writeSync } from "node:fs"
 import { enableWorkerMainThread, requestProcessExit, runMainLoop } from "@solo/native"
 
 const STDIN_IS_TTY = "soloStdinIsTTY"
+// Set for app Workers that `solo dev` (dev.ts) supervises.
+const DEV = "soloDev"
 
 /**
  * Whether the app runs in a Worker: always on macOS, where GPUI needs the
@@ -25,20 +27,26 @@ export function usesWorkerMode(): boolean {
   return true
 }
 
+/** Start an app Worker. `dev` leaves ending the process to `solo dev`. */
+export function createAppWorker(appUrl: URL, dev = false): Worker {
+  return new Worker(appUrl.href, {
+    // Bun extension: readable through node:worker_threads in the Worker.
+    workerData: { [STDIN_IS_TTY]: Boolean(process.stdin.isTTY), [DEV]: dev },
+  } as WorkerOptions)
+}
+
 /** Main thread: start the app Worker, then run the native loop. Never returns. */
 export function runAppWorker(appUrl: URL): void {
   enableWorkerMainThread()
-  new Worker(appUrl.href, {
-    // Bun extension: readable through node:worker_threads in the Worker.
-    workerData: { [STDIN_IS_TTY]: Boolean(process.stdin.isTTY) },
-  } as WorkerOptions)
+  createAppWorker(appUrl)
   runMainLoop()
 }
 
 /**
  * App Worker: make every way the Worker can end also end the process, with the
  * same exit code. The main thread is inside `runMainLoop` and never returns to
- * JS, so nothing else would notice the Worker is gone.
+ * JS, so nothing else would notice the Worker is gone. Under `solo dev` the
+ * supervisor decides instead, so a crashed app can wait for the next build.
  */
 export function prepareAppWorker(): void {
   if (isMainThread) return
@@ -55,5 +63,5 @@ export function prepareAppWorker(): void {
   }
   process.on("uncaughtException", fail)
   process.on("unhandledRejection", fail)
-  process.on("exit", (code) => requestProcessExit(code))
+  if (!workerData?.[DEV]) process.on("exit", (code) => requestProcessExit(code))
 }
