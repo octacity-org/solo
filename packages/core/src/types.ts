@@ -115,7 +115,11 @@ export interface StyleDesc {
   overscrollBehaviorX?: "auto" | "contain"
   overscrollBehaviorY?: "auto" | "contain"
 
-  cursor?: string
+  cursor?:
+    | "default" | "pointer" | "text" | "vertical-text" | "crosshair" | "grab" | "grabbing"
+    | "w-resize" | "e-resize" | "ew-resize" | "n-resize" | "s-resize" | "ns-resize"
+    | "nwse-resize" | "nesw-resize" | "col-resize" | "row-resize"
+    | "not-allowed" | "alias" | "copy" | "context-menu"
   /** `"auto"` blocks hits behind this element. `"none"` never does. Unset blocks when the element paints a fill or is absolutely positioned. */
   pointerEvents?: "auto" | "none"
 
@@ -315,7 +319,8 @@ export interface NativeRenderer {
   setWindowMaximized?(maximized: boolean, windowId?: number): void
   isWindowMaximized?(windowId?: number): boolean
   quitApplication?(): void
-  getWindowSize?(): { width: number; height: number }
+  /** Content size in logical pixels. */
+  getWindowSize?(windowId?: number): { width: number; height: number }
   setWindowTitle?(title: string, windowId?: number): void
   setDebugFrameOverlay?(mode: DebugFrameOverlayMode): string
   getDebugFrameOverlay?(): string

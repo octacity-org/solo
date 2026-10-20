@@ -50,6 +50,18 @@ describeNative("openWindow on the test renderer", () => {
     return { inspector, inspectorDiv, closed }
   }
 
+  it("reports each window's real content size", () => {
+    const { inspector } = mountApp()
+    expect(inspector.size()).toEqual({ width: 320, height: 200 })
+    // The offscreen main window asks for 1280×800; AppKit may shorten it to
+    // fit the screen below the menu bar.
+    const main = testRoot.renderer.getWindowSize()
+    expect(main.width).toBe(1280)
+    expect(main.height).toBeGreaterThan(0)
+    expect(main.height).toBeLessThanOrEqual(800)
+    expect(() => testRoot.renderer.getWindowSize(999_999)).toThrow(/not open/)
+  })
+
   it("shares state with the main window and receives its own input", () => {
     const { inspectorDiv } = mountApp()
     expect(inspectorDiv).toBeDefined()

@@ -39,8 +39,29 @@ The returned `AppWindow` controls that window:
 | `focus()` | brings the window to the front |
 | `setTitle(title)` | sets the title |
 | `maximize()`, `restore()`, `toggleMaximized()`, `isMaximized()` | maximized state |
+| `size()` | the content size in logical pixels, read from the live window |
 
-Calls other than `close()` throw after the window has closed.
+Calls other than `close()` throw after the window has closed. The render root
+reads the main window's size with `getWindowSize()`.
+
+## Window options
+
+Besides `title`, `width`, `height`, the minimum size, `resizable` and the
+titlebar options, `render()` and `openWindow()` accept:
+
+| option | default | behavior |
+|---|---|---|
+| `focus` | `true` | make the window key and activate the application |
+| `show` | `true` | order the window on screen when it opens |
+| `kind` | `"normal"` | `"normal"`, `"floating"` (stays above normal windows) or `"popup"` (a non-activating panel) |
+| `movable` | `true` | let the user drag the window |
+| `minimizable` | `true` | enable the minimize button |
+| `tabbingIdentifier` | none | windows sharing an identifier can merge into native tabs |
+| `useDisplayP3` | `false` | render in the Display P3 color space |
+
+With `focus: false` or `show: false` Solo neither activates the application
+nor brings the window forward, so the window opens without taking focus from
+the frontmost app. `showWindow()` and `focus()` still activate.
 
 ## Lifetime
 

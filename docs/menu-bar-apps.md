@@ -68,6 +68,7 @@ application.maximizeWindow()
 application.isWindowMaximized() // reads AppKit's live state
 application.restoreWindow()
 application.toggleWindowMaximized()
+application.getWindowSize() // content size in logical pixels
 ```
 
 These methods use `NSWindow`'s native zoom operation, so restoring returns to

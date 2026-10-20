@@ -29,9 +29,22 @@ class LifecycleRenderer extends MockNativeRenderer {
   isWindowMaximized(): boolean {
     return this.maximized
   }
+
+  getWindowSize(windowId?: number): { width: number; height: number } {
+    this.calls.push(windowId === undefined ? "size" : `size ${windowId}`)
+    return { width: 1024, height: 700 }
+  }
 }
 
 describe("application lifecycle", () => {
+  it("reads the main window's size from the renderer", () => {
+    const renderer = new LifecycleRenderer()
+    const root = render(() => <Text>sized</Text>, { renderer })
+    expect(root.getWindowSize()).toEqual({ width: 1024, height: 700 })
+    expect(renderer.calls).toEqual(["size"])
+    root.unmount()
+  })
+
   it("exposes window and application controls on the render root", () => {
     const renderer = new LifecycleRenderer()
     const root = render(() => <Text>background</Text>, { renderer })
@@ -74,6 +87,11 @@ class WindowsRenderer extends MockNativeRenderer {
     this.calls.push(["title", title, windowId])
   }
 
+  getWindowSize(windowId?: number): { width: number; height: number } {
+    this.calls.push(["size", windowId])
+    return { width: 320, height: 200 }
+  }
+
   text(id: number): string {
     const flatten = (element: MockElement | undefined): string =>
       (element?.text ?? "") + (element?.children ?? []).map((child) => flatten(this.getElement(child))).join("")
@@ -101,6 +119,8 @@ describe("openWindow", () => {
 
       window.setTitle("Renamed")
       expect(renderer.calls.at(-1)).toEqual(["title", "Renamed", window.id])
+      expect(window.size()).toEqual({ width: 320, height: 200 })
+      expect(renderer.calls.at(-1)).toEqual(["size", window.id])
       root.unmount()
     })
   })
@@ -122,6 +142,7 @@ describe("openWindow", () => {
     // Later calls are no-ops or explicit errors, never native calls.
     window.close()
     expect(() => window.setTitle("x")).toThrow("closed window")
+    expect(() => window.size()).toThrow("closed window")
     expect(renderer.calls.filter(([op]) => op === "close")).toEqual([])
     root.unmount()
   })

@@ -78,7 +78,11 @@ export declare class SoloRenderer {
   isWindowMaximized(windowId?: number | undefined | null): boolean
   /** Explicitly terminate the application, including background apps. */
   quitApplication(): void
-  getWindowSize(): WindowSize
+  /**
+   * Content size of the main window, or of the window `window_id`, in
+   * logical pixels.
+   */
+  getWindowSize(windowId?: number | undefined | null): WindowSize
   /** Replace application commands atomically. macOS only for now. */
   setApplicationCommands(json: string): void
   /**
@@ -202,6 +206,8 @@ export declare class TestSoloRenderer {
    * root, as the live renderer does. The main window cannot be closed.
    */
   closeWindow(windowId?: number | undefined | null): void
+  /** Content size of the main window, or of the window `window_id`. */
+  getWindowSize(windowId?: number | undefined | null): WindowSize
   /** JSON array of the trees of the windows opened with `openWindow`. */
   getWindowAutomationTrees(): string
   setApplicationCommands(json: string): void
@@ -560,6 +566,29 @@ export interface WindowOptions {
    * status item with built-in Open and Quit actions.
    */
   menuBar?: MenuBarOptions
+  /**
+   * Make the window key when it opens. Defaults to true. `false` also
+   * leaves the application where it is instead of bringing it forward.
+   */
+  focus?: boolean
+  /**
+   * Show the window when it opens. Defaults to true. A hidden window
+   * appears on `showWindow`.
+   */
+  show?: boolean
+  /**
+   * `"normal"` (default) | `"popup"`, above all other windows without
+   * activating the app | `"floating"`, above normal windows.
+   */
+  kind?: string
+  /** Whether the user can drag the window. Defaults to true. */
+  movable?: boolean
+  /** Whether the user can minimize the window. Defaults to true. */
+  minimizable?: boolean
+  /** Windows sharing an identifier can join as native tabs (macOS). */
+  tabbingIdentifier?: string
+  /** Render in the Display P3 color space (macOS). Defaults to false. */
+  useDisplayP3?: boolean
 }
 
 export interface WindowSize {

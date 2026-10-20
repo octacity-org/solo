@@ -167,6 +167,94 @@ mod application_lifecycle_tests {
     }
 
     #[test]
+    fn window_options_reach_gpui() {
+        let defaults = to_gpui_window_options(&WindowOptions::default(), gpui::Bounds::default());
+        assert!(defaults.focus && defaults.show && defaults.is_movable && defaults.is_minimizable);
+        assert_eq!(defaults.kind, gpui::WindowKind::Normal);
+        assert_eq!(defaults.tabbing_identifier, None);
+        assert!(!defaults.use_display_p3);
+
+        let options = WindowOptions {
+            focus: Some(false),
+            show: Some(false),
+            kind: Some("floating".into()),
+            movable: Some(false),
+            minimizable: Some(false),
+            tabbing_identifier: Some("documents".into()),
+            use_display_p3: Some(true),
+            ..WindowOptions::default()
+        };
+        let gpui_options = to_gpui_window_options(&options, gpui::Bounds::default());
+        assert!(!gpui_options.focus && !gpui_options.show);
+        assert_eq!(gpui_options.kind, gpui::WindowKind::Floating);
+        assert!(!gpui_options.is_movable && !gpui_options.is_minimizable);
+        assert_eq!(gpui_options.tabbing_identifier.as_deref(), Some("documents"));
+        assert!(gpui_options.use_display_p3);
+
+        let popup = WindowOptions { kind: Some("popup".into()), ..WindowOptions::default() };
+        assert_eq!(
+            to_gpui_window_options(&popup, gpui::Bounds::default()).kind,
+            gpui::WindowKind::PopUp
+        );
+    }
+
+    #[test]
+    fn window_kind_must_be_known() {
+        for kind in ["normal", "popup", "floating"] {
+            let options = WindowOptions { kind: Some(kind.into()), ..WindowOptions::default() };
+            validate_window_options(&options).unwrap();
+        }
+        let options = WindowOptions { kind: Some("modal".into()), ..WindowOptions::default() };
+        assert!(validate_window_options(&options)
+            .unwrap_err()
+            .to_string()
+            .contains("kind"));
+    }
+
+    #[test]
+    fn only_focused_visible_windows_activate_the_app_on_open() {
+        assert!(activates_on_open(&WindowOptions::default()));
+        for options in [
+            WindowOptions { focus: Some(false), ..WindowOptions::default() },
+            WindowOptions { show: Some(false), ..WindowOptions::default() },
+        ] {
+            assert!(!activates_on_open(&options));
+        }
+    }
+
+    #[test]
+    fn css_cursor_names_map_to_gpui_cursors() {
+        use gpui::CursorStyle::*;
+        for (name, cursor) in [
+            ("default", Arrow),
+            ("pointer", PointingHand),
+            ("text", IBeam),
+            ("vertical-text", IBeamCursorForVerticalLayout),
+            ("crosshair", Crosshair),
+            ("grab", OpenHand),
+            ("grabbing", ClosedHand),
+            ("w-resize", ResizeLeft),
+            ("e-resize", ResizeRight),
+            ("ew-resize", ResizeLeftRight),
+            ("n-resize", ResizeUp),
+            ("s-resize", ResizeDown),
+            ("ns-resize", ResizeUpDown),
+            // By the native cursor GPUI draws; its doc comments swap these two.
+            ("nwse-resize", ResizeUpLeftDownRight),
+            ("nesw-resize", ResizeUpRightDownLeft),
+            ("col-resize", ResizeColumn),
+            ("row-resize", ResizeRow),
+            ("not-allowed", OperationNotAllowed),
+            ("alias", DragLink),
+            ("copy", DragCopy),
+            ("context-menu", ContextualMenu),
+        ] {
+            assert_eq!(css_cursor_style(name), Some(cursor), "{name}");
+        }
+        assert_eq!(css_cursor_style("wait"), None);
+    }
+
+    #[test]
     fn window_zoom_only_toggles_when_the_requested_state_changes() {
         assert!(should_toggle_window_zoom(false, true));
         assert!(should_toggle_window_zoom(true, false));
@@ -615,10 +703,12 @@ fn open_secondary_window(root: u64, options: WindowOptions) -> Result<()> {
             })
             .map_err(|error| Error::from_reason(format!("Failed to open the GPUI window: {error}")))?;
         SECONDARY_WINDOWS.with(|windows| windows.borrow_mut().push((root, window)));
-        window
-            .update(cx, |_view, window, _cx| window.activate_window())
-            .map_err(|error| Error::from_reason(error.to_string()))?;
-        cx.activate(true);
+        if activates_on_open(&options) {
+            window
+                .update(cx, |_view, window, _cx| window.activate_window())
+                .map_err(|error| Error::from_reason(error.to_string()))?;
+            cx.activate(true);
+        }
         Ok(())
     })?
 }
@@ -1384,9 +1474,7 @@ impl SoloRenderer {
     #[cfg(target_os = "macos")]
     fn init_worker_mode(&self, options: Option<WindowOptions>) -> Result<()> {
         let options = options.unwrap_or_default();
-        if let Some(menu_bar) = options.menu_bar.as_ref() {
-            validate_menu_bar_options(menu_bar)?;
-        }
+        validate_window_options(&options)?;
         if *self.initialized.lock().unwrap() {
             return Err(Error::from_reason("Renderer is already initialized"));
         }
@@ -1407,6 +1495,7 @@ impl SoloRenderer {
                 ));
             }
             let quit_mode = quit_mode_for_options(&config.options);
+            let activate = activates_on_open(&config.options);
             MAC_APPLICATION.with(|state| {
                 *state.borrow_mut() = Some(MacApplicationState {
                     window: config,
@@ -1420,7 +1509,9 @@ impl SoloRenderer {
             let launched = app_update(|cx| -> Result<()> {
                 cx.set_quit_mode(quit_mode);
                 open_macos_window(cx)?;
-                cx.activate(true);
+                if activate {
+                    cx.activate(true);
+                }
                 register_macos_lifecycle(cx);
                 create_macos_menu_bar(&title)
             })
@@ -1437,6 +1528,8 @@ impl SoloRenderer {
     #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
     fn init_threaded(&self, options: Option<WindowOptions>) -> Result<()> {
         let options = options.unwrap_or_default();
+        validate_window_options(&options)?;
+        let activate = activates_on_open(&options);
         if *self.initialized.lock().unwrap() {
             return Err(Error::from_reason("Renderer is already initialized"));
         }
@@ -1484,7 +1577,9 @@ impl SoloRenderer {
                             run_ui_commands(command_receiver, window, cx).await;
                         })
                         .detach();
-                        cx.activate(true);
+                        if activate {
+                            cx.activate(true);
+                        }
                         startup_sender.send(Ok(())).ok();
                     });
                 }));
@@ -1677,6 +1772,7 @@ impl SoloRenderer {
                     "menuBar is an application option; set it on the main window",
                 ));
             }
+            validate_window_options(&options)?;
             if !*self.initialized.lock().unwrap() {
                 return Err(Error::from_reason(
                     "Renderer is not initialized. Call init() first.",
@@ -1792,12 +1888,22 @@ impl SoloRenderer {
         ))
     }
 
+    /// Content size of the main window, or of the window `window_id`, in
+    /// logical pixels.
     #[napi]
-    pub fn get_window_size(&self) -> Result<WindowSize> {
-        Ok(WindowSize {
-            width: 800.0,
-            height: 600.0,
-        })
+    pub fn get_window_size(&self, window_id: Option<f64>) -> Result<WindowSize> {
+        #[cfg(target_os = "macos")]
+        return update_window_in(WindowTarget::from_arg(window_id)?, |_view, window, _cx| {
+            window_size(window)
+        });
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = window_id;
+            Err(Error::from_reason(
+                "Reading the window size is supported only on macOS",
+            ))
+        }
     }
 
     /// Replace application commands atomically. macOS only for now.
@@ -4265,6 +4371,37 @@ pub(crate) fn apply_height<E: gpui::Styled>(el: E, dim: &crate::style::Dimension
     }
 }
 
+/// The GPUI cursor for a CSS `cursor` value. Unknown values change nothing.
+fn css_cursor_style(name: &str) -> Option<gpui::CursorStyle> {
+    use gpui::CursorStyle::*;
+    Some(match name {
+        "default" => Arrow,
+        "pointer" => PointingHand,
+        "text" => IBeam,
+        "vertical-text" => IBeamCursorForVerticalLayout,
+        "crosshair" => Crosshair,
+        "grab" => OpenHand,
+        "grabbing" => ClosedHand,
+        "w-resize" => ResizeLeft,
+        "e-resize" => ResizeRight,
+        "ew-resize" => ResizeLeftRight,
+        "n-resize" => ResizeUp,
+        "s-resize" => ResizeDown,
+        "ns-resize" => ResizeUpDown,
+        // GPUI's doc comments swap the diagonals; these follow the native
+        // cursor it draws (UpLeftDownRight is AppKit's north-west/south-east).
+        "nwse-resize" => ResizeUpLeftDownRight,
+        "nesw-resize" => ResizeUpRightDownLeft,
+        "col-resize" => ResizeColumn,
+        "row-resize" => ResizeRow,
+        "not-allowed" => OperationNotAllowed,
+        "alias" => DragLink,
+        "copy" => DragCopy,
+        "context-menu" => ContextualMenu,
+        _ => return None,
+    })
+}
+
 pub(crate) fn apply_styles<E: gpui::Styled>(mut el: E, style: &StyleDesc) -> E {
     match style.display.as_deref() {
         Some("flex") => el = el.flex(),
@@ -4497,10 +4634,8 @@ pub(crate) fn apply_styles<E: gpui::Styled>(mut el: E, style: &StyleDesc) -> E {
     if let Some(opacity) = style.opacity {
         el = el.opacity(opacity as f32);
     }
-    match style.cursor.as_deref() {
-        Some("pointer") => el = el.cursor_pointer(),
-        Some("default") => el = el.cursor_default(),
-        _ => {}
+    if let Some(cursor) = style.cursor.as_deref().and_then(css_cursor_style) {
+        el = el.cursor(cursor);
     }
     // Overflow: hidden is on the Styled trait, so we handle it here.
     // overflow: "scroll" requires StatefulInteractiveElement — handled in build_div().
@@ -4830,6 +4965,14 @@ pub struct WindowSize {
     pub height: f64,
 }
 
+pub(crate) fn window_size(window: &gpui::Window) -> WindowSize {
+    let size = window.viewport_size();
+    WindowSize {
+        width: f64::from(f32::from(size.width)),
+        height: f64::from(f32::from(size.height)),
+    }
+}
+
 #[derive(Debug, Clone)]
 #[napi(object)]
 pub struct WindowOptions {
@@ -4852,6 +4995,23 @@ pub struct WindowOptions {
     /// Keep the application alive after its window closes and install a macOS
     /// status item with built-in Open and Quit actions.
     pub menu_bar: Option<MenuBarOptions>,
+    /// Make the window key when it opens. Defaults to true. `false` also
+    /// leaves the application where it is instead of bringing it forward.
+    pub focus: Option<bool>,
+    /// Show the window when it opens. Defaults to true. A hidden window
+    /// appears on `showWindow`.
+    pub show: Option<bool>,
+    /// `"normal"` (default) | `"popup"`, above all other windows without
+    /// activating the app | `"floating"`, above normal windows.
+    pub kind: Option<String>,
+    /// Whether the user can drag the window. Defaults to true.
+    pub movable: Option<bool>,
+    /// Whether the user can minimize the window. Defaults to true.
+    pub minimizable: Option<bool>,
+    /// Windows sharing an identifier can join as native tabs (macOS).
+    pub tabbing_identifier: Option<String>,
+    /// Render in the Display P3 color space (macOS). Defaults to false.
+    pub use_display_p3: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -4895,8 +5055,45 @@ impl Default for WindowOptions {
             traffic_light_x: None,
             traffic_light_y: None,
             menu_bar: None,
+            focus: None,
+            show: None,
+            kind: None,
+            movable: None,
+            minimizable: None,
+            tabbing_identifier: None,
+            use_display_p3: None,
         }
     }
+}
+
+/// Checks the window options a window cannot open with.
+pub(crate) fn validate_window_options(options: &WindowOptions) -> Result<()> {
+    if let Some(kind) = options.kind.as_deref() {
+        if window_kind(kind).is_none() {
+            return Err(Error::from_reason(format!(
+                "Window kind must be \"normal\", \"popup\" or \"floating\", not {kind:?}"
+            )));
+        }
+    }
+    if let Some(menu_bar) = options.menu_bar.as_ref() {
+        validate_menu_bar_options(menu_bar)?;
+    }
+    Ok(())
+}
+
+fn window_kind(kind: &str) -> Option<gpui::WindowKind> {
+    match kind {
+        "normal" => Some(gpui::WindowKind::Normal),
+        "popup" => Some(gpui::WindowKind::PopUp),
+        "floating" => Some(gpui::WindowKind::Floating),
+        _ => None,
+    }
+}
+
+/// Whether opening this window should bring the application forward. A window
+/// opened unfocused or hidden leaves the frontmost application alone.
+fn activates_on_open(options: &WindowOptions) -> bool {
+    options.focus.unwrap_or(true) && options.show.unwrap_or(true)
 }
 
 fn to_gpui_window_options(
@@ -4934,9 +5131,21 @@ fn to_gpui_window_options(
             appears_transparent: titlebar_transparent,
             traffic_light_position,
         }),
+        focus: options.focus.unwrap_or(true),
+        show: options.show.unwrap_or(true),
+        // Validated where the window is requested.
+        kind: options
+            .kind
+            .as_deref()
+            .and_then(window_kind)
+            .unwrap_or(gpui::WindowKind::Normal),
+        is_movable: options.movable.unwrap_or(true),
         is_resizable: options.resizable.unwrap_or(true),
+        is_minimizable: options.minimizable.unwrap_or(true),
         window_background,
         window_min_size,
+        tabbing_identifier: options.tabbing_identifier.clone(),
+        use_display_p3: options.use_display_p3.unwrap_or(false),
         ..Default::default()
     }
 }

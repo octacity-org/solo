@@ -24,8 +24,8 @@ use gpui::AppContext as _;
 use crate::element_tree::EventPayload;
 use crate::renderer::{
     apply_batch_to_tree, debug_frame_overlay_mode_name, emit_event_full,
-    parse_debug_frame_overlay_mode, to_element_id, EventCallback, SoloView, WindowOptions,
-    WINDOW_CLOSED_EVENT,
+    parse_debug_frame_overlay_mode, to_element_id, validate_window_options, window_size,
+    EventCallback, SoloView, WindowOptions, WindowSize, WINDOW_CLOSED_EVENT,
 };
 use crate::retained_tree::RetainedTree;
 use crate::style::StyleDesc;
@@ -250,6 +250,7 @@ impl TestSoloRenderer {
                 "menuBar is an application option; set it on the main window",
             ));
         }
+        validate_window_options(&options)?;
         self.tree
             .lock()
             .unwrap()
@@ -337,6 +338,16 @@ impl TestSoloRenderer {
         crate::renderer::release_window_subtree(&ids);
         emit_event_full(&self.event_callback, root, WINDOW_CLOSED_EVENT, |_| {});
         Ok(())
+    }
+
+    /// Content size of the main window, or of the window `window_id`.
+    #[napi]
+    pub fn get_window_size(&self, window_id: Option<f64>) -> Result<WindowSize> {
+        let root = window_id.map(to_element_id).transpose()?;
+        with_window(root, |cx, window, _view| {
+            cx.update_window(window, |_, window, _| window_size(window))
+                .map_err(|e| Error::from_reason(e.to_string()))
+        })
     }
 
     /// JSON array of the trees of the windows opened with `openWindow`.

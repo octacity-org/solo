@@ -35,6 +35,8 @@ export interface Root {
   toggleWindowMaximized: () => void
   /** Read the current native zoomed/maximized state. */
   isWindowMaximized: () => boolean
+  /** The window's content size in logical pixels. */
+  getWindowSize: () => { width: number; height: number }
   /** Explicitly terminate the native application. */
   quitApplication: () => void
 }
@@ -54,6 +56,8 @@ export interface AppWindow {
   restore: () => void
   toggleMaximized: () => void
   isMaximized: () => boolean
+  /** The window's content size in logical pixels. */
+  size: () => { width: number; height: number }
 }
 
 export interface OpenWindowOptions extends Omit<WindowOptions, "menuBar"> {
@@ -195,6 +199,10 @@ export function render(code: () => SolidElement, options: RenderOptions = {}): R
       if (!host.isWindowMaximized) throw new Error("This renderer does not expose maximized window state")
       return host.isWindowMaximized()
     },
+    getWindowSize: () => {
+      if (!host.getWindowSize) throw new Error("This renderer does not expose the window size")
+      return host.getWindowSize()
+    },
     quitApplication: () => {
       if (!host.quitApplication) throw new Error("This renderer does not support quitting applications")
       host.quitApplication()
@@ -279,6 +287,11 @@ export function openWindow(code: () => SolidElement, options: OpenWindowOptions 
     restore: () => setMaximized(false),
     toggleMaximized: () => setMaximized(!maximized()),
     isMaximized: maximized,
+    size: () => {
+      assertOpen("measure")
+      if (!host.getWindowSize) throw new Error("This renderer does not expose the window size")
+      return host.getWindowSize(rootId)
+    },
   }
 }
 
