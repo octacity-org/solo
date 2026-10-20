@@ -40,6 +40,8 @@ const errorCodeSchema = z.enum(automationErrorCodes)
 const pointSchema = z.object({
   x: z.number(),
   y: z.number(),
+  /** Window-local coordinates in the window of this element; default main. */
+  elementId: z.number().optional(),
 })
 
 const buttonSchema = z.number().int().min(0).max(2).optional()
@@ -107,11 +109,7 @@ export const methods = {
     result: okSchema,
   },
   click: {
-    params: z.object({
-      x: z.number(),
-      y: z.number(),
-      button: buttonSchema,
-    }),
+    params: pointSchema.extend({ button: buttonSchema }),
     result: okSchema,
   },
   mouseDown: {
@@ -179,7 +177,11 @@ export const methods = {
   },
   getTree: {
     params: z.object({}),
-    result: z.object({ tree: treeNodeSchema.nullable() }),
+    result: z.object({
+      tree: treeNodeSchema.nullable(),
+      /** Windows opened with openWindow, in opening order. */
+      windows: z.array(treeNodeSchema).optional(),
+    }),
   },
   getPaintedText: {
     params: z.object({}),

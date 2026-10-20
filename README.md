@@ -129,6 +129,9 @@ and the window stay up (about 0.4 s from save to repaint on the counter). App
 state starts fresh on every reload; Rust changes still need a native rebuild
 and a restart.
 
+On macOS an app can open more windows with `openWindow()`; they share the
+app's signals and state. See [docs/multiple-windows.md](docs/multiple-windows.md).
+
 GPUI comes from a pinned git revision of upstream `zed-industries/zed`; see
 [docs/gpui-dependency.md](docs/gpui-dependency.md).
 

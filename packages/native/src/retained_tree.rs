@@ -52,6 +52,9 @@ pub struct RetainedTree {
     pub elements: HashMap<u64, RetainedElement>,
     /// The root element ID set by appendChildToContainer.
     pub root_id: Option<u64>,
+    /// Roots of the windows opened with `openWindow`, in opening order. Each
+    /// is a parentless subtree beside `root_id`, painted by its own window.
+    pub window_roots: Vec<u64>,
     next_revision: u64,
 }
 
@@ -60,8 +63,49 @@ impl RetainedTree {
         Self {
             elements: HashMap::new(),
             root_id: None,
+            window_roots: Vec::new(),
             next_revision: 1,
         }
+    }
+
+    /// The window root `id` is painted under, or None for the main window
+    /// (including elements that are not attached to any window yet).
+    pub fn window_root_of(&self, id: u64) -> Option<u64> {
+        let mut current = id;
+        while let Some(parent) = self.elements.get(&current).and_then(|e| e.parent) {
+            current = parent;
+        }
+        self.window_roots.contains(&current).then_some(current)
+    }
+
+    /// List `root` as a window root. It must exist, have no parent, and not
+    /// already be the main root or another window's root.
+    pub fn add_window_root(&mut self, root: u64) -> Result<(), String> {
+        let element = self
+            .elements
+            .get(&root)
+            .ok_or_else(|| format!("Window root element {root} does not exist"))?;
+        if element.parent.is_some() {
+            return Err(format!("Window root element {root} must not have a parent"));
+        }
+        if self.root_id == Some(root) || self.window_roots.contains(&root) {
+            return Err(format!("Element {root} is already a window root"));
+        }
+        self.window_roots.push(root);
+        Ok(())
+    }
+
+    /// `id` and every descendant.
+    pub fn subtree_ids(&self, id: u64) -> Vec<u64> {
+        let mut ids = Vec::new();
+        let mut stack = vec![id];
+        while let Some(current) = stack.pop() {
+            if let Some(element) = self.elements.get(&current) {
+                ids.push(current);
+                stack.extend(element.children.iter().copied());
+            }
+        }
+        ids
     }
 
     pub fn create_element(&mut self, id: u64, element_type: String) {
@@ -98,6 +142,7 @@ impl RetainedTree {
         if self.root_id == Some(id) {
             self.root_id = None;
         }
+        self.window_roots.retain(|root| *root != id);
         destroyed
     }
 
@@ -248,6 +293,20 @@ impl RetainedTree {
             None => serde_json::Value::Null,
         }
     }
+
+    /// The trees of the windows opened with `openWindow`, in opening order.
+    #[cfg(feature = "automation")]
+    pub fn windows_to_json(
+        &self,
+        bounds: &std::collections::HashMap<u64, crate::automation::ElementBounds>,
+    ) -> serde_json::Value {
+        serde_json::Value::Array(
+            self.window_roots
+                .iter()
+                .map(|&root| element_to_json(root, self, bounds))
+                .collect(),
+        )
+    }
 }
 
 #[cfg(feature = "automation")]
@@ -336,4 +395,51 @@ fn element_to_json(
     }
 
     serde_json::Value::Object(obj)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn elements_resolve_to_the_window_root_they_are_attached_under() {
+        let mut tree = RetainedTree::new();
+        for id in 1..=5 {
+            tree.create_element(id, "div".into());
+        }
+        tree.root_id = Some(1);
+        tree.append_child(1, 2);
+        tree.window_roots.push(3);
+        tree.append_child(3, 4);
+
+        assert_eq!(tree.window_root_of(2), None);
+        assert_eq!(tree.window_root_of(4), Some(3));
+        assert_eq!(tree.window_root_of(3), Some(3));
+        // Detached elements belong to no secondary window.
+        assert_eq!(tree.window_root_of(5), None);
+
+        let mut subtree = tree.subtree_ids(3);
+        subtree.sort();
+        assert_eq!(subtree, vec![3, 4]);
+
+        tree.destroy_element(3);
+        assert!(tree.window_roots.is_empty());
+    }
+
+    #[test]
+    fn only_parentless_elements_become_window_roots() {
+        let mut tree = RetainedTree::new();
+        for id in 1..=3 {
+            tree.create_element(id, "div".into());
+        }
+        tree.root_id = Some(1);
+        tree.append_child(1, 2);
+
+        assert!(tree.add_window_root(1).is_err());
+        assert!(tree.add_window_root(2).is_err());
+        assert!(tree.add_window_root(9).is_err());
+        assert!(tree.add_window_root(3).is_ok());
+        assert!(tree.add_window_root(3).is_err());
+        assert_eq!(tree.window_roots, vec![3]);
+    }
 }

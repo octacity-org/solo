@@ -14,11 +14,11 @@ use std::time::Instant;
 #[cfg(feature = "automation")]
 use std::time::Duration;
 
-use gpui::{canvas, px, Bounds, IntoElement, Pixels, Styled};
+use gpui::{canvas, px, Bounds, IntoElement, Pixels, Styled, Window, WindowId};
 #[cfg(feature = "automation")]
 use gpui::{
     point, App, InputEvent, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ScrollDelta, ScrollWheelEvent, TouchPhase, Window,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ScrollDelta, ScrollWheelEvent, TouchPhase,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -42,15 +42,18 @@ impl ElementBounds {
 }
 
 thread_local! {
-    static BOUNDS: RefCell<HashMap<u64, ElementBounds>> = RefCell::new(HashMap::new());
+    /// Per window, so one window's frame does not drop another's bounds.
+    /// Element IDs are unique across windows, so lookups search them all.
+    static BOUNDS: RefCell<HashMap<WindowId, HashMap<u64, ElementBounds>>> = RefCell::new(HashMap::new());
 }
 
 /// Zero-size canvas. Paint it with the selection reset, before any content.
 pub fn bounds_frame_reset() -> impl IntoElement {
     canvas(
         |_, _, _| (),
-        move |_, _, _, _| {
-            BOUNDS.with(|cell| cell.borrow_mut().clear());
+        move |_, _, window, _| {
+            let id = window.window_handle().window_id();
+            BOUNDS.with(|cell| cell.borrow_mut().entry(id).or_default().clear());
         },
     )
     .absolute()
@@ -58,26 +61,40 @@ pub fn bounds_frame_reset() -> impl IntoElement {
     .h(px(0.0))
 }
 
-pub fn record_bounds(id: u64, bounds: Bounds<Pixels>) {
+pub fn record_bounds(window: &Window, id: u64, bounds: Bounds<Pixels>) {
+    let window = window.window_handle().window_id();
     BOUNDS.with(|cell| {
-        cell.borrow_mut().insert(id, ElementBounds::from_gpui(bounds));
+        cell.borrow_mut()
+            .entry(window)
+            .or_default()
+            .insert(id, ElementBounds::from_gpui(bounds));
     });
 }
 
 pub fn get_bounds(id: u64) -> Option<ElementBounds> {
-    BOUNDS.with(|cell| cell.borrow().get(&id).copied())
+    BOUNDS.with(|cell| cell.borrow().values().find_map(|bounds| bounds.get(&id).copied()))
 }
 
 #[cfg(feature = "automation")]
 pub fn all_bounds() -> HashMap<u64, ElementBounds> {
-    BOUNDS.with(|cell| cell.borrow().clone())
+    BOUNDS.with(|cell| {
+        cell.borrow()
+            .values()
+            .flat_map(|bounds| bounds.iter().map(|(&id, &rect)| (id, rect)))
+            .collect()
+    })
+}
+
+/// Drop a closed window's bounds.
+pub fn forget_window(id: WindowId) {
+    BOUNDS.with(|cell| cell.borrow_mut().remove(&id));
 }
 
 pub fn bounds_tracker(id: u64) -> impl IntoElement {
     canvas(
         |bounds, _, _| bounds,
-        move |bounds, _, _, _| {
-            record_bounds(id, bounds);
+        move |bounds, _, window, _| {
+            record_bounds(window, id, bounds);
         },
     )
     .absolute()

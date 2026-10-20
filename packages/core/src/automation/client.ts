@@ -29,16 +29,21 @@ export interface AutomationBackend {
   close(): Promise<void>
 }
 
+/**
+ * Coordinate input is window-local. `elementId`, when given, picks the window
+ * that element is painted in; renderers with one window ignore it.
+ */
 export interface TestAutomationRenderer {
-  nativeSimulateClick(x: number, y: number): void
-  nativeSimulateMouseDown(x: number, y: number, button?: number): void
-  nativeSimulateMouseUp(x: number, y: number, button?: number): void
-  nativeSimulateMouseMove(x: number, y: number, pressedButton?: number): void
+  nativeSimulateClick(x: number, y: number, elementId?: number): void
+  nativeSimulateMouseDown(x: number, y: number, button?: number, elementId?: number): void
+  nativeSimulateMouseUp(x: number, y: number, button?: number, elementId?: number): void
+  nativeSimulateMouseMove(x: number, y: number, pressedButton?: number, elementId?: number): void
   nativeSimulateScrollWheel(
     x: number,
     y: number,
     deltaX: number,
-    deltaY: number
+    deltaY: number,
+    elementId?: number
   ): void
   simulateKeystrokes(keystrokes: string): void
   nativeSimulateKeystrokes(elementId: number, keystrokes: string): void
@@ -56,6 +61,8 @@ export interface TestAutomationRenderer {
   clearSelection(): void
   captureScreenshot(path: string): void
   getAutomationTree(): string
+  /** JSON array of the openWindow windows' trees, where supported. */
+  getWindowAutomationTrees?(): string
   getElementBounds(elementId: number): number[] | null
   clockPause(): number
   clockSet(nowMs: number): number
@@ -92,22 +99,33 @@ export class InProcessBackend implements AutomationBackend {
     }),
     cancel: () => ({ ok: true as const }),
     click: (params) => {
-      this.renderer.nativeSimulateClick(params.x, params.y)
+      this.renderer.nativeSimulateClick(params.x, params.y, params.elementId)
       return { ok: true as const }
     },
     mouseDown: (params) => {
-      this.renderer.nativeSimulateMouseDown(params.x, params.y, params.button)
+      this.renderer.nativeSimulateMouseDown(
+        params.x,
+        params.y,
+        params.button,
+        params.elementId
+      )
       return { ok: true as const }
     },
     mouseUp: (params) => {
-      this.renderer.nativeSimulateMouseUp(params.x, params.y, params.button)
+      this.renderer.nativeSimulateMouseUp(
+        params.x,
+        params.y,
+        params.button,
+        params.elementId
+      )
       return { ok: true as const }
     },
     mouseMove: (params) => {
       this.renderer.nativeSimulateMouseMove(
         params.x,
         params.y,
-        params.pressedButton
+        params.pressedButton,
+        params.elementId
       )
       return { ok: true as const }
     },
@@ -116,7 +134,8 @@ export class InProcessBackend implements AutomationBackend {
         params.x,
         params.y,
         params.deltaX,
-        params.deltaY
+        params.deltaY,
+        params.elementId
       )
       return { ok: true as const }
     },
@@ -157,7 +176,13 @@ export class InProcessBackend implements AutomationBackend {
     }),
     getTree: () => {
       const raw = JSON.parse(this.renderer.getAutomationTree()) as unknown
-      return { tree: raw === null ? null : (raw as TreeNode) }
+      const windows = this.renderer.getWindowAutomationTrees
+        ? (JSON.parse(this.renderer.getWindowAutomationTrees()) as TreeNode[])
+        : []
+      return {
+        tree: raw === null ? null : (raw as TreeNode),
+        ...(windows.length > 0 ? { windows } : {}),
+      }
     },
     getPaintedText: () => ({ text: this.renderer.getPaintedText() }),
     getAllText: () => ({ text: this.renderer.getAllText() }),
@@ -308,8 +333,8 @@ export class Locator {
   }
 
   async all(): Promise<TreeNode[]> {
-    const { tree } = await this.app.call("getTree", {})
-    return collect(tree, this.selector)
+    const { tree, windows = [] } = await this.app.call("getTree", {})
+    return [tree, ...windows].flatMap((root) => collect(root, this.selector))
   }
 
   async count(): Promise<number> {
@@ -342,9 +367,11 @@ export class Locator {
 
   async click(): Promise<void> {
     const bounds = await this.bounds()
+    const node = await this.element()
     await this.app.call("click", {
       x: bounds.x + bounds.width / 2,
       y: bounds.y + bounds.height / 2,
+      elementId: node.id,
     })
   }
 
@@ -451,21 +478,28 @@ export class App {
   }
 }
 
+/** `elementId` arguments pick the window that element is painted in. */
 export interface LiveAutomationRenderer {
-  simulateClick(x: number, y: number, button?: number): void
-  simulateMouseDown(x: number, y: number, button?: number): void
-  simulateMouseUp(x: number, y: number, button?: number): void
-  simulateMouseMove(x: number, y: number, pressedButton?: number): void
+  simulateClick(x: number, y: number, button?: number, elementId?: number): void
+  simulateMouseDown(x: number, y: number, button?: number, elementId?: number): void
+  simulateMouseUp(x: number, y: number, button?: number, elementId?: number): void
+  simulateMouseMove(x: number, y: number, pressedButton?: number, elementId?: number): void
   /** Inject a wheel event; supported where the native runtime implements it. */
-  simulateScrollWheel?(x: number, y: number, deltaX: number, deltaY: number): void
+  simulateScrollWheel?(
+    x: number,
+    y: number,
+    deltaX: number,
+    deltaY: number,
+    elementId?: number
+  ): void
   /**
    * Inject key events; supported where the native runtime implements them.
    * Optional so a renderer built without them degrades to `Unsupported`
    * instead of failing to satisfy the interface.
    */
-  simulateKeystrokes?(keystrokes: string): void
-  simulateKeyDown?(keystroke: string, isHeld?: boolean): void
-  simulateKeyUp?(keystroke: string): void
+  simulateKeystrokes?(keystrokes: string, elementId?: number): void
+  simulateKeyDown?(keystroke: string, isHeld?: boolean, elementId?: number): void
+  simulateKeyUp?(keystroke: string, elementId?: number): void
   focusElement(elementId: number): void
   blur(): void
   scrollTo(elementId: number, x: number, y: number): void
@@ -476,6 +510,7 @@ export interface LiveAutomationRenderer {
   clearSelection(): void
   captureScreenshot(path: string): void
   getAutomationTree(): string
+  getWindowAutomationTrees?(): string
   getElementBounds(elementId: number): number[] | null
   clockPause(): number
   clockSet(nowMs: number): number
@@ -510,19 +545,19 @@ export function liveRendererAsTest(
   }
 
   return {
-    nativeSimulateClick(x, y) {
-      renderer.simulateClick(x, y)
+    nativeSimulateClick(x, y, elementId) {
+      renderer.simulateClick(x, y, undefined, elementId)
     },
-    nativeSimulateMouseDown(x, y, button) {
-      renderer.simulateMouseDown(x, y, button)
+    nativeSimulateMouseDown(x, y, button, elementId) {
+      renderer.simulateMouseDown(x, y, button, elementId)
     },
-    nativeSimulateMouseUp(x, y, button) {
-      renderer.simulateMouseUp(x, y, button)
+    nativeSimulateMouseUp(x, y, button, elementId) {
+      renderer.simulateMouseUp(x, y, button, elementId)
     },
-    nativeSimulateMouseMove(x, y, pressedButton) {
-      renderer.simulateMouseMove(x, y, pressedButton)
+    nativeSimulateMouseMove(x, y, pressedButton, elementId) {
+      renderer.simulateMouseMove(x, y, pressedButton, elementId)
     },
-    nativeSimulateScrollWheel(x, y, deltaX, deltaY) {
+    nativeSimulateScrollWheel(x, y, deltaX, deltaY, elementId) {
       if (!renderer.simulateScrollWheel) {
         throw new AutomationError(
           "Unsupported",
@@ -530,7 +565,7 @@ export function liveRendererAsTest(
         )
       }
       try {
-        renderer.simulateScrollWheel(x, y, deltaX, deltaY)
+        renderer.simulateScrollWheel(x, y, deltaX, deltaY, elementId)
       } catch (error) {
         // The native gate is per-platform (renderer.rs compiles simulate_*
         // only for macOS); surface that as Unsupported, not Protocol noise.
@@ -557,7 +592,7 @@ export function liveRendererAsTest(
         // focused, so without this the keys go nowhere. Mirrors the native
         // test harness in packages/solid/src/testing.ts.
         renderer.focusElement(elementId)
-        renderer.simulateKeystrokes(keystrokes)
+        renderer.simulateKeystrokes(keystrokes, elementId)
       } catch (error) {
         throw keyboardFailure("keystrokes", error)
       }
@@ -566,7 +601,7 @@ export function liveRendererAsTest(
       if (!renderer.simulateKeyDown) throw noKeyboard()
       try {
         renderer.focusElement(elementId)
-        renderer.simulateKeyDown(keystroke, isHeld)
+        renderer.simulateKeyDown(keystroke, isHeld, elementId)
       } catch (error) {
         throw keyboardFailure("keyDown", error)
       }
@@ -575,7 +610,7 @@ export function liveRendererAsTest(
       if (!renderer.simulateKeyUp) throw noKeyboard()
       try {
         renderer.focusElement(elementId)
-        renderer.simulateKeyUp(keystroke)
+        renderer.simulateKeyUp(keystroke, elementId)
       } catch (error) {
         throw keyboardFailure("keyUp", error)
       }
@@ -591,6 +626,9 @@ export function liveRendererAsTest(
     clearSelection: () => renderer.clearSelection(),
     captureScreenshot: (file) => renderer.captureScreenshot(file),
     getAutomationTree: () => renderer.getAutomationTree(),
+    getWindowAutomationTrees: renderer.getWindowAutomationTrees
+      ? () => renderer.getWindowAutomationTrees!()
+      : undefined,
     getElementBounds: (id) => renderer.getElementBounds(id),
     clockPause: () => renderer.clockPause(),
     clockSet: (nowMs) => renderer.clockSet(nowMs),

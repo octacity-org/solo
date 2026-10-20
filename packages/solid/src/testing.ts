@@ -8,20 +8,26 @@
 
 import type { EventPayload } from "@solo/native"
 import { clearEventHandlers, handleSoloEvent, wrapWithBatching } from "@solo/core"
+import type { WindowOptions } from "@solo/native"
+import { setWindowHost } from "./root.js"
 import { mount as mountTree, resetIdCounter, flushMutations } from "./runtime.js"
 
+/** Coordinates are window-local; `elementId` picks that element's window. */
 interface NativeTestRendererApi {
   flush(): void
   drainEvents(): EventPayload[]
-  simulateKeystrokes(keystrokes: string): void
+  simulateKeystrokes(keystrokes: string, elementId?: number): void
   focusElement(elementId: number): void
-  simulateClick(x: number, y: number): void
-  simulateKeyDown(keystroke: string, isHeld?: boolean): void
-  simulateKeyUp(keystroke: string): void
-  simulateMouseDown(x: number, y: number, button?: number): void
-  simulateMouseUp(x: number, y: number, button?: number): void
-  simulateMouseMove(x: number, y: number, pressedButton?: number): void
-  simulateScrollWheel(x: number, y: number, deltaX: number, deltaY: number): void
+  simulateClick(x: number, y: number, button?: number, elementId?: number): void
+  simulateKeyDown(keystroke: string, isHeld?: boolean, elementId?: number): void
+  simulateKeyUp(keystroke: string, elementId?: number): void
+  simulateMouseDown(x: number, y: number, button?: number, elementId?: number): void
+  simulateMouseUp(x: number, y: number, button?: number, elementId?: number): void
+  simulateMouseMove(x: number, y: number, pressedButton?: number, elementId?: number): void
+  simulateScrollWheel(x: number, y: number, deltaX: number, deltaY: number, elementId?: number): void
+  openWindow(rootId: number, options?: WindowOptions): void
+  closeWindow(windowId?: number): void
+  getWindowAutomationTrees(): string
   scrollToItem(elementId: number, index: number): void
   scrollTo(elementId: number, x: number, y: number): void
   getScrollOffset(elementId: number): number[] | null
@@ -50,13 +56,13 @@ export interface NativeTestElement {
 interface SolidNativeTestRendererApi extends NativeTestRendererApi {
   findByType(type: string): NativeTestElement[]
   nativeSimulateKeystrokes(elementId: number, keystrokes: string): void
-  nativeSimulateClick(x: number, y: number): void
+  nativeSimulateClick(x: number, y: number, elementId?: number): void
   nativeSimulateKeyDown(elementId: number, keystroke: string, isHeld?: boolean): void
   nativeSimulateKeyUp(elementId: number, keystroke: string): void
-  nativeSimulateMouseDown(x: number, y: number, button?: number): void
-  nativeSimulateMouseUp(x: number, y: number, button?: number): void
-  nativeSimulateMouseMove(x: number, y: number, pressedButton?: number): void
-  nativeSimulateScrollWheel(x: number, y: number, deltaX: number, deltaY: number): void
+  nativeSimulateMouseDown(x: number, y: number, button?: number, elementId?: number): void
+  nativeSimulateMouseUp(x: number, y: number, button?: number, elementId?: number): void
+  nativeSimulateMouseMove(x: number, y: number, pressedButton?: number, elementId?: number): void
+  nativeSimulateScrollWheel(x: number, y: number, deltaX: number, deltaY: number, elementId?: number): void
 }
 
 interface NativeTestRendererConstructor {
@@ -78,7 +84,11 @@ try {
 
 export const hasNativeTestRenderer = NativeTestRenderer != null
 
-/** Mounted Solid tree against the native GPU-backed renderer. */
+/**
+ * Mounted Solid tree against the native GPU-backed renderer. While mounted,
+ * openWindow() opens offscreen windows on it. Simulation methods that take an
+ * `elementId` act in the window that element is painted in.
+ */
 export interface SolidNativeTestRoot {
   renderer: SolidNativeTestRendererApi
   render: (code: () => unknown) => void
@@ -93,14 +103,14 @@ export interface SolidNativeTestRoot {
   // ── simulation ──
   nativeSimulateKeystrokes(elementId: number, keystrokes: string): void
   simulateKeystrokes(keystrokes: string): void
-  nativeSimulateClick(x: number, y: number): void
+  nativeSimulateClick(x: number, y: number, elementId?: number): void
   nativeSimulateKeyDown(elementId: number, keystroke: string, isHeld?: boolean): void
   nativeSimulateKeyUp(elementId: number, keystroke: string): void
-  nativeSimulateMouseDown(x: number, y: number, button?: number): void
-  nativeSimulateMouseUp(x: number, y: number, button?: number): void
-  nativeSimulateMouseMove(x: number, y: number, pressedButton?: number): void
+  nativeSimulateMouseDown(x: number, y: number, button?: number, elementId?: number): void
+  nativeSimulateMouseUp(x: number, y: number, button?: number, elementId?: number): void
+  nativeSimulateMouseMove(x: number, y: number, pressedButton?: number, elementId?: number): void
   focusElement(elementId: number): void
-  nativeSimulateScrollWheel(x: number, y: number, deltaX: number, deltaY: number): void
+  nativeSimulateScrollWheel(x: number, y: number, deltaX: number, deltaY: number, elementId?: number): void
   scrollToItem(elementId: number, index: number): void
   scrollTo(elementId: number, x: number, y: number): void
   getScrollOffset(elementId: number): number[] | null
@@ -152,6 +162,10 @@ export function createSolidNativeTestRoot(): SolidNativeTestRoot {
       for (const child of children) walk(child, id)
     }
     walk(json, null)
+    // Windows from openWindow are parentless trees of their own.
+    for (const window of JSON.parse(native.getWindowAutomationTrees()) as Array<Record<string, unknown>>) {
+      walk(window, null)
+    }
     return map
   }
 
@@ -159,6 +173,8 @@ export function createSolidNativeTestRoot(): SolidNativeTestRoot {
     renderer: native as SolidNativeTestRendererApi,
     render(code) {
       if (dispose) dispose()
+      // IDs restart below, so no window from the previous tree may survive.
+      setWindowHost(native as never)
       resetIdCounter()
       clearEventHandlers()
       dispose = mountTree(code as never, batched as never)
@@ -166,6 +182,7 @@ export function createSolidNativeTestRoot(): SolidNativeTestRoot {
       native.flush()
     },
     unmount() {
+      setWindowHost(undefined)
       dispose?.()
       dispose = null
       flushMutations()
@@ -186,14 +203,14 @@ export function createSolidNativeTestRoot(): SolidNativeTestRoot {
     nativeSimulateKeystrokes(elementId, keystrokes) {
       native.flush()
       native.focusElement(elementId)
-      native.simulateKeystrokes(keystrokes)
+      native.simulateKeystrokes(keystrokes, elementId)
       dispatchNativeEvents()
       native.flush()
     },
 
-    nativeSimulateClick(x, y) {
+    nativeSimulateClick(x, y, elementId) {
       native.flush()
-      native.simulateClick(x, y)
+      native.simulateClick(x, y, undefined, elementId)
       dispatchNativeEvents()
       native.flush()
     },
@@ -201,7 +218,7 @@ export function createSolidNativeTestRoot(): SolidNativeTestRoot {
     nativeSimulateKeyDown(elementId, keystroke, isHeld) {
       native.flush()
       native.focusElement(elementId)
-      native.simulateKeyDown(keystroke, isHeld)
+      native.simulateKeyDown(keystroke, isHeld, elementId)
       dispatchNativeEvents()
       native.flush()
     },
@@ -209,28 +226,28 @@ export function createSolidNativeTestRoot(): SolidNativeTestRoot {
     nativeSimulateKeyUp(elementId, keystroke) {
       native.flush()
       native.focusElement(elementId)
-      native.simulateKeyUp(keystroke)
+      native.simulateKeyUp(keystroke, elementId)
       dispatchNativeEvents()
       native.flush()
     },
 
-    nativeSimulateMouseDown(x, y, button) {
+    nativeSimulateMouseDown(x, y, button, elementId) {
       native.flush()
-      native.simulateMouseDown(x, y, button)
+      native.simulateMouseDown(x, y, button, elementId)
       dispatchNativeEvents()
       native.flush()
     },
 
-    nativeSimulateMouseUp(x, y, button) {
+    nativeSimulateMouseUp(x, y, button, elementId) {
       native.flush()
-      native.simulateMouseUp(x, y, button)
+      native.simulateMouseUp(x, y, button, elementId)
       dispatchNativeEvents()
       native.flush()
     },
 
-    nativeSimulateMouseMove(x, y, pressedButton) {
+    nativeSimulateMouseMove(x, y, pressedButton, elementId) {
       native.flush()
-      native.simulateMouseMove(x, y, pressedButton)
+      native.simulateMouseMove(x, y, pressedButton, elementId)
       dispatchNativeEvents()
       native.flush()
     },
@@ -253,9 +270,9 @@ export function createSolidNativeTestRoot(): SolidNativeTestRoot {
       native.flush()
     },
 
-    nativeSimulateScrollWheel(x: number, y: number, deltaX: number, deltaY: number) {
+    nativeSimulateScrollWheel(x: number, y: number, deltaX: number, deltaY: number, elementId?: number) {
       native.flush()
-      native.simulateScrollWheel(x, y, deltaX, deltaY)
+      native.simulateScrollWheel(x, y, deltaX, deltaY, elementId)
       dispatchNativeEvents()
       native.flush()
     },

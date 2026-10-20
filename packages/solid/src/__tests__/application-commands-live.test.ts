@@ -260,3 +260,54 @@ describe.skipIf(process.platform !== "darwin")("packaged desktop actions", () =>
     }
   }, 60_000)
 })
+
+describe.skipIf(process.platform !== "darwin")("packaged multiple windows", () => {
+  it("routes input to a second window that shares app state and closes it cleanly", async () => {
+    const packager = fileURLToPath(new URL("./fixtures/package-commands.ts", import.meta.url))
+    const { stdout } = await promisify(execFile)("bun", [packager, "multi-window"], { timeout: 30_000 })
+    const executable = stdout.match(/^commands-executable:(.+)$/m)?.[1]
+    expect(executable).toBeTruthy()
+    const child = spawn(executable!, [], { stdio: ["pipe", "pipe", "pipe"] })
+    let stderr = ""
+    child.stderr.on("data", (chunk) => { stderr += chunk })
+    const watchdog = setTimeout(() => child.kill("SIGKILL"), 30_000)
+    const exit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+      child.once("error", reject)
+      child.once("exit", (code, signal) => resolve({ code, signal }))
+    })
+    try {
+      const app = await connectStdio({
+        write: (chunk) => { child.stdin.write(chunk) },
+        feed: (listener) => { child.stdout.on("data", (chunk) => listener(String(chunk))) },
+        close: async () => { child.kill() },
+      })
+      const flatten = (node: TreeNode): string => (node.text ?? "") + (node.children ?? []).map(flatten).join("")
+      const text = async (id: string): Promise<string> => flatten(await app.getByTestId(id).element())
+      const painted = (id: string) => async () => (await app.getByTestId(id).bounds()).height
+      for (let round = 0; round < 2; round += 1) {
+        await expect.poll(painted("open"), { timeout: 5_000 }).toBeGreaterThan(0)
+        await app.getByTestId("open").click()
+        // Clicks in the inspector land in its own window and update both.
+        await expect.poll(painted("inspector-increment"), { timeout: 5_000 }).toBeGreaterThan(0)
+        const before = Number((await text("count")).match(/\d+/)![0])
+        await app.getByTestId("inspector-increment").click()
+        await expect.poll(() => text("count")).toBe(`Count: ${before + 1}`)
+        expect(await text("inspector-count")).toBe(`Inspector: ${before + 1}`)
+        await app.getByTestId("increment").click()
+        await expect.poll(() => text("inspector-count")).toBe(`Inspector: ${before + 2}`)
+        // Closing disposes the window's tree; the main window keeps running.
+        const marker = stderr.length
+        await app.getByTestId("inspector-close").click()
+        await expect.poll(() => stderr.slice(marker), { timeout: 5_000 }).toContain("windows:inspector-closed")
+        expect(await app.getByTestId("inspector-count").count()).toBe(0)
+      }
+      await app.getByTestId("quit").click()
+      await expect(exit).resolves.toEqual({ code: 0, signal: null })
+    } catch (error) {
+      throw new Error(`Multi-window fixture failed. Native stderr:\n${stderr}`, { cause: error })
+    } finally {
+      clearTimeout(watchdog)
+      child.kill("SIGKILL")
+    }
+  }, 60_000)
+})

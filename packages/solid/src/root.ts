@@ -5,7 +5,12 @@
 
 import { SoloRenderer } from "@solo/native"
 import type { EventPayload, WindowOptions } from "@solo/native"
-import { clearEventHandlers, handleSoloEvent } from "@solo/core"
+import {
+  clearEventHandlers,
+  handleSoloEvent,
+  registerEventHandler,
+  unregisterEventHandler,
+} from "@solo/core"
 import {
   InProcessBackend,
   liveRendererAsTest,
@@ -14,7 +19,7 @@ import {
 import type { NativeRenderer } from "@solo/core"
 import type { LiveAutomationRenderer } from "@solo/core/automation"
 import type { Element as SolidElement } from "solid-js"
-import { mount, resetIdCounter } from "./runtime.js"
+import { mount, mountWindowRoot, resetIdCounter } from "./runtime.js"
 
 export interface Root {
   unmount: () => void
@@ -34,6 +39,28 @@ export interface Root {
   quitApplication: () => void
 }
 
+/** A window opened with openWindow. */
+export interface AppWindow {
+  /** The window's root element ID; stable while the window is open. */
+  readonly id: number
+  /** True once the window closed, by the user or through close(). */
+  readonly closed: boolean
+  /** Close the window and dispose its tree. A no-op once closed. */
+  close: () => void
+  /** Bring the window to the front. */
+  focus: () => void
+  setTitle: (title: string) => void
+  maximize: () => void
+  restore: () => void
+  toggleMaximized: () => void
+  isMaximized: () => boolean
+}
+
+export interface OpenWindowOptions extends Omit<WindowOptions, "menuBar"> {
+  /** Called once after the window closes, however it closed. */
+  onClose?: () => void
+}
+
 export interface RenderOptions extends WindowOptions {
   onEvent?: (event: EventPayload) => void
   /** Inject a renderer (tests). Defaults to a real SoloRenderer window. */
@@ -45,6 +72,8 @@ const RENDER_HOST_KEY = "__soloSolidRenderHost"
 type RenderSlot = {
   renderer?: NativeRenderer
   root?: Root
+  /** Open windows from openWindow: their close functions, by root element ID. */
+  windows?: Map<number, () => void>
 }
 
 function renderSlot(): RenderSlot {
@@ -53,6 +82,27 @@ function renderSlot(): RenderSlot {
   const created: RenderSlot = {}
   Reflect.set(globalThis, RENDER_HOST_KEY, created)
   return created
+}
+
+function openWindows(): Map<number, () => void> {
+  const slot = renderSlot()
+  slot.windows ??= new Map()
+  return slot.windows
+}
+
+/** Close every window from openWindow. IDs restart on remount, so none may survive it. */
+function closeAllWindows(): void {
+  for (const close of [...openWindows().values()]) close()
+}
+
+/**
+ * Make `renderer` the host that openWindow() opens windows on, closing the
+ * previous host's windows. For harnesses that mount without render(), such as
+ * createSolidNativeTestRoot(). Not part of the public API.
+ */
+export function setWindowHost(renderer: NativeRenderer | undefined): void {
+  closeAllWindows()
+  renderSlot().renderer = renderer
 }
 
 /** Serve the automation protocol over stdio when a controller owns stdin. */
@@ -107,12 +157,14 @@ export function render(code: () => SolidElement, options: RenderOptions = {}): R
     console.log("[solo] remount: unmount previous tree")
     slot.root.unmount()
   }
+  closeAllWindows()
   resetIdCounter()
   clearEventHandlers()
 
   let disposeTree: () => void = mount(code, host)
   slot.root = {
     unmount: () => {
+      closeAllWindows()
       disposeTree()
       disposeTree = () => {}
       slot.root = undefined
@@ -151,6 +203,83 @@ export function render(code: () => SolidElement, options: RenderOptions = {}): R
 
   console.log("[solo] mount complete")
   return slot.root
+}
+
+/**
+ * Open another window that renders `code`, in the app started by render().
+ * It shares the app's state and signals; closing it disposes only its tree.
+ * macOS only.
+ */
+export function openWindow(code: () => SolidElement, options: OpenWindowOptions = {}): AppWindow {
+  const host = renderSlot().renderer
+  if (!host) throw new Error("Call render() before openWindow()")
+  if (!host.openWindow) throw new Error("This renderer does not support multiple windows")
+  const { onClose, ...windowOptions } = options
+  const { rootId, dispose } = mountWindowRoot(code)
+  try {
+    host.openWindow(rootId, windowOptions)
+  } catch (error) {
+    dispose()
+    throw error
+  }
+
+  let closed = false
+  const windows = openWindows()
+  // Runs once, whichever way the window closes.
+  const finish = (): void => {
+    if (closed) return
+    closed = true
+    windows.delete(rootId)
+    unregisterEventHandler(rootId, "windowClosed")
+    dispose()
+    onClose?.()
+  }
+  // Native closed the window (the user, or close() below); its root carries the event.
+  registerEventHandler(rootId, "windowClosed", finish)
+  const close = (): void => {
+    if (closed) return
+    // Closing first keeps the native window from painting a torn-down tree.
+    try {
+      host.closeWindow?.(rootId)
+    } catch {
+      // Already closed natively; its windowClosed event is still on its way.
+    }
+    finish()
+  }
+  windows.set(rootId, close)
+  const assertOpen = (action: string): void => {
+    if (closed) throw new Error(`Cannot ${action} a closed window`)
+  }
+  const maximized = (): boolean => {
+    assertOpen("read")
+    if (!host.isWindowMaximized) throw new Error("This renderer does not expose maximized window state")
+    return host.isWindowMaximized(rootId)
+  }
+  const setMaximized = (value: boolean): void => {
+    assertOpen(value ? "maximize" : "restore")
+    if (!host.setWindowMaximized) throw new Error("This renderer does not support maximizing windows")
+    host.setWindowMaximized(value, rootId)
+  }
+
+  return {
+    id: rootId,
+    get closed() {
+      return closed
+    },
+    close,
+    focus: () => {
+      assertOpen("focus")
+      host.showWindow?.(rootId)
+    },
+    setTitle: (title) => {
+      assertOpen("retitle")
+      host.setWindowTitle?.(title, rootId)
+    },
+    maximize: () => setMaximized(true),
+    restore: () => setMaximized(false),
+    toggleMaximized: () => setMaximized(!maximized()),
+    isMaximized: maximized,
+  }
 }
 
 export { View, Text, Button } from "./components.js"

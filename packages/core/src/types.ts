@@ -3,6 +3,8 @@
 /// These stay independent of Solid because they describe the native mutation
 /// protocol and the style vocabulary that Rust's `apply_styles` understands.
 
+import type { WindowOptions } from "@solo/native"
+
 export type DimensionValue = number | string
 
 export interface MotionStyle {
@@ -304,13 +306,17 @@ export interface NativeRenderer {
   clearSelection?(): void
 
   // ── Window API ─────────────────────────────────────────────────
-  showWindow?(): void
-  closeWindow?(): void
-  setWindowMaximized?(maximized: boolean): void
-  isWindowMaximized?(): boolean
+  // `windowId` is the root element of a window opened with openWindow;
+  // omitted, a call acts on the main window.
+  /** Open a window painting the parentless subtree under `rootId` (macOS). */
+  openWindow?(rootId: number, options?: WindowOptions): void
+  showWindow?(windowId?: number): void
+  closeWindow?(windowId?: number): void
+  setWindowMaximized?(maximized: boolean, windowId?: number): void
+  isWindowMaximized?(windowId?: number): boolean
   quitApplication?(): void
   getWindowSize?(): { width: number; height: number }
-  setWindowTitle?(title: string): void
+  setWindowTitle?(title: string, windowId?: number): void
   setDebugFrameOverlay?(mode: DebugFrameOverlayMode): string
   getDebugFrameOverlay?(): string
   cycleDebugFrameOverlay?(): string

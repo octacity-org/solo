@@ -23,8 +23,9 @@ use gpui::AppContext as _;
 
 use crate::element_tree::EventPayload;
 use crate::renderer::{
-    apply_batch_to_tree, debug_frame_overlay_mode_name, parse_debug_frame_overlay_mode,
-    to_element_id, EventCallback, SoloView,
+    apply_batch_to_tree, debug_frame_overlay_mode_name, emit_event_full,
+    parse_debug_frame_overlay_mode, to_element_id, EventCallback, SoloView, WindowOptions,
+    WINDOW_CLOSED_EVENT,
 };
 use crate::retained_tree::RetainedTree;
 use crate::style::StyleDesc;
@@ -35,11 +36,20 @@ use crate::style::StyleDesc;
 /// Stored in thread_local because VisualTestAppContext is !Send (Rc<AppCell>).
 /// Field order is load-bearing: Rust drops fields in declaration order, and
 /// gpui panics at app teardown if an `Entity` handle outlives its `App`.
-/// `view` must therefore be declared before `cx`.
+/// `view` and `secondary` must therefore be declared before `cx`.
 struct VisualTestState {
     view: gpui::Entity<SoloView>,
     window: gpui::AnyWindowHandle,
+    /// Windows opened with `openWindow`, in opening order.
+    secondary: Vec<TestWindow>,
     cx: gpui::VisualTestAppContext,
+}
+
+/// An offscreen window painting the subtree under `root`.
+struct TestWindow {
+    root: u64,
+    view: gpui::Entity<SoloView>,
+    window: gpui::AnyWindowHandle,
 }
 
 thread_local! {
@@ -62,6 +72,34 @@ fn with_test_state<R>(
             .as_mut()
             .ok_or_else(|| Error::from_reason("TestSoloRenderer not initialized"))?;
         f(&mut state.cx, state.window, &state.view)
+    })
+}
+
+/// Like `with_test_state`, on the window that paints `root`: an `openWindow`
+/// window for `Some`, the main window for `None`.
+fn with_window<R>(
+    root: Option<u64>,
+    f: impl FnOnce(
+        &mut gpui::VisualTestAppContext,
+        gpui::AnyWindowHandle,
+        &gpui::Entity<SoloView>,
+    ) -> Result<R>,
+) -> Result<R> {
+    TEST_STATE.with(|cell| {
+        let mut borrow = cell.borrow_mut();
+        let state = borrow
+            .as_mut()
+            .ok_or_else(|| Error::from_reason("TestSoloRenderer not initialized"))?;
+        let (window, view) = match root {
+            None => (state.window, state.view.clone()),
+            Some(root) => state
+                .secondary
+                .iter()
+                .find(|window| window.root == root)
+                .map(|window| (window.window, window.view.clone()))
+                .ok_or_else(|| Error::from_reason(format!("Window {root} is not open")))?,
+        };
+        f(&mut state.cx, window, &view)
     })
 }
 
@@ -115,6 +153,8 @@ pub struct TestSoloRenderer {
     /// Same handle SoloView paints against, so tests can assert on the live
     /// selection after simulating a drag.
     selection: crate::text::SharedSelection,
+    /// The main view's callback, for the windows `openWindow` adds.
+    event_callback: Option<EventCallback>,
 }
 
 #[napi]
@@ -134,6 +174,7 @@ impl TestSoloRenderer {
 
         let tree_clone = tree.clone();
         let callback_clone = event_callback.clone();
+        let event_callback_for_windows = event_callback.clone();
         let selection = crate::text::SharedSelection::default();
         let selection_clone = selection.clone();
 
@@ -171,7 +212,12 @@ impl TestSoloRenderer {
 
         // Store !Send types on the JS main thread.
         TEST_STATE.with(|cell| {
-            *cell.borrow_mut() = Some(VisualTestState { cx, window, view });
+            *cell.borrow_mut() = Some(VisualTestState {
+                cx,
+                window,
+                view,
+                secondary: Vec::new(),
+            });
         });
 
         Ok(Self {
@@ -179,7 +225,131 @@ impl TestSoloRenderer {
             events,
             file_dialog_state: Arc::new(Mutex::new(Default::default())),
             selection,
+            event_callback: event_callback_for_windows,
         })
+    }
+
+    /// The `openWindow` root that paints element `id`, if any.
+    fn window_root_of(&self, id: Option<f64>) -> Result<Option<u64>> {
+        let Some(id) = id else {
+            return Ok(None);
+        };
+        let id = to_element_id(id)?;
+        Ok(self.tree.lock().unwrap().window_root_of(id))
+    }
+
+    // ── Windows (same interface as SoloRenderer) ─────────────────────
+
+    /// Open an offscreen window painting `root_id`, a parentless element.
+    #[napi]
+    pub fn open_window(&self, root_id: f64, options: Option<WindowOptions>) -> Result<()> {
+        let root = to_element_id(root_id)?;
+        let options = options.unwrap_or_default();
+        if options.menu_bar.is_some() {
+            return Err(Error::from_reason(
+                "menuBar is an application option; set it on the main window",
+            ));
+        }
+        self.tree
+            .lock()
+            .unwrap()
+            .add_window_root(root)
+            .map_err(Error::from_reason)?;
+        let opened = with_test_state(|cx, _window, view| {
+            // One automation clock for the whole app.
+            let clock = cx.update(|app| view.read(app).clock.clone());
+            let size = gpui::size(
+                gpui::px(options.width.unwrap_or(800.0) as f32),
+                gpui::px(options.height.unwrap_or(600.0) as f32),
+            );
+            let tree = self.tree.clone();
+            let callback = self.event_callback.clone();
+            let title = options.title.clone().unwrap_or_else(|| "Solo".to_string());
+            let selection = self.selection.clone();
+            let handle = cx
+                .open_offscreen_window(size, |_window, app| {
+                    app.new(|_cx| {
+                        SoloView::new(tree, callback, title, selection)
+                            .for_window_root(root, Some(clock))
+                    })
+                })
+                .map_err(|e| Error::from_reason(format!("Failed to open test window: {}", e)))?;
+            let view = handle
+                .entity(cx)
+                .map_err(|e| Error::from_reason(format!("Failed to get root view: {}", e)))?;
+            cx.run_until_parked();
+            Ok(TestWindow {
+                root,
+                view,
+                window: handle.into(),
+            })
+        });
+        match opened {
+            Ok(window) => {
+                TEST_STATE.with(|cell| {
+                    if let Some(state) = cell.borrow_mut().as_mut() {
+                        state.secondary.push(window);
+                    }
+                });
+                Ok(())
+            }
+            Err(error) => {
+                self.tree.lock().unwrap().window_roots.retain(|id| *id != root);
+                Err(error)
+            }
+        }
+    }
+
+    /// Close a window opened with `openWindow` and emit `windowClosed` on its
+    /// root, as the live renderer does. The main window cannot be closed.
+    #[napi]
+    pub fn close_window(&self, window_id: Option<f64>) -> Result<()> {
+        let Some(window_id) = window_id else {
+            return Err(Error::from_reason(
+                "TestSoloRenderer cannot close its main window",
+            ));
+        };
+        let root = to_element_id(window_id)?;
+        let closed = TEST_STATE.with(|cell| -> Result<TestWindow> {
+            let mut borrow = cell.borrow_mut();
+            let state = borrow
+                .as_mut()
+                .ok_or_else(|| Error::from_reason("TestSoloRenderer not initialized"))?;
+            let index = state
+                .secondary
+                .iter()
+                .position(|window| window.root == root)
+                .ok_or_else(|| Error::from_reason(format!("Window {root} is not open")))?;
+            let closed = state.secondary.remove(index);
+            state
+                .cx
+                .update_window(closed.window, |_, window, _app| window.remove_window())
+                .map_err(|e| Error::from_reason(e.to_string()))?;
+            state.cx.run_until_parked();
+            Ok(closed)
+        })?;
+        crate::renderer::forget_window_state(closed.window.window_id());
+        let ids = {
+            let mut tree = self.tree.lock().unwrap();
+            tree.window_roots.retain(|id| *id != root);
+            tree.subtree_ids(root)
+        };
+        crate::renderer::release_window_subtree(&ids);
+        emit_event_full(&self.event_callback, root, WINDOW_CLOSED_EVENT, |_| {});
+        Ok(())
+    }
+
+    /// JSON array of the trees of the windows opened with `openWindow`.
+    #[napi]
+    pub fn get_window_automation_trees(&self) -> Result<String> {
+        self.flush()?;
+        let json = self
+            .tree
+            .lock()
+            .unwrap()
+            .windows_to_json(&crate::automation::all_bounds());
+        serde_json::to_string(&json)
+            .map_err(|e| Error::from_reason(format!("JSON serialization failed: {}", e)))
     }
 
     // ── Mutation API (same interface as SoloRenderer) ────────────────
@@ -358,7 +528,11 @@ impl TestSoloRenderer {
         json: String,
     ) -> Result<AsyncTask<crate::context_menu::ContextMenuTask>> {
         self.flush()?;
-        with_test_state(|cx, window, _view| {
+        // The menu opens in the window of the element it belongs to.
+        let owner = serde_json::from_str::<serde_json::Value>(&json)
+            .ok()
+            .and_then(|value| value["elementId"].as_f64());
+        with_window(self.window_root_of(owner)?, |cx, window, _view| {
             cx.update_window(window, |_, window, _app| {
                 crate::context_menu::show(&json, &self.tree.lock().unwrap(), window)
             })
@@ -381,7 +555,8 @@ impl TestSoloRenderer {
         script: String,
     ) -> Result<AsyncTask<crate::native_view::webview::EvaluateJavaScriptTask>> {
         let element_id = to_element_id(element_id)?;
-        let receiver = with_test_state(|cx, window, _view| {
+        let root = self.tree.lock().unwrap().window_root_of(element_id);
+        let receiver = with_window(root, |cx, window, _view| {
             cx.update_window(window, |_, _window, _app| {
                 crate::native_view::with_registry(|registry| {
                     registry
@@ -400,7 +575,8 @@ impl TestSoloRenderer {
         element_id: f64,
     ) -> Result<AsyncTask<crate::native_view::webview::WebviewReadyTask>> {
         let element_id = to_element_id(element_id)?;
-        let receiver = with_test_state(|cx, window, _view| {
+        let root = self.tree.lock().unwrap().window_root_of(element_id);
+        let receiver = with_window(root, |cx, window, _view| {
             cx.update_window(window, |_, _window, _app| {
                 crate::native_view::with_registry(|registry| {
                     registry
@@ -431,7 +607,8 @@ impl TestSoloRenderer {
     ) -> Result<()> {
         let element_id = to_element_id(element_id)?;
         let navigation_id = to_element_id(navigation_id)?;
-        with_test_state(|cx, window, _view| {
+        let root = self.tree.lock().unwrap().window_root_of(element_id);
+        with_window(root, |cx, window, _view| {
             cx.update_window(window, |_, _window, _app| {
                 let resolved = crate::native_view::with_registry(|registry| {
                     registry.decide_navigation(element_id, navigation_id, allow)
@@ -475,16 +652,31 @@ impl TestSoloRenderer {
     /// hit testing requires elements to be laid out).
     #[napi]
     pub fn flush(&self) -> Result<()> {
-        with_test_state(|cx, window, view| {
-            let view = view.clone();
-            cx.update_window(window, |_, _window, app| {
-                view.update(app, |_, cx| {
-                    cx.notify();
-                });
-            })
-            .map_err(|e| Error::from_reason(e.to_string()))?;
+        TEST_STATE.with(|cell| {
+            let mut borrow = cell.borrow_mut();
+            let state = borrow
+                .as_mut()
+                .ok_or_else(|| Error::from_reason("TestSoloRenderer not initialized"))?;
+            let windows = std::iter::once((state.window, state.view.clone()))
+                .chain(
+                    state
+                        .secondary
+                        .iter()
+                        .map(|window| (window.window, window.view.clone())),
+                )
+                .collect::<Vec<_>>();
+            for (window, view) in windows {
+                state
+                    .cx
+                    .update_window(window, |_, _window, app| {
+                        view.update(app, |_, cx| {
+                            cx.notify();
+                        });
+                    })
+                    .map_err(|e| Error::from_reason(e.to_string()))?;
+            }
 
-            cx.run_until_parked();
+            state.cx.run_until_parked();
             Ok(())
         })
     }
@@ -493,14 +685,20 @@ impl TestSoloRenderer {
     /// Dispatches MouseDown + MouseUp through GPUI's input pipeline,
     /// which triggers the same event handlers as production.
     /// IMPORTANT: Call flush() before this — hit testing requires laid-out elements.
+    /// Coordinates are window-local; `element_id` picks that element's window.
     #[napi]
-    pub fn simulate_click(&self, x: f64, y: f64) -> Result<()> {
-        with_test_state(|cx, window, _view| {
-            cx.simulate_click(
-                window,
-                gpui::point(gpui::px(x as f32), gpui::px(y as f32)),
-                gpui::Modifiers::default(),
-            );
+    pub fn simulate_click(
+        &self,
+        x: f64,
+        y: f64,
+        button: Option<u32>,
+        element_id: Option<f64>,
+    ) -> Result<()> {
+        let button = u32_to_mouse_button(button.unwrap_or(0));
+        with_window(self.window_root_of(element_id)?, |cx, window, _view| {
+            let position = gpui::point(gpui::px(x as f32), gpui::px(y as f32));
+            cx.simulate_mouse_down(window, position, button, gpui::Modifiers::default());
+            cx.simulate_mouse_up(window, position, button, gpui::Modifiers::default());
             Ok(())
         })
     }
@@ -509,12 +707,12 @@ impl TestSoloRenderer {
     /// Format: space-separated keys, e.g. "a", "enter", "cmd-shift-p".
     /// The focused element receives keyDown/keyUp events.
     #[napi]
-    pub fn simulate_keystrokes(&self, keystrokes: String) -> Result<()> {
+    pub fn simulate_keystrokes(&self, keystrokes: String, element_id: Option<f64>) -> Result<()> {
         let keys = crate::automation::parse_keystrokes(&keystrokes).map_err(Error::from_reason)?;
         if crate::context_menu::dispatch_keys(&keys) {
             return Ok(());
         }
-        with_test_state(|cx, window, _view| {
+        with_window(self.window_root_of(element_id)?, |cx, window, _view| {
             cx.simulate_keystrokes(window, &keystrokes);
             Ok(())
         })
@@ -526,12 +724,17 @@ impl TestSoloRenderer {
     /// no automatic KeyUpEvent follows. Use with simulate_key_up for
     /// fine-grained key event testing.
     #[napi]
-    pub fn simulate_key_down(&self, keystroke: String, is_held: Option<bool>) -> Result<()> {
+    pub fn simulate_key_down(
+        &self,
+        keystroke: String,
+        is_held: Option<bool>,
+        element_id: Option<f64>,
+    ) -> Result<()> {
         let key = crate::automation::parse_keystroke(&keystroke).map_err(Error::from_reason)?;
         if crate::context_menu::dispatch_keys(std::slice::from_ref(&key)) {
             return Ok(());
         }
-        with_test_state(|cx, window, _view| {
+        with_window(self.window_root_of(element_id)?, |cx, window, _view| {
             let parsed = gpui::Keystroke::parse(&keystroke).map_err(|e| {
                 Error::from_reason(format!("Invalid keystroke '{}': {}", keystroke, e))
             })?;
@@ -553,8 +756,8 @@ impl TestSoloRenderer {
     /// Format: modifier-key string, e.g. "a", "enter", "cmd-s".
     /// Pairs with simulate_key_down for fine-grained key event testing.
     #[napi]
-    pub fn simulate_key_up(&self, keystroke: String) -> Result<()> {
-        with_test_state(|cx, window, _view| {
+    pub fn simulate_key_up(&self, keystroke: String, element_id: Option<f64>) -> Result<()> {
+        with_window(self.window_root_of(element_id)?, |cx, window, _view| {
             let parsed = gpui::Keystroke::parse(&keystroke).map_err(|e| {
                 Error::from_reason(format!("Invalid keystroke '{}': {}", keystroke, e))
             })?;
@@ -569,8 +772,14 @@ impl TestSoloRenderer {
     /// pressed_button: optional mouse button held during move (0=left, 1=middle, 2=right).
     /// Used to simulate drag events.
     #[napi]
-    pub fn simulate_mouse_move(&self, x: f64, y: f64, pressed_button: Option<u32>) -> Result<()> {
-        with_test_state(|cx, window, _view| {
+    pub fn simulate_mouse_move(
+        &self,
+        x: f64,
+        y: f64,
+        pressed_button: Option<u32>,
+        element_id: Option<f64>,
+    ) -> Result<()> {
+        with_window(self.window_root_of(element_id)?, |cx, window, _view| {
             let button: Option<gpui::MouseButton> = pressed_button.map(u32_to_mouse_button);
 
             cx.simulate_mouse_move(
@@ -590,9 +799,10 @@ impl TestSoloRenderer {
     /// Call flush() before this so the element tree and focus handles exist.
     #[napi]
     pub fn focus_element(&self, id: f64) -> Result<()> {
+        let root = self.window_root_of(Some(id))?;
         let id = to_element_id(id)?;
 
-        with_test_state(|cx, window, view| {
+        with_window(root, |cx, window, view| {
             let view = view.clone();
 
             cx.update_window(window, |_, window, app| {
@@ -614,8 +824,14 @@ impl TestSoloRenderer {
     /// Simulate a mouse down event at the given window coordinates.
     /// Button: 0=left, 1=middle, 2=right. Defaults to left (0).
     #[napi]
-    pub fn simulate_mouse_down(&self, x: f64, y: f64, button: Option<u32>) -> Result<()> {
-        with_test_state(|cx, window, _view| {
+    pub fn simulate_mouse_down(
+        &self,
+        x: f64,
+        y: f64,
+        button: Option<u32>,
+        element_id: Option<f64>,
+    ) -> Result<()> {
+        with_window(self.window_root_of(element_id)?, |cx, window, _view| {
             cx.simulate_mouse_down(
                 window,
                 gpui::point(gpui::px(x as f32), gpui::px(y as f32)),
@@ -629,8 +845,14 @@ impl TestSoloRenderer {
     /// Simulate a mouse up event at the given window coordinates.
     /// Button: 0=left, 1=middle, 2=right. Defaults to left (0).
     #[napi]
-    pub fn simulate_mouse_up(&self, x: f64, y: f64, button: Option<u32>) -> Result<()> {
-        with_test_state(|cx, window, _view| {
+    pub fn simulate_mouse_up(
+        &self,
+        x: f64,
+        y: f64,
+        button: Option<u32>,
+        element_id: Option<f64>,
+    ) -> Result<()> {
+        with_window(self.window_root_of(element_id)?, |cx, window, _view| {
             cx.simulate_mouse_up(
                 window,
                 gpui::point(gpui::px(x as f32), gpui::px(y as f32)),
@@ -644,8 +866,15 @@ impl TestSoloRenderer {
     /// Simulate a scroll wheel event at the given position.
     /// delta_x and delta_y are in pixels (negative = scroll up/left).
     #[napi]
-    pub fn simulate_scroll_wheel(&self, x: f64, y: f64, delta_x: f64, delta_y: f64) -> Result<()> {
-        with_test_state(|cx, window, _view| {
+    pub fn simulate_scroll_wheel(
+        &self,
+        x: f64,
+        y: f64,
+        delta_x: f64,
+        delta_y: f64,
+        element_id: Option<f64>,
+    ) -> Result<()> {
+        with_window(self.window_root_of(element_id)?, |cx, window, _view| {
             cx.simulate_event(
                 window,
                 gpui::ScrollWheelEvent {
@@ -711,11 +940,11 @@ impl TestSoloRenderer {
     #[napi]
     pub fn drag_select(&self, x1: f64, y1: f64, x2: f64, y2: f64) -> Result<()> {
         self.flush()?;
-        self.simulate_mouse_down(x1, y1, None)?;
+        self.simulate_mouse_down(x1, y1, None, None)?;
         self.flush()?;
-        self.simulate_mouse_move(x2, y2, Some(0))?;
+        self.simulate_mouse_move(x2, y2, Some(0), None)?;
         self.flush()?;
-        self.simulate_mouse_up(x2, y2, None)?;
+        self.simulate_mouse_up(x2, y2, None, None)?;
         self.flush()?;
         Ok(())
     }
@@ -728,7 +957,7 @@ impl TestSoloRenderer {
     #[napi]
     pub fn scroll_to(&self, element_id: f64, x: f64, y: f64) -> Result<()> {
         let id = to_element_id(element_id)?;
-        with_test_state(|cx, window, view| {
+        with_window(self.window_root_of(Some(element_id))?, |cx, window, view| {
             let view = view.clone();
             cx.update_window(window, |_, _window, app| {
                 view.update(app, |view, _cx| {
@@ -751,7 +980,7 @@ impl TestSoloRenderer {
     pub fn scroll_to_item(&self, element_id: f64, index: f64) -> Result<()> {
         let id = to_element_id(element_id)?;
         let index = index as usize;
-        with_test_state(|cx, window, view| {
+        with_window(self.window_root_of(Some(element_id))?, |cx, window, view| {
             let view = view.clone();
             cx.update_window(window, |_, _window, app| {
                 view.update(app, |view, _cx| {
@@ -827,7 +1056,7 @@ impl TestSoloRenderer {
     #[napi]
     pub fn get_scroll_offset(&self, element_id: f64) -> Result<Option<Vec<f64>>> {
         let id = to_element_id(element_id)?;
-        with_test_state(|cx, window, view| {
+        with_window(self.window_root_of(Some(element_id))?, |cx, window, view| {
             let view = view.clone();
             let result = cx
                 .update_window(window, |_, _window, app| {

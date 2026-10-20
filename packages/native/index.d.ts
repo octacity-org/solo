@@ -52,17 +52,30 @@ export declare class SoloRenderer {
    */
   applyBatch(json: string): Array<number>
   isInitialized(): boolean
-  /** Reopen a closed background window or activate the existing window. */
-  showWindow(): void
-  /** Close the current macOS window. Background applications keep running. */
-  closeWindow(): void
+  /**
+   * Open another window painting the subtree under `root_id`, a parentless
+   * element already created through the mutation API. Its `windowId` is
+   * `root_id`. When it closes, `root_id` receives a `windowClosed` event.
+   * macOS only.
+   */
+  openWindow(rootId: number, options?: WindowOptions | undefined | null): void
+  /**
+   * Reopen a closed background window or activate the existing window.
+   * With `window_id`, activate that window opened with `openWindow`.
+   */
+  showWindow(windowId?: number | undefined | null): void
+  /**
+   * Close the main window, or the window `window_id`. Background
+   * applications keep running.
+   */
+  closeWindow(windowId?: number | undefined | null): void
   /**
    * Enter or leave the standard macOS zoomed state. AppKit owns the saved
    * normal frame, so restoring uses exactly the platform's previous frame.
    */
-  setWindowMaximized(maximized: boolean): void
+  setWindowMaximized(maximized: boolean, windowId?: number | undefined | null): void
   /** Read AppKit's live zoomed state, including native zoom-button changes. */
-  isWindowMaximized(): boolean
+  isWindowMaximized(windowId?: number | undefined | null): boolean
   /** Explicitly terminate the application, including background apps. */
   quitApplication(): void
   getWindowSize(): WindowSize
@@ -98,7 +111,7 @@ export declare class SoloRenderer {
   getDebugFrameOverlay(): string
   /** Clears the last 1000 draw samples. Frame count stays. */
   resetDebugFrameOverlayStats(): void
-  setWindowTitle(title: string): void
+  setWindowTitle(title: string, windowId?: number | undefined | null): void
   focusElement(elementId: number): void
   blur(): void
   /** The current text selection joined in document order, or null. */
@@ -118,14 +131,16 @@ export declare class SoloRenderer {
    */
   getScrollOffset(elementId: number): Array<number> | null
   getAutomationTree(): string
+  /** JSON array of the trees of the windows opened with `openWindow`. */
+  getWindowAutomationTrees(): string
   getElementBounds(id: number): Array<number> | null
   getAllText(): Array<string>
   getPaintedText(): Array<string>
-  simulateClick(x: number, y: number, button?: number | undefined | null): void
-  simulateMouseDown(x: number, y: number, button?: number | undefined | null): void
-  simulateMouseUp(x: number, y: number, button?: number | undefined | null): void
-  simulateMouseMove(x: number, y: number, pressedButton?: number | undefined | null): void
-  simulateScrollWheel(x: number, y: number, deltaX: number, deltaY: number): void
+  simulateClick(x: number, y: number, button?: number | undefined | null, elementId?: number | undefined | null): void
+  simulateMouseDown(x: number, y: number, button?: number | undefined | null, elementId?: number | undefined | null): void
+  simulateMouseUp(x: number, y: number, button?: number | undefined | null, elementId?: number | undefined | null): void
+  simulateMouseMove(x: number, y: number, pressedButton?: number | undefined | null, elementId?: number | undefined | null): void
+  simulateScrollWheel(x: number, y: number, deltaX: number, deltaY: number, elementId?: number | undefined | null): void
   /**
    * Type a space-separated sequence of keystrokes, e.g. `"a enter cmd-s"`.
    *
@@ -134,7 +149,7 @@ export declare class SoloRenderer {
    * JS-bound value write, so `onChange` and `onKeyDown` fire as they would
    * for a human. Focus the target first — see `focus_element`.
    */
-  simulateKeystrokes(keystrokes: string): void
+  simulateKeystrokes(keystrokes: string, elementId?: number | undefined | null): void
   /**
    * A key down with no matching key up.
    *
@@ -142,9 +157,9 @@ export declare class SoloRenderer {
    * [`Self::simulate_keystrokes`] to type. Matches
    * `TestSoloRenderer::simulate_key_down`.
    */
-  simulateKeyDown(keystroke: string, isHeld?: boolean | undefined | null): void
+  simulateKeyDown(keystroke: string, isHeld?: boolean | undefined | null, elementId?: number | undefined | null): void
   /** A key up, paired with [`Self::simulate_key_down`]. */
-  simulateKeyUp(keystroke: string): void
+  simulateKeyUp(keystroke: string, elementId?: number | undefined | null): void
   clockPause(): number
   clockSet(nowMs: number): number
   clockFastForward(deltaMs: number): number
@@ -180,6 +195,15 @@ export declare class SoloRenderer {
  */
 export declare class TestSoloRenderer {
   constructor()
+  /** Open an offscreen window painting `root_id`, a parentless element. */
+  openWindow(rootId: number, options?: WindowOptions | undefined | null): void
+  /**
+   * Close a window opened with `openWindow` and emit `windowClosed` on its
+   * root, as the live renderer does. The main window cannot be closed.
+   */
+  closeWindow(windowId?: number | undefined | null): void
+  /** JSON array of the trees of the windows opened with `openWindow`. */
+  getWindowAutomationTrees(): string
   setApplicationCommands(json: string): void
   setMenuBar(json?: string | undefined | null): void
   selectFiles(optionsJson: string): Promise<Array<string> | null>
@@ -234,14 +258,15 @@ export declare class TestSoloRenderer {
    * Dispatches MouseDown + MouseUp through GPUI's input pipeline,
    * which triggers the same event handlers as production.
    * IMPORTANT: Call flush() before this — hit testing requires laid-out elements.
+   * Coordinates are window-local; `element_id` picks that element's window.
    */
-  simulateClick(x: number, y: number): void
+  simulateClick(x: number, y: number, button?: number | undefined | null, elementId?: number | undefined | null): void
   /**
    * Simulate key strokes through GPUI's input pipeline.
    * Format: space-separated keys, e.g. "a", "enter", "cmd-shift-p".
    * The focused element receives keyDown/keyUp events.
    */
-  simulateKeystrokes(keystrokes: string): void
+  simulateKeystrokes(keystrokes: string, elementId?: number | undefined | null): void
   /**
    * Simulate a single key down event through GPUI's input pipeline.
    * Format: modifier-key string, e.g. "a", "enter", "cmd-s".
@@ -249,19 +274,19 @@ export declare class TestSoloRenderer {
    * no automatic KeyUpEvent follows. Use with simulate_key_up for
    * fine-grained key event testing.
    */
-  simulateKeyDown(keystroke: string, isHeld?: boolean | undefined | null): void
+  simulateKeyDown(keystroke: string, isHeld?: boolean | undefined | null, elementId?: number | undefined | null): void
   /**
    * Simulate a single key up event through GPUI's input pipeline.
    * Format: modifier-key string, e.g. "a", "enter", "cmd-s".
    * Pairs with simulate_key_down for fine-grained key event testing.
    */
-  simulateKeyUp(keystroke: string): void
+  simulateKeyUp(keystroke: string, elementId?: number | undefined | null): void
   /**
    * Simulate a mouse move to the given coordinates.
    * pressed_button: optional mouse button held during move (0=left, 1=middle, 2=right).
    * Used to simulate drag events.
    */
-  simulateMouseMove(x: number, y: number, pressedButton?: number | undefined | null): void
+  simulateMouseMove(x: number, y: number, pressedButton?: number | undefined | null, elementId?: number | undefined | null): void
   /**
    * Focus an element by its numeric ID.
    * The element must have a FocusHandle (created by sync_focus_handles when
@@ -273,17 +298,17 @@ export declare class TestSoloRenderer {
    * Simulate a mouse down event at the given window coordinates.
    * Button: 0=left, 1=middle, 2=right. Defaults to left (0).
    */
-  simulateMouseDown(x: number, y: number, button?: number | undefined | null): void
+  simulateMouseDown(x: number, y: number, button?: number | undefined | null, elementId?: number | undefined | null): void
   /**
    * Simulate a mouse up event at the given window coordinates.
    * Button: 0=left, 1=middle, 2=right. Defaults to left (0).
    */
-  simulateMouseUp(x: number, y: number, button?: number | undefined | null): void
+  simulateMouseUp(x: number, y: number, button?: number | undefined | null, elementId?: number | undefined | null): void
   /**
    * Simulate a scroll wheel event at the given position.
    * delta_x and delta_y are in pixels (negative = scroll up/left).
    */
-  simulateScrollWheel(x: number, y: number, deltaX: number, deltaY: number): void
+  simulateScrollWheel(x: number, y: number, deltaX: number, deltaY: number, elementId?: number | undefined | null): void
   /** The current text selection joined in document order, or null. */
   getSelectedText(): string | null
   /** Drop the current selection. */

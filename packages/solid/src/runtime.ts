@@ -426,3 +426,26 @@ export function mount(
   flushNow?.()
   return dispose
 }
+
+/**
+ * Mount `code` into a fresh parentless root div on the active renderer, for a
+ * window opened with openWindow. Unlike mount(), it shares the running app's
+ * renderer, IDs and event handlers. The initial batch is committed before
+ * returning, so the native side can open a window on `rootId`.
+ */
+export function mountWindowRoot(code: () => SolidElement): {
+  rootId: number
+  dispose: () => void
+} {
+  const rootNode = createElement("div")
+  const solidDispose = universal.render(code as unknown as () => SoloSolidNode, rootNode)
+  flushNow?.()
+  return {
+    rootId: rootNode.id,
+    dispose: () => {
+      solidDispose()
+      getSoloRenderer().destroyElement(rootNode.id)
+      flushNow?.()
+    },
+  }
+}

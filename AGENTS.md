@@ -96,6 +96,29 @@ supported on macOS. Compile both files with `bun build --compile`.
   build. Events sent to a terminated Worker's callback are dropped safely
   (Bun finalizes its threadsafe functions).
 
+## Multiple windows (macOS)
+
+One renderer, one `RetainedTree` and one id space serve every window.
+`openWindow()` (`packages/solid/src/root.ts`) mounts a parentless root and
+calls `SoloRenderer.openWindow(rootId)`; that root is listed in
+`tree.window_roots`, and its id is the window id. The main window paints
+`tree.root_id` from `GPUI_WINDOW`; the others are `SECONDARY_WINDOWS`.
+
+- Element-targeted native calls resolve their window with
+  `tree.window_root_of(id)`; window methods take an optional window id
+  (`WindowTarget`), and an unknown id is an error, never the main window.
+- Per-frame registries (text `REGISTRY`/`PAINTED`, automation `BOUNDS`,
+  `SCROLL_HANDLES`, `VIRTUAL_LIST_STATES`) are keyed by `gpui::WindowId`, so
+  one window's frame reset never clears another's. New per-frame state must be
+  keyed the same way and dropped in `forget_window_state`.
+- A secondary window closing natively emits `windowClosed` on its root; the
+  JS side then disposes the tree. `reattach_macos_application` takes the
+  secondary windows out of the registry before closing them, so a reloaded
+  app never receives a stale `windowClosed`.
+- `TestSoloRenderer` mirrors this with offscreen windows in
+  `VisualTestState::secondary`; `createSolidNativeTestRoot` registers it as
+  the `openWindow` host through `setWindowHost`.
+
 ## Layout invariants
 
 - gpui's default `display` is Block. Any element using flexDirection/

@@ -10,6 +10,7 @@
 //! learned this the hard way; do not move registration into `build_element`.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -17,7 +18,7 @@ use parking_lot::Mutex;
 
 use gpui::{
     canvas, div, point, prelude::*, px, quad, size, BorderStyle, Bounds, Hsla, SharedString,
-    StyledText, TextLayout, TextRun, Window,
+    StyledText, TextLayout, TextRun, Window, WindowId,
 };
 
 use super::selection::{self, SelectionState};
@@ -39,7 +40,9 @@ struct RegEntry {
 }
 
 thread_local! {
-    static REGISTRY: RefCell<Vec<RegEntry>> = const { RefCell::new(Vec::new()) };
+    /// Per window: each window paints its own frames, and a drag resolves
+    /// against the window it happens in.
+    static REGISTRY: RefCell<HashMap<WindowId, Vec<RegEntry>>> = RefCell::new(HashMap::new());
     #[cfg(feature = "automation")]
     /// Every string painted this frame, selectable or not, in paint order.
     ///
@@ -47,7 +50,29 @@ thread_local! {
     /// retained tree and `getAllText()` cannot see it. Without this log the only
     /// way to assert what `<code>` or `<diff>` rendered is a screenshot, which
     /// tells you something changed but never what.
-    static PAINTED: RefCell<Vec<SharedString>> = const { RefCell::new(Vec::new()) };
+    /// Per window, in the order the windows first painted, so the main
+    /// window's text comes first.
+    static PAINTED: RefCell<Vec<(WindowId, Vec<SharedString>)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Record a string painted into `window` this frame.
+#[cfg(feature = "automation")]
+fn push_painted(window: &Window, text: SharedString) {
+    let id = window.window_handle().window_id();
+    PAINTED.with(|p| {
+        let mut painted = p.borrow_mut();
+        match painted.iter_mut().find(|(window, _)| *window == id) {
+            Some((_, texts)) => texts.push(text),
+            None => painted.push((id, vec![text])),
+        }
+    });
+}
+
+/// Drop a closed window's frame registries.
+pub fn forget_window(id: WindowId) {
+    REGISTRY.with(|r| r.borrow_mut().remove(&id));
+    #[cfg(feature = "automation")]
+    PAINTED.with(|p| p.borrow_mut().retain(|(window, _)| *window != id));
 }
 
 /// A zero-size canvas that clears the per-frame registries and installs the
@@ -57,9 +82,14 @@ pub fn selection_frame_reset(selection: SharedSelection) -> impl IntoElement {
     canvas(
         |_, _, _| (),
         move |_, _, window, _| {
-            REGISTRY.with(|r| r.borrow_mut().clear());
+            let id = window.window_handle().window_id();
+            REGISTRY.with(|r| r.borrow_mut().entry(id).or_default().clear());
             #[cfg(feature = "automation")]
-            PAINTED.with(|p| p.borrow_mut().clear());
+            PAINTED.with(|p| {
+                if let Some((_, texts)) = p.borrow_mut().iter_mut().find(|(window, _)| *window == id) {
+                    texts.clear();
+                }
+            });
             register_copy_listener(window, &selection);
         },
     )
@@ -68,18 +98,24 @@ pub fn selection_frame_reset(selection: SharedSelection) -> impl IntoElement {
     .h(px(0.0))
 }
 
-/// Every string painted in the last frame, in paint order. Test-facing.
+/// Every string painted in each window's last frame, in paint order, window
+/// by window. Test-facing.
 #[cfg(feature = "automation")]
 pub fn painted_text() -> Vec<String> {
-    PAINTED.with(|p| p.borrow().iter().map(|s| s.to_string()).collect())
+    PAINTED.with(|p| {
+        p.borrow()
+            .iter()
+            .flat_map(|(_, texts)| texts.iter().map(|s| s.to_string()))
+            .collect()
+    })
 }
 
 /// Record text painted by a custom element that owns its text layout.
-pub fn log_painted_text(text: SharedString) {
+pub fn log_painted_text(window: &Window, text: SharedString) {
     #[cfg(feature = "automation")]
-    PAINTED.with(|painted| painted.borrow_mut().push(text));
+    push_painted(window, text);
     #[cfg(not(feature = "automation"))]
-    let _ = text;
+    let _ = (window, text);
 }
 
 /// Text that is deliberately NOT selectable: line-number gutters, language
@@ -94,7 +130,7 @@ pub fn chrome_text(text: SharedString, runs: Option<Vec<TextRun>>) -> gpui::AnyE
     {
         let log = canvas(
             |_, _, _| (),
-            move |_, _, _, _| PAINTED.with(|p| p.borrow_mut().push(text.clone())),
+            move |_, _, window, _| push_painted(window, text.clone()),
         )
         .absolute()
         .w(px(0.0))
@@ -201,8 +237,9 @@ pub fn selectable_text(opts: SelectableText) -> gpui::AnyElement {
                 }
             }
             if selectable {
+                let id = window.window_handle().window_id();
                 REGISTRY.with(|r| {
-                    r.borrow_mut().push(RegEntry {
+                    r.borrow_mut().entry(id).or_default().push(RegEntry {
                         key: key.clone(),
                         text: text.clone(),
                         layout: layout.clone(),
@@ -211,7 +248,7 @@ pub fn selectable_text(opts: SelectableText) -> gpui::AnyElement {
                 register_listeners(window, &key, &text, &layout, &selection);
             }
             #[cfg(feature = "automation")]
-            PAINTED.with(|p| p.borrow_mut().push(text.clone()));
+            push_painted(window, text.clone());
             if let Some(on_link) = &on_link {
                 register_link_listener(window, &layout, &links, on_link, &selection);
             }
@@ -288,9 +325,13 @@ fn register_link_listener(
 /// texts never share a vertical band. Solo lays out arbitrary Solid trees: a
 /// Y-only match picks the leftmost text in a flex row no matter where the
 /// pointer actually is.
-fn registry_point(position: gpui::Point<gpui::Pixels>) -> Option<(usize, usize)> {
+fn registry_point(
+    window: WindowId,
+    position: gpui::Point<gpui::Pixels>,
+) -> Option<(usize, usize)> {
     REGISTRY.with(|r| {
-        let reg = r.borrow();
+        let registries = r.borrow();
+        let reg = registries.get(&window)?;
         let mut contained: Option<usize> = None;
         let mut nearest: Option<(usize, (f32, f32))> = None;
 
@@ -337,13 +378,17 @@ fn registry_point(position: gpui::Point<gpui::Pixels>) -> Option<(usize, usize)>
 /// Resolve anchor + head into document-ordered spans over the frame's registry.
 /// True when the selection changed.
 fn resolve_drag(
+    window: WindowId,
     selection: &SharedSelection,
     anchor_key: &str,
     anchor_ix: usize,
     head: (usize, usize),
 ) -> bool {
     REGISTRY.with(|r| {
-        let reg = r.borrow();
+        let registries = r.borrow();
+        let Some(reg) = registries.get(&window) else {
+            return false;
+        };
         let Some(anchor_ei) = reg.iter().position(|e| e.key.as_ref() == anchor_key) else {
             // Anchor scrolled out of this frame — keep the spans we have.
             return false;
@@ -407,10 +452,11 @@ fn register_listeners(
             let Some(anchor_ix) = selection.lock().drag_anchor(&key) else {
                 return;
             };
-            let Some(head) = registry_point(e.position) else {
+            let id = window.window_handle().window_id();
+            let Some(head) = registry_point(id, e.position) else {
                 return;
             };
-            if resolve_drag(&selection, &key, anchor_ix, head) {
+            if resolve_drag(id, &selection, &key, anchor_ix, head) {
                 window.refresh();
             }
         });

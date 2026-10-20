@@ -9,8 +9,8 @@ import { solidUniversal } from "../../vite.js"
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..")
 const fixture = process.argv[2] ?? "application-commands"
-if (!["application-commands", "application-shortcuts", "desktop", "system-appearance", "file-dialogs", "background-lifecycle", "context-menus"].includes(fixture)) throw new Error("Unknown app fixture")
-const name = fixture === "context-menus" ? "Menus" : fixture === "desktop" ? "Desktop" : fixture === "system-appearance" ? "Appearance" : fixture === "file-dialogs" ? "Dialogs" : fixture === "background-lifecycle" ? "Background" : "Commands"
+if (!["application-commands", "application-shortcuts", "desktop", "system-appearance", "file-dialogs", "background-lifecycle", "context-menus", "multi-window"].includes(fixture)) throw new Error("Unknown app fixture")
+const name = fixture === "context-menus" ? "Menus" : fixture === "desktop" ? "Desktop" : fixture === "system-appearance" ? "Appearance" : fixture === "file-dialogs" ? "Dialogs" : fixture === "background-lifecycle" ? "Background" : fixture === "multi-window" ? "Windows" : "Commands"
 // CI runs Solid tests before its package build. Build the public package here
 // so this fixture verifies the same exports that a consuming app bundles.
 execFileSync("bun", ["run", "build"], { cwd: root, stdio: "inherit" })
