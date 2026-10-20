@@ -1,7 +1,7 @@
 # Native file dialogs
 
-`@solo/solid` exposes macOS file-open and save-destination dialogs as typed,
-asynchronous functions. Applications receive paths only; Solo never reads,
+`@solo/solid` exposes macOS file-open, folder-open and save-destination
+dialogs as typed, asynchronous functions. Applications receive paths only; Solo never reads,
 writes, validates, or creates the selected files.
 
 ```ts
@@ -27,7 +27,8 @@ if (destination !== null) {
 ## Results and errors
 
 - `selectFiles()` resolves to one path by default, or multiple paths when
-  `multiple: true`. It resolves to `null` on cancellation.
+  `multiple: true`. It resolves to `null` on cancellation. With
+  `directories: true` the panel selects folders instead of files.
 - `selectSavePath()` resolves to the chosen destination or `null` on
   cancellation. Showing or accepting this dialog does not create the file.
 - Operational failures reject the promise. Channel closure during shutdown is

@@ -8,6 +8,7 @@ describe.skipIf(!hasNativeTestRenderer)("native file dialogs", () => {
     try {
       root.render(() => null)
       await expect(selectFiles({ multiple: true, prompt: "Import" })).resolves.toBeNull()
+      await expect(selectFiles({ directories: true, prompt: "Scan" })).resolves.toBeNull()
       await expect(selectSavePath({ suggestedName: "Notes 世界.md", initialDirectory: "/tmp" })).resolves.toBeNull()
     } finally {
       root.unmount()

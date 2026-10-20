@@ -4,6 +4,8 @@ import { getSoloRenderer } from "./runtime.js"
 export interface SelectFilesOptions {
   /** Allow more than one file. Defaults to false. */
   multiple?: boolean
+  /** Select folders instead of files. Defaults to false. */
+  directories?: boolean
   /** Native confirmation-button label, such as "Import". */
   prompt?: string
 }
@@ -23,10 +25,13 @@ function optionalText(value: unknown, name: string): string | undefined {
   return value
 }
 
-/** Select one or more existing files. `null` means the user cancelled. */
+/** Select one or more existing files, or folders with `directories: true`. `null` means the user cancelled. */
 export async function selectFiles(options: SelectFilesOptions = {}): Promise<string[] | null> {
   if (typeof options.multiple !== "undefined" && typeof options.multiple !== "boolean") {
     throw new TypeError("File dialog multiple must be boolean")
+  }
+  if (typeof options.directories !== "undefined" && typeof options.directories !== "boolean") {
+    throw new TypeError("File dialog directories must be boolean")
   }
   const prompt = optionalText(options.prompt, "File dialog prompt")
   const renderer = getSoloRenderer()
@@ -34,6 +39,7 @@ export async function selectFiles(options: SelectFilesOptions = {}): Promise<str
   if (!select) throw new Error("This renderer does not support file dialogs")
   return select(JSON.stringify({
     ...(options.multiple !== undefined ? { multiple: options.multiple } : {}),
+    ...(options.directories !== undefined ? { directories: options.directories } : {}),
     ...(prompt !== undefined ? { prompt } : {}),
   }))
 }

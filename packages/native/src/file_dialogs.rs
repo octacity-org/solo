@@ -9,14 +9,16 @@ use std::sync::{Arc, Mutex};
 pub(crate) struct OpenDialogOptions {
     #[serde(default)]
     pub(crate) multiple: bool,
+    #[serde(default)]
+    pub(crate) directories: bool,
     pub(crate) prompt: Option<String>,
 }
 
 impl OpenDialogOptions {
     pub(crate) fn to_path_prompt_options(&self) -> gpui::PathPromptOptions {
         gpui::PathPromptOptions {
-            files: true,
-            directories: false,
+            files: !self.directories,
+            directories: self.directories,
             multiple: self.multiple,
             prompt: self.prompt.as_deref().map(gpui::SharedString::from),
         }
@@ -251,6 +253,12 @@ mod tests {
             prompt.prompt.as_deref().map(str::as_ref),
             Some("Import OPML")
         );
+
+        let prompt = parse_open_options(r#"{"directories":true}"#)
+            .unwrap()
+            .to_path_prompt_options();
+        assert!(!prompt.files);
+        assert!(prompt.directories);
     }
 
     #[test]
@@ -274,6 +282,7 @@ mod tests {
     fn rejects_invalid_dialog_options() {
         for json in [
             r#"{"multiple":"yes"}"#,
+            r#"{"directories":1}"#,
             r#"{"prompt":" "}"#,
             r#"{"prompt":1}"#,
         ] {

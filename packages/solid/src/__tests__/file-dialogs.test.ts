@@ -34,6 +34,14 @@ describe("file dialogs", () => {
     expect(JSON.parse(renderer.openOptions[0]!)).toEqual({ multiple: true, prompt: "Import OPML" })
   })
 
+  it("forwards folder selection", async () => {
+    const renderer = new DialogRenderer()
+    setSoloRenderer(renderer)
+    renderer.openResult = ["/Users/me/Folder 世界"]
+    await expect(selectFiles({ directories: true, prompt: "Scan" })).resolves.toEqual(["/Users/me/Folder 世界"])
+    expect(JSON.parse(renderer.openOptions[0]!)).toEqual({ directories: true, prompt: "Scan" })
+  })
+
   it("forwards suggested save name and initial directory", async () => {
     const renderer = new DialogRenderer()
     setSoloRenderer(renderer)
@@ -69,6 +77,7 @@ describe("file dialogs", () => {
     const renderer = new DialogRenderer()
     setSoloRenderer(renderer)
     await expect(selectFiles({ multiple: "yes" as never })).rejects.toThrow(/multiple.*boolean/i)
+    await expect(selectFiles({ directories: 1 as never })).rejects.toThrow(/directories.*boolean/i)
     await expect(selectFiles({ prompt: " " })).rejects.toThrow(/prompt.*non-empty/i)
     await expect(selectSavePath({ suggestedName: "folder/export.md" })).rejects.toThrow(/filename/i)
     await expect(selectSavePath({ initialDirectory: "relative" })).rejects.toThrow(/absolute/i)
