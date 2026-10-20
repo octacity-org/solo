@@ -1836,7 +1836,6 @@ impl SoloRenderer {
     #[napi]
     pub fn scroll_to_item(&self, element_id: f64, index: f64) -> Result<()> {
         let id = to_element_id(element_id)?;
-        #[cfg(target_os = "macos")]
         let index = index as usize;
         #[cfg(target_os = "macos")]
         {
