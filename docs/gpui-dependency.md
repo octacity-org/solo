@@ -27,12 +27,12 @@ All three crates come from one source so Cargo resolves a single consistent
 graph:
 
 ```toml
-gpui          = { git = "https://github.com/zed-industries/zed", rev = "fd82517a115d97a07835b52f0512b22b38e38ccf", ... }
+gpui          = { git = "https://github.com/zed-industries/zed", rev = "1d8a29e1e2f65b6be6c176f90af801286ac11cc4", ... }
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "<same>", ... }
 gpui_macos    = { git = "https://github.com/zed-industries/zed", rev = "<same>", ... }  # macOS only
 ```
 
-The exact rev is `fd82517a115d97a07835b52f0512b22b38e38ccf`.
+The exact rev is `1d8a29e1e2f65b6be6c176f90af801286ac11cc4`.
 
 ## Why no fork
 
@@ -47,8 +47,21 @@ removed.
 
 ## Toolchain
 
-`rust-toolchain.toml` pins channel `1.97.1`, matching `rust-toolchain.toml` of
+`rust-toolchain.toml` pins channel `1.98.1`, matching `rust-toolchain.toml` of
 the pinned Zed revision. When bumping the GPUI rev, re-check the channel.
+
+## Accessibility is disabled on macOS
+
+At this revision, closing a window aborts the process: `MacWindow::drop`
+releases the AccessKit `SubclassingAdapter`, and restoring the view's class
+corrupts the KVO state of AppKit's Touch Bar observers
+([zed-industries/zed#64819](https://github.com/zed-industries/zed/issues/64819)).
+Every `openWindow` close hits it. Until the fix
+([zed-industries/zed#65186](https://github.com/zed-industries/zed/pull/65186))
+is in the pinned revision, `run_main_loop` builds the app with
+`Application::new_inaccessible`, so GPUI exposes no accessibility tree and
+screen readers cannot read Solo windows. Switch back to
+`Application::with_platform` when bumping past that fix.
 
 ## Bumping the pin
 

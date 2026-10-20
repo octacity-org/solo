@@ -114,7 +114,7 @@ cd packages/native && cargo test --lib && cargo test --test layout_probe
 
 ## Build
 
-Requirements: Bun, Rust 1.97.1 (see `rust-toolchain.toml`), plus Xcode's
+Requirements: Bun, Rust 1.98.1 (see `rust-toolchain.toml`), plus Xcode's
 Metal Toolchain on macOS (`xcodebuild -downloadComponent MetalToolchain`).
 
 ```bash

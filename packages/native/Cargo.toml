@@ -23,8 +23,8 @@ url = "2"
 # GPUI is consumed as a pinned git dependency — no Zed checkout required.
 # All three crates must use the same repo + rev so Cargo resolves one graph;
 # see docs/gpui-dependency.md.
-gpui = { git = "https://github.com/zed-industries/zed", rev = "fd82517a115d97a07835b52f0512b22b38e38ccf", default-features = false, features = ["font-kit"] }
-gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "fd82517a115d97a07835b52f0512b22b38e38ccf", default-features = false, features = ["font-kit", "wayland", "x11"] }
+gpui = { git = "https://github.com/zed-industries/zed", rev = "1d8a29e1e2f65b6be6c176f90af801286ac11cc4", default-features = false, features = ["font-kit"] }
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "1d8a29e1e2f65b6be6c176f90af801286ac11cc4", default-features = false, features = ["font-kit", "wayland", "x11"] }
 thiserror = "2"
 tree-sitter = { version = "0.26.11", optional = true }
 tree-sitter-highlight = { version = "0.26.11", optional = true }
@@ -52,7 +52,7 @@ tempfile = "3"
 core-text = "=21.0.0"
 core-graphics = "=0.24.0"
 # Production runs MacPlatform's ordinary loop; tests use the native Metal renderer.
-gpui_macos = { git = "https://github.com/zed-industries/zed", rev = "fd82517a115d97a07835b52f0512b22b38e38ccf", default-features = false, features = ["font-kit"] }
+gpui_macos = { git = "https://github.com/zed-industries/zed", rev = "1d8a29e1e2f65b6be6c176f90af801286ac11cc4", default-features = false, features = ["font-kit"] }
 # `<webview>` hosts a WKWebView. Versions are pinned to the ones gpui_macos
 # already resolves — a second objc2 build would produce duplicate,
 # incompatible `NSView`/`WKWebView` types.
@@ -116,7 +116,7 @@ napi-build = "2"
 [dev-dependencies]
 # Tests use gpui's TestAppContext. A dev-dependency feature reaches only test,
 # example and bench builds, so the lean release addon stays without it.
-gpui = { git = "https://github.com/zed-industries/zed", rev = "fd82517a115d97a07835b52f0512b22b38e38ccf", default-features = false, features = ["font-kit", "test-support"] }
+gpui = { git = "https://github.com/zed-industries/zed", rev = "1d8a29e1e2f65b6be6c176f90af801286ac11cc4", default-features = false, features = ["font-kit", "test-support"] }
 
 [[example]]
 name = "hello"

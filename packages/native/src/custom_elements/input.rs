@@ -10,7 +10,7 @@ use gpui::{
     actions, div, fill, point, prelude::*, px, relative, size, App, Bounds, ClipboardItem, Context,
     CursorStyle, ElementInputHandler, Entity, EntityInputHandler, FocusHandle, GlobalElementId,
     KeyBinding, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
-    Pixels, Point, ScrollWheelEvent, SharedString, Style, Task, TextRun, TextStyle, UTF16Selection,
+    Pixels, Point, ScrollEvent, SharedString, Style, Task, TextRun, TextStyle, UTF16Selection,
     UnderlineStyle, Window, WrappedLine,
 };
 use unicode_segmentation::UnicodeSegmentation;
@@ -949,11 +949,11 @@ impl TextEditorState {
 
     fn on_scroll_wheel(
         &mut self,
-        event: &ScrollWheelEvent,
+        event: &ScrollEvent,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // .on_scroll_wheel listeners receive every wheel event in the window.
+        // .on_scroll listeners receive every wheel event in the window.
         // Only consume events that actually target this input — without a
         // position check an input with any scrollable overflow swallows
         // scrolling for the whole app (bubble order runs this handler before
@@ -1325,7 +1325,7 @@ impl gpui::Render for TextEditorState {
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
-            .on_scroll_wheel(cx.listener(Self::on_scroll_wheel))
+            .on_scroll(cx.listener(Self::on_scroll_wheel))
             .when(self.emits_key_down, move |editor| {
                 editor.on_key_down(move |event, _window, _cx| {
                     emit_event_full(&key_down_callback, element_id, "keyDown", |payload| {

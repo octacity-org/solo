@@ -1,5 +1,5 @@
 [toolchain]
 # must match the rust-toolchain.toml of the pinned GPUI revision
-# (zed-industries/zed@fd82517a115d97a07835b52f0512b22b38e38ccf — see docs/gpui-dependency.md)
-channel = "1.97.1"
+# (zed-industries/zed@1d8a29e1e2f65b6be6c176f90af801286ac11cc4 — see docs/gpui-dependency.md)
+channel = "1.98.1"
 profile = "minimal"

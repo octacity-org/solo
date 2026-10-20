@@ -877,7 +877,7 @@ impl TestSoloRenderer {
         with_window(self.window_root_of(element_id)?, |cx, window, _view| {
             cx.simulate_event(
                 window,
-                gpui::ScrollWheelEvent {
+                gpui::ScrollEvent {
                     position: gpui::point(gpui::px(x as f32), gpui::px(y as f32)),
                     delta: gpui::ScrollDelta::Pixels(gpui::point(
                         gpui::px(delta_x as f32),
@@ -885,6 +885,7 @@ impl TestSoloRenderer {
                     )),
                     modifiers: gpui::Modifiers::default(),
                     touch_phase: gpui::TouchPhase::Moved,
+                    source: gpui::ScrollSource::Pointer,
                 },
             );
             Ok(())

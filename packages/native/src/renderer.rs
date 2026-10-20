@@ -463,7 +463,11 @@ pub fn run_main_loop() -> Result<()> {
         app_update(|cx| crate::application_commands::is_menu_action_available(action, cx))
             .unwrap_or(false)
     }));
-    gpui::Application::with_platform(platform).run(move |cx| {
+    // Accessibility stays off until zed-industries/zed#65186 lands: releasing
+    // the AccessKit adapter when a window closes makes AppKit's Touch Bar
+    // bookkeeping throw (zed-industries/zed#64819), crashing every
+    // openWindow close.
+    gpui::Application::new_inaccessible(platform).run(move |cx| {
         init_key_bindings(cx);
         crate::custom_elements::input::init(cx);
         MAIN_APP.with(|app| *app.borrow_mut() = Some(cx.to_async()));
@@ -794,7 +798,7 @@ fn activate_secondary_window(root: u64) -> Result<()> {
 fn blur_all_windows() -> Result<()> {
     app_update(|cx| {
         for window in all_window_handles() {
-            window.update(cx, |_view, window, _cx| window.blur()).ok();
+            window.update(cx, |_view, window, cx| window.blur(cx)).ok();
         }
     })
 }
@@ -1033,10 +1037,33 @@ fn invalidate_window() -> Result<()> {
                 .update(cx, |_view, window, cx| {
                     cx.notify();
                     window.refresh();
+                    // An occluded window has no display link, so GPUI would
+                    // not paint this change until it becomes visible. Ask
+                    // AppKit to display it, as GPUI does before a reveal, so
+                    // painted bounds and text stay current behind other windows.
+                    if !window.is_visible() {
+                        request_appkit_display(window);
+                    }
                 })
                 .ok();
         }
     })
+}
+
+#[cfg(target_os = "macos")]
+fn request_appkit_display(window: &gpui::Window) {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    let Ok(handle) = HasWindowHandle::window_handle(window) else {
+        return;
+    };
+    let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+        return;
+    };
+    // SAFETY: GPUI owns this NSView for the duration of the synchronous
+    // window update.
+    let view = unsafe { &*handle.ns_view.as_ptr().cast::<objc2_app_kit::NSView>() };
+    view.setNeedsDisplay(true);
 }
 
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
@@ -3909,7 +3936,7 @@ pub(crate) fn build_div(
                 // reverse order. The element therefore consumes its delta
                 // first; stopping here prevents an ancestor from consuming the
                 // same gesture even when this scroller is already at a boundary.
-                el = el.on_scroll_wheel(move |event, window, cx| {
+                el = el.on_scroll(move |event, window, cx| {
                     let delta = event.delta.pixel_delta(window.line_height());
                     let contains_x = contains_scroll_x && delta.x != gpui::px(0.0);
                     let contains_y = contains_scroll_y && delta.y != gpui::px(0.0);
@@ -4077,7 +4104,7 @@ pub(crate) fn build_div(
 
             // ── Scroll wheel ─────────────────────────────────────
             "scroll" => {
-                el = el.on_scroll_wheel(move |scroll_event, _window, _cx| {
+                el = el.on_scroll(move |scroll_event, _window, _cx| {
                     emit_event_full(&callback, id, "scroll", |p| {
                         let (x, y) = point_to_xy(scroll_event.position);
                         p.x = Some(x);

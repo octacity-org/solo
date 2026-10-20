@@ -223,10 +223,14 @@ anything below it is invisible.
 - Percentage heights need a *definite* parent height chain up to the window;
   build_div sizes the retained root for this.
 - Flex items cannot shrink below content without explicit min-size 0.
-- `.on_scroll_wheel` listeners see every wheel event in the window — always
+- `.on_scroll` listeners see every wheel event in the window — always
   position-check before consuming/stopping propagation.
 - A zero-area frame still keeps a WKWebView's web process alive, so
   `update_frame` hides the view instead of leaving it mounted.
+- GPUI on macOS stops a window's display link while it is occluded, so a
+  covered window paints nothing on its own. `invalidate_window` marks the
+  NSView as needing display when `window.is_visible()` is false; without that,
+  live automation sees no painted bounds for windows that open behind others.
 
 ## Iterating on the Rust side
 
@@ -244,6 +248,9 @@ checked-out crate (e.g. temporary gpui tracing) clear
 
 Pinned git revision of upstream `zed-industries/zed`, same rev for `gpui`,
 `gpui_platform`, `gpui_macos`. No fork. See docs/gpui-dependency.md.
+macOS builds the app with `Application::new_inaccessible` until the pinned
+revision includes zed-industries/zed#65186 (window close crash); revert it
+then.
 `rust-toolchain.toml` must match the revision's channel.
 
 ## Auto-generated files

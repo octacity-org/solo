@@ -18,7 +18,7 @@ use gpui::{canvas, px, Bounds, IntoElement, Pixels, Styled, Window, WindowId};
 #[cfg(feature = "automation")]
 use gpui::{
     point, App, InputEvent, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ScrollDelta, ScrollWheelEvent, TouchPhase,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ScrollDelta, ScrollEvent, ScrollSource, TouchPhase,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -274,11 +274,12 @@ pub fn dispatch_scroll_wheel(
     delta_y: f64,
 ) {
     window.dispatch_event(
-        ScrollWheelEvent {
+        ScrollEvent {
             position: point(px(x as f32), px(y as f32)),
             delta: ScrollDelta::Pixels(point(px(delta_x as f32), px(delta_y as f32))),
             modifiers: Modifiers::default(),
             touch_phase: TouchPhase::Moved,
+            source: ScrollSource::Pointer,
         }
         .to_platform_input(),
         cx,
