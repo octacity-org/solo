@@ -113,6 +113,12 @@ jobs:
         run: ${{ matrix.settings.build }}
         shell: bash
 
+      # The macOS builds above use default features; packaged apps ship the
+      # lean build, so check it too (napi cfg mistakes only fail there).
+      - name: Check lean macOS build
+        if: matrix.settings.target == 'aarch64-apple-darwin'
+        run: cargo check --release --no-default-features --target aarch64-apple-darwin
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:

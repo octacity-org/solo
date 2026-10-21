@@ -1370,7 +1370,7 @@ async fn run_ui_commands(
                 cx.notify();
                 window.refresh();
             }),
-            UiCommand::Blur => window.update(cx, |_view, window, _cx| window.blur()),
+            UiCommand::Blur => window.update(cx, |_view, window, cx| window.blur(cx)),
         };
         if let Err(error) = result {
             log::error!("Failed to handle GPUI UI command: {error:#}");
@@ -2449,7 +2449,6 @@ impl SoloRenderer {
         Ok(())
     }
 
-    #[cfg(feature = "automation")]
     #[napi]
     pub fn get_automation_tree(&self) -> Result<String> {
         self.request_invalidate()?;
@@ -2468,7 +2467,6 @@ impl SoloRenderer {
     }
 
     /// JSON array of the trees of the windows opened with `openWindow`.
-    #[cfg(feature = "automation")]
     #[napi]
     pub fn get_window_automation_trees(&self) -> Result<String> {
         #[cfg(target_os = "macos")]
@@ -2484,7 +2482,6 @@ impl SoloRenderer {
             .map_err(|e| Error::from_reason(format!("JSON serialization failed: {}", e)))
     }
 
-    #[cfg(feature = "automation")]
     #[napi]
     pub fn get_element_bounds(&self, id: f64) -> Result<Option<Vec<f64>>> {
         let id = to_element_id(id)?;
@@ -2498,7 +2495,6 @@ impl SoloRenderer {
         }))
     }
 
-    #[cfg(feature = "automation")]
     #[napi]
     pub fn get_all_text(&self) -> Vec<String> {
         let tree = self.tree.lock().unwrap();
@@ -2509,7 +2505,6 @@ impl SoloRenderer {
         texts
     }
 
-    #[cfg(feature = "automation")]
     #[napi]
     pub fn get_painted_text(&self) -> Result<Vec<String>> {
         #[cfg(target_os = "macos")]
@@ -2519,7 +2514,6 @@ impl SoloRenderer {
         Ok(crate::text::painted_text())
     }
 
-    #[cfg(feature = "automation")]
     #[napi]
     pub fn simulate_click(
         &self,
@@ -2540,7 +2534,6 @@ impl SoloRenderer {
         }
     }
 
-    #[cfg(feature = "automation")]
     #[napi]
     pub fn simulate_mouse_down(
         &self,
@@ -2561,7 +2554,6 @@ impl SoloRenderer {
         }
     }
 
-    #[cfg(feature = "automation")]
     #[napi]
     pub fn simulate_mouse_up(
         &self,
@@ -2582,7 +2574,6 @@ impl SoloRenderer {
         }
     }
 
-    #[cfg(feature = "automation")]
     #[napi]
     pub fn simulate_mouse_move(
         &self,
@@ -2603,7 +2594,6 @@ impl SoloRenderer {
         }
     }
 
-    #[cfg(feature = "automation")]
     #[napi]
     pub fn simulate_scroll_wheel(
         &self,
@@ -2643,7 +2633,6 @@ impl SoloRenderer {
     /// element has focus. That is the point: this is a real key event, not a
     /// JS-bound value write, so `onChange` and `onKeyDown` fire as they would
     /// for a human. Focus the target first — see `focus_element`.
-    #[cfg(feature = "automation")]
     #[napi]
     pub fn simulate_keystrokes(&self, keystrokes: String, element_id: Option<f64>) -> Result<()> {
         // Parsed here rather than inside the platform branches so a malformed
@@ -2683,7 +2672,6 @@ impl SoloRenderer {
     /// Fires `onKeyDown` but does **not** insert text — use
     /// [`Self::simulate_keystrokes`] to type. Matches
     /// `TestSoloRenderer::simulate_key_down`.
-    #[cfg(feature = "automation")]
     #[napi]
     pub fn simulate_key_down(
         &self,
@@ -2722,7 +2710,6 @@ impl SoloRenderer {
     }
 
     /// A key up, paired with [`Self::simulate_key_down`].
-    #[cfg(feature = "automation")]
     #[napi]
     pub fn simulate_key_up(&self, keystroke: String, element_id: Option<f64>) -> Result<()> {
         let key = crate::automation::parse_keystroke(&keystroke).map_err(Error::from_reason)?;
@@ -2749,7 +2736,6 @@ impl SoloRenderer {
         }
     }
 
-    #[cfg(feature = "automation")]
     #[napi]
     pub fn clock_pause(&self) -> Result<f64> {
         #[cfg(target_os = "macos")]
@@ -2763,7 +2749,6 @@ impl SoloRenderer {
         Err(Error::from_reason("clockPause is only implemented on macOS"))
     }
 
-    #[cfg(feature = "automation")]
     #[napi]
     pub fn clock_set(&self, now_ms: f64) -> Result<f64> {
         #[cfg(target_os = "macos")]
@@ -2780,7 +2765,6 @@ impl SoloRenderer {
         }
     }
 
-    #[cfg(feature = "automation")]
     #[napi]
     pub fn clock_fast_forward(&self, delta_ms: f64) -> Result<f64> {
         #[cfg(target_os = "macos")]
@@ -2799,7 +2783,6 @@ impl SoloRenderer {
         }
     }
 
-    #[cfg(feature = "automation")]
     #[napi]
     pub fn clock_resume(&self) -> Result<f64> {
         #[cfg(target_os = "macos")]
@@ -2813,7 +2796,6 @@ impl SoloRenderer {
         Err(Error::from_reason("clockResume is only implemented on macOS"))
     }
 
-    #[cfg(feature = "automation")]
     #[napi]
     pub fn capture_screenshot(&self, path: String) -> Result<()> {
         #[cfg(all(target_os = "macos", feature = "test-support"))]

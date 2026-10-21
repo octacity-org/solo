@@ -116,13 +116,6 @@ export declare class SoloRenderer {
   /** Clears the last 1000 draw samples. Frame count stays. */
   resetDebugFrameOverlayStats(): void
   setWindowTitle(title: string, windowId?: number | undefined | null): void
-  /**
-   * Draw the latest committed tree in every window before returning, so
-   * automation input and reads see it. The live counterpart of
-   * `TestSoloRenderer::flush`. Off macOS frames arrive asynchronously
-   * through the UI thread, and this does nothing.
-   */
-  flush(): void
   focusElement(elementId: number): void
   blur(): void
   /** The current text selection joined in document order, or null. */
@@ -141,6 +134,13 @@ export declare class SoloRenderer {
    * Returns [x, y] or null if the element has no scroll handle.
    */
   getScrollOffset(elementId: number): Array<number> | null
+  /**
+   * Draw the latest committed tree in every window before returning, so
+   * automation input and reads see it. The live counterpart of
+   * `TestSoloRenderer::flush`. Off macOS frames arrive asynchronously
+   * through the UI thread, and this does nothing.
+   */
+  flush(): void
   getAutomationTree(): string
   /** JSON array of the trees of the windows opened with `openWindow`. */
   getWindowAutomationTrees(): string
