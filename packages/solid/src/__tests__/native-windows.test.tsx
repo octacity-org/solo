@@ -53,10 +53,11 @@ describeNative("openWindow on the test renderer", () => {
   it("reports each window's real content size", () => {
     const { inspector } = mountApp()
     expect(inspector.size()).toEqual({ width: 320, height: 200 })
-    // The offscreen main window asks for 1280×800; AppKit may shorten it to
-    // fit the screen below the menu bar.
+    // The offscreen main window asks for 1280×800; AppKit may shrink it to
+    // fit the screen (CI's display is 1024 wide) and below the menu bar.
     const main = testRoot.renderer.getWindowSize()
-    expect(main.width).toBe(1280)
+    expect(main.width).toBeGreaterThan(0)
+    expect(main.width).toBeLessThanOrEqual(1280)
     expect(main.height).toBeGreaterThan(0)
     expect(main.height).toBeLessThanOrEqual(800)
     expect(() => testRoot.renderer.getWindowSize(999_999)).toThrow(/not open/)
