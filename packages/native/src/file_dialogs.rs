@@ -136,11 +136,16 @@ pub(crate) struct DialogLease {
 
 impl DialogLease {
     pub(crate) fn acquire(state: Arc<Mutex<DialogState>>) -> Result<Self> {
+        Self::acquire_as(state, "A file dialog is already open")
+    }
+
+    /// Acquire a lease whose busy error reads `already_open`.
+    pub(crate) fn acquire_as(state: Arc<Mutex<DialogState>>, already_open: &str) -> Result<Self> {
         let mut state_guard = state
             .lock()
-            .map_err(|_| Error::from_reason("File dialog state is unavailable"))?;
+            .map_err(|_| Error::from_reason("Dialog state is unavailable"))?;
         if state_guard.active {
-            return Err(Error::from_reason("A file dialog is already open"));
+            return Err(Error::from_reason(already_open));
         }
         state_guard.active = true;
         drop(state_guard);
