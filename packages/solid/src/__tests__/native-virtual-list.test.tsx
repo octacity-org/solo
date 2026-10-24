@@ -1,10 +1,10 @@
 /// The native <virtual-list>: lazy rows, programmatic scrolling, and chat
 /// tail following. Faithful port of packages/react virtual-list.test.tsx.
 
-import { createSignal } from "solid-js"
+import { createSignal, onCleanup } from "solid-js"
 import { describe, expect, it } from "vitest"
 import { createSolidNativeTestRoot, hasNativeTestRenderer } from "../testing.js"
-import { Text } from "../components.js"
+import { Text, VirtualList } from "../components.js"
 
 const describeNative = hasNativeTestRenderer ? describe : describe.skip
 
@@ -275,5 +275,155 @@ describeNative("<virtual-list>", () => {
     const rowOffset = renderer.getScrollOffset(scroller.id)
     expect(listOffset?.[1] ?? 0, `list ${JSON.stringify(listOffset)}`).toBeCloseTo(0)
     expect(rowOffset?.[0], `row ${JSON.stringify(rowOffset)}`).toBeLessThan(0)
+  })
+})
+
+const ITEMS = Array.from({ length: 100_000 }, (_, index) => `item-${index}`)
+
+describeNative("<VirtualList>", () => {
+  /** Mounts `items` and counts the rows that currently exist. */
+  function mountList(t: ReturnType<typeof createSolidNativeTestRoot>, items: () => string[]) {
+    const live = new Set<string>()
+    t.render(() => (
+      <VirtualList
+        items={items()}
+        estimatedItemHeight={40}
+        overdraw={0}
+        style={{ width: 400, height: 160 }}
+        renderRow={(item) => {
+          live.add(item)
+          onCleanup(() => live.delete(item))
+          return (
+            <div style={{ height: 40 }}>
+              <Text>{item}</Text>
+            </div>
+          )
+        }}
+      />
+    ))
+    return { live, list: t.renderer.findByType("virtual-list")[0] }
+  }
+
+  it("mounts only the rows near the viewport of a large list", () => {
+    const t = createSolidNativeTestRoot()
+    const { live } = mountList(t, () => ITEMS)
+
+    expect(t.renderer.getPaintedText()).toContain("item-0")
+    expect(live.size).toBeGreaterThan(0)
+    expect(live.size).toBeLessThan(20)
+    expect(t.renderer.getAllText().length).toBeLessThan(20)
+  })
+
+  it("mounts a distant row and disposes the rows it scrolled away from", () => {
+    const t = createSolidNativeTestRoot()
+    const { live, list } = mountList(t, () => ITEMS)
+
+    t.renderer.scrollToItem(list.id, 99_000)
+    expect(t.renderer.getPaintedText()).toContain("item-99000")
+    expect(live.has("item-99000")).toBe(true)
+    expect(live.has("item-0")).toBe(false)
+    expect(live.size).toBeLessThan(20)
+  })
+
+  it("keeps estimated heights for pixel scrolls", () => {
+    const t = createSolidNativeTestRoot()
+    const { list } = mountList(t, () => ITEMS)
+
+    t.renderer.scrollTo(list.id, 0, -3000)
+    expect(t.renderer.getScrollOffset(list.id)?.[1]).toBe(-3000)
+    expect(t.renderer.getPaintedText()).toContain("item-75")
+  })
+
+  it("re-renders only the mounted rows whose item changed", () => {
+    const t = createSolidNativeTestRoot()
+    const [items, setItems] = createSignal(ITEMS.slice(0, 1000).map((label) => ({ label })))
+    let renders = 0
+    t.render(() => (
+      <VirtualList
+        items={items()}
+        key={(item) => item.label}
+        estimatedItemHeight={40}
+        overdraw={0}
+        style={{ width: 400, height: 160 }}
+        renderRow={(item) => {
+          renders++
+          return (
+            <div style={{ height: 40 }}>
+              <Text>{item.label}</Text>
+            </div>
+          )
+        }}
+      />
+    ))
+    expect(t.renderer.getPaintedText()).toContain("item-1")
+
+    const before = renders
+    setItems((current) => current.map((item, index) => (index === 1 ? { label: "item-1" } : item)))
+    expect(t.renderer.getPaintedText()).toContain("item-1")
+    expect(renders - before).toBe(1)
+
+    // A new key at the same index replaces just that row.
+    setItems((current) => current.map((item, index) => (index === 2 ? { label: "renamed" } : item)))
+    expect(t.renderer.getPaintedText()).toContain("renamed")
+    expect(t.renderer.getPaintedText()).not.toContain("item-2")
+    expect(renders - before).toBe(2)
+  })
+
+  it("keeps a focused row mounted and active when it scrolls out of range", () => {
+    const t = createSolidNativeTestRoot()
+    const [value, setValue] = createSignal("")
+    t.render(() => (
+      <VirtualList
+        items={ITEMS}
+        estimatedItemHeight={40}
+        overdraw={0}
+        style={{ width: 400, height: 160 }}
+        renderRow={(item, index) => (
+          <div style={{ height: 40 }}>
+            {index() === 0 ? (
+              <input autoFocus value={value()} onChange={(event) => setValue(event.value ?? "")} />
+            ) : (
+              <Text>{item}</Text>
+            )}
+          </div>
+        )}
+      />
+    ))
+    const input = t.renderer.findByType("input")[0]
+    t.renderer.simulateKeystrokes("a")
+    expect(t.getElement(input.id)?.customProps?.value).toBe("a")
+
+    const list = t.renderer.findByType("virtual-list")[0]
+    t.renderer.scrollToItem(list.id, 50_000)
+    expect(t.renderer.getPaintedText()).toContain("item-50000")
+    expect(t.renderer.findByType("input")[0]?.id).toBe(input.id)
+    t.renderer.simulateKeystrokes("b")
+    expect(t.getElement(input.id)?.customProps?.value).toBe("ab")
+  })
+
+  it("follows appended rows while tail following is active", () => {
+    const t = createSolidNativeTestRoot()
+    const [items, setItems] = createSignal(ITEMS.slice(0, 20))
+    t.render(() => (
+      <VirtualList
+        items={items()}
+        alignment="bottom"
+        followTail
+        estimatedItemHeight={40}
+        overdraw={0}
+        style={{ width: 400, height: 160 }}
+        renderRow={(item) => (
+          <div style={{ height: 40 }}>
+            <Text>{item}</Text>
+          </div>
+        )}
+      />
+    ))
+    expect(t.renderer.getPaintedText()).toContain("item-19")
+    expect(t.renderer.getPaintedText()).not.toContain("item-0")
+
+    setItems(ITEMS.slice(0, 21))
+    expect(t.renderer.getPaintedText()).toContain("item-20")
+    expect(t.getAllText()).not.toContain("item-0")
   })
 })

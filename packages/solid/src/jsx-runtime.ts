@@ -37,6 +37,11 @@ export interface SoloIntrinsicProps {
   onShowMore?: (event: EventPayload) => void
   onLineClick?: (event: EventPayload) => void
   onLinkClick?: (event: EventPayload) => void
+  /**
+   * `<virtual-list itemCount>`: the items to mount changed, from `rangeStart`
+   * up to `rangeEnd`, plus `focusedIndex` while a row has focus.
+   */
+  onRangeChange?: (event: EventPayload) => void
   testId?: string
   [key: string]: unknown
 }

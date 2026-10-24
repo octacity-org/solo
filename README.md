@@ -75,6 +75,25 @@ WKWebView). Styles are a CSS-like subset
 (`StyleDesc`) applied natively, including hover/active pseudo-states,
 overflow scrolling, opacity, borders, and text metrics.
 
+`virtual-list` paints only the rows near the viewport, but every child still
+exists. For large data sets use `VirtualList`, which mounts only those rows:
+
+```tsx
+<VirtualList
+  items={entries()}
+  key={(entry) => entry.path}
+  estimatedItemHeight={30}
+  overdraw={300}
+  renderRow={(entry) => <Row entry={entry} />}
+/>
+```
+
+The native list reports the item range it needs after each layout and paints
+a placeholder at the estimated height until that row is mounted, so a row can
+appear one frame after it scrolls into view. A row re-renders only when its
+item changes, and the row holding focus stays mounted while it is out of range.
+`scrollToItem` takes an item index.
+
 Nested scroll containers chain wheel input to ancestors by default. Add
 `overscrollBehavior: "contain"` to keep both axes in the inner container, or
 use `overscrollBehaviorX` / `overscrollBehaviorY` for one axis. Containment is
