@@ -17,6 +17,30 @@ export function writeClipboardText(text: string): void {
   native.writeClipboardText(text)
 }
 
+function requireAbsolutePath(path: unknown): asserts path is string {
+  if (typeof path !== "string" || !isAbsolute(path)) {
+    throw new TypeError(`Expected an absolute path, got ${JSON.stringify(path)}`)
+  }
+}
+
+/**
+ * Show a file or folder selected in a Finder window (macOS). Throws for a
+ * path that is not absolute or does not exist, off macOS, or on OS rejection.
+ */
+export function revealPath(path: string): void {
+  requireAbsolutePath(path)
+  native.revealPath(path)
+}
+
+/**
+ * Open a file or folder with its default application, as a double-click in
+ * Finder would (macOS). Throws like `revealPath`.
+ */
+export function openPath(path: string): void {
+  requireAbsolutePath(path)
+  native.openPath(path)
+}
+
 /** The outcome of moving one path to the Trash. */
 export interface TrashResult {
   path: string
@@ -32,11 +56,7 @@ export interface TrashResult {
  */
 export async function moveToTrash(paths: readonly string[]): Promise<TrashResult[]> {
   if (!Array.isArray(paths)) throw new TypeError("Paths must be an array of absolute paths")
-  for (const path of paths) {
-    if (typeof path !== "string" || !isAbsolute(path)) {
-      throw new TypeError(`Expected an absolute path, got ${JSON.stringify(path)}`)
-    }
-  }
+  for (const path of paths) requireAbsolutePath(path)
   if (paths.length === 0) return []
   return native.moveToTrash([...paths])
 }
