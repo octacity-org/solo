@@ -42,7 +42,45 @@ struct VisualTestState {
     window: gpui::AnyWindowHandle,
     /// Windows opened with `openWindow`, in opening order.
     secondary: Vec<TestWindow>,
+    /// The alert the prompt builder is showing, for `pendingAlert`.
+    alert: Rc<RefCell<Option<PendingAlert>>>,
     cx: gpui::VisualTestAppContext,
+}
+
+/// An alert shown through `TestAlert` instead of a real `NSAlert` sheet.
+struct PendingAlert {
+    window: gpui::AnyWindowHandle,
+    level: gpui::PromptLevel,
+    message: String,
+    detail: Option<String>,
+    buttons: Vec<String>,
+    /// Weak: the window's prompt owns the view, and no entity handle may
+    /// outlive the test app.
+    view: gpui::WeakEntity<TestAlert>,
+}
+
+/// Stand-in for the native alert. GPUI keeps it as the window's prompt
+/// until `answerAlert` emits the chosen button index.
+struct TestAlert {
+    focus: gpui::FocusHandle,
+}
+
+impl gpui::EventEmitter<gpui::PromptResponse> for TestAlert {}
+
+impl gpui::Focusable for TestAlert {
+    fn focus_handle(&self, _cx: &gpui::App) -> gpui::FocusHandle {
+        self.focus.clone()
+    }
+}
+
+impl gpui::Render for TestAlert {
+    fn render(
+        &mut self,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::Context<Self>,
+    ) -> impl gpui::IntoElement {
+        gpui::div()
+    }
 }
 
 /// An offscreen window painting the subtree under `root`.
@@ -150,6 +188,7 @@ pub struct TestSoloRenderer {
     tree: Arc<Mutex<RetainedTree>>,
     events: Arc<Mutex<Vec<EventPayload>>>,
     file_dialog_state: Arc<Mutex<crate::file_dialogs::DialogState>>,
+    alert_state: Arc<Mutex<crate::file_dialogs::DialogState>>,
     /// Same handle SoloView paints against, so tests can assert on the live
     /// selection after simulating a drag.
     selection: crate::text::SharedSelection,
@@ -182,9 +221,26 @@ impl TestSoloRenderer {
         // TestDispatcher for deterministic scheduling.
         let mac_platform = gpui_macos::MacPlatform::new(false);
         let mut cx = gpui::VisualTestAppContext::new(Rc::new(mac_platform));
+        let alert: Rc<RefCell<Option<PendingAlert>>> = Rc::default();
+        let pending = alert.clone();
         cx.update(|cx| {
             crate::renderer::init_key_bindings(cx);
             crate::custom_elements::input::init(cx);
+            // Offscreen windows would still show a real NSAlert sheet.
+            cx.set_prompt_builder(move |level, message, detail, buttons, handle, window, cx| {
+                let view = cx.new(|cx| TestAlert {
+                    focus: cx.focus_handle(),
+                });
+                *pending.borrow_mut() = Some(PendingAlert {
+                    window: window.window_handle(),
+                    level,
+                    message: message.to_string(),
+                    detail: detail.map(str::to_string),
+                    buttons: buttons.iter().map(|button| button.label().to_string()).collect(),
+                    view: view.downgrade(),
+                });
+                handle.with_view(view, window, cx)
+            });
         });
 
         // Open an offscreen window at (-10000, -10000) — invisible but fully
@@ -217,6 +273,7 @@ impl TestSoloRenderer {
                 window,
                 view,
                 secondary: Vec::new(),
+                alert,
             });
         });
 
@@ -224,6 +281,7 @@ impl TestSoloRenderer {
             tree,
             events,
             file_dialog_state: Arc::new(Mutex::new(Default::default())),
+            alert_state: Arc::new(Mutex::new(Default::default())),
             selection,
             event_callback: event_callback_for_windows,
         })
@@ -419,6 +477,93 @@ impl TestSoloRenderer {
             .map_err(|error| Error::from_reason(error.to_string()))
         })?;
         Ok(crate::file_dialogs::SaveDialogTask::new(receiver, lease))
+    }
+
+    #[napi]
+    pub fn show_alert(
+        &self,
+        options_json: String,
+        window_id: Option<f64>,
+    ) -> Result<AsyncTask<crate::alerts::AlertTask>> {
+        let options = crate::alerts::parse_alert_options(&options_json)?;
+        let root = window_id.map(to_element_id).transpose()?;
+        let lease = crate::file_dialogs::DialogLease::acquire_as(
+            self.alert_state.clone(),
+            crate::alerts::ALERT_ALREADY_OPEN,
+        )?;
+        let receiver = with_window(root, |cx, window, _view| {
+            cx.update_window(window, |_, window, app| options.show(window, app))
+                .map_err(|error| Error::from_reason(error.to_string()))
+        })?;
+        Ok(crate::alerts::AlertTask::new(receiver, lease))
+    }
+
+    /// Test hook: the open alert as JSON, `{ windowId, level, message, detail,
+    /// buttons }`, or null. `windowId` is null for the main window.
+    #[napi]
+    pub fn pending_alert(&self) -> Result<Option<String>> {
+        TEST_STATE.with(|cell| {
+            let borrow = cell.borrow();
+            let state = borrow
+                .as_ref()
+                .ok_or_else(|| Error::from_reason("TestSoloRenderer not initialized"))?;
+            let alert = state.alert.borrow();
+            let Some(alert) = alert.as_ref() else {
+                return Ok(None);
+            };
+            let window_id = state
+                .secondary
+                .iter()
+                .find(|window| window.window == alert.window)
+                .map(|window| window.root);
+            let level = match alert.level {
+                gpui::PromptLevel::Info => "info",
+                gpui::PromptLevel::Warning => "warning",
+                gpui::PromptLevel::Critical => "critical",
+            };
+            Ok(Some(
+                serde_json::json!({
+                    "windowId": window_id,
+                    "level": level,
+                    "message": alert.message,
+                    "detail": alert.detail,
+                    "buttons": alert.buttons,
+                })
+                .to_string(),
+            ))
+        })
+    }
+
+    /// Test hook: click button `index` of the open alert.
+    #[napi]
+    pub fn answer_alert(&self, index: u32) -> Result<()> {
+        let alert = TEST_STATE.with(|cell| {
+            let borrow = cell.borrow();
+            let state = borrow
+                .as_ref()
+                .ok_or_else(|| Error::from_reason("TestSoloRenderer not initialized"))?;
+            let mut alert = state.alert.borrow_mut();
+            let count = alert
+                .as_ref()
+                .ok_or_else(|| Error::from_reason("No alert is open"))?
+                .buttons
+                .len();
+            if index as usize >= count {
+                return Err(Error::from_reason(format!(
+                    "Button {index} does not exist; the alert has {count}"
+                )));
+            }
+            Ok(alert.take().unwrap())
+        })?;
+        let index = index as usize;
+        with_test_state(|cx, _window, _view| {
+            cx.update(|cx| {
+                alert
+                    .view
+                    .update(cx, |_, cx| cx.emit(gpui::PromptResponse(index)))
+                    .map_err(|error| Error::from_reason(error.to_string()))
+            })
+        })
     }
 
     #[napi]

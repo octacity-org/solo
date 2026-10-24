@@ -97,6 +97,13 @@ export declare class SoloRenderer {
    */
   selectFiles(optionsJson: string): Promise<Array<string> | null>
   /**
+   * Show a native alert (an `NSAlert` sheet on macOS) on the main window,
+   * or on the `openWindow` window whose root is `window_id`. The promise
+   * resolves to the index of the clicked button. One alert may be open at
+   * a time; a second request rejects instead of queueing.
+   */
+  showAlert(optionsJson: string, windowId?: number | undefined | null): Promise<number>
+  /**
    * Show the macOS save-destination dialog without blocking the JavaScript
    * or UI thread. The returned promise resolves to a path, or `null` on
    * cancellation. Solo never creates or writes the selected path.
@@ -221,6 +228,14 @@ export declare class TestSoloRenderer {
   setMenuBar(json?: string | undefined | null): void
   selectFiles(optionsJson: string): Promise<Array<string> | null>
   selectSavePath(optionsJson: string): Promise<string | null>
+  showAlert(optionsJson: string, windowId?: number | undefined | null): Promise<number>
+  /**
+   * Test hook: the open alert as JSON, `{ windowId, level, message, detail,
+   * buttons }`, or null. `windowId` is null for the main window.
+   */
+  pendingAlert(): string | null
+  /** Test hook: click button `index` of the open alert. */
+  answerAlert(index: number): void
   setSystemAppearanceSubscription(token?: string | undefined | null): string
   createElement(id: number, elementType: string): void
   /**

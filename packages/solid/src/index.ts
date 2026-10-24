@@ -10,6 +10,8 @@ export type { ContextMenu, ContextMenuAnchor, ContextMenuItem } from "./context-
 export type { ApplicationCommand } from "./commands.js"
 export { moveToTrash, openExternalUrl, openPath, revealPath, writeClipboardText } from "./desktop.js"
 export type { TrashResult } from "./desktop.js"
+export { showAlert } from "./alert.js"
+export type { AlertLevel, ShowAlertOptions } from "./alert.js"
 export { selectFiles, selectSavePath } from "./file-dialogs.js"
 export type { SelectFilesOptions, SelectSavePathOptions } from "./file-dialogs.js"
 export { createSystemAppearance } from "./system-appearance.js"

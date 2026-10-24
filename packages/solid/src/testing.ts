@@ -42,6 +42,10 @@ interface NativeTestRendererApi {
   dragSelect(x1: number, y1: number, x2: number, y2: number): void
   getSelectedText(): string | null
   captureScreenshot(path: string): void
+  /** The open alert as JSON (`windowId`, `level`, `message`, `detail`, `buttons`), or null. */
+  pendingAlert(): string | null
+  /** Click button `index` of the open alert. */
+  answerAlert(index: number): void
 }
 
 export interface NativeTestElement {

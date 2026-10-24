@@ -1395,6 +1395,7 @@ pub struct SoloRenderer {
     tree: Arc<Mutex<RetainedTree>>,
     initialized: Arc<Mutex<bool>>,
     file_dialog_state: Arc<Mutex<crate::file_dialogs::DialogState>>,
+    alert_state: Arc<Mutex<crate::file_dialogs::DialogState>>,
     /// Shared with SoloView so napi methods can read the live selection
     /// without an App context. Paint and napi calls can use different threads.
     selection: SharedSelection,
@@ -1468,6 +1469,7 @@ impl SoloRenderer {
             tree: Arc::new(Mutex::new(RetainedTree::new())),
             initialized: Arc::new(Mutex::new(false)),
             file_dialog_state: Arc::new(Mutex::new(Default::default())),
+            alert_state: Arc::new(Mutex::new(Default::default())),
             selection: SharedSelection::default(),
             #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
             ui_commands: Mutex::new(None),
@@ -2014,6 +2016,40 @@ impl SoloRenderer {
             Err(Error::from_reason(
                 "File dialogs are supported only on macOS",
             ))
+        }
+    }
+
+    /// Show a native alert (an `NSAlert` sheet on macOS) on the main window,
+    /// or on the `openWindow` window whose root is `window_id`. The promise
+    /// resolves to the index of the clicked button. One alert may be open at
+    /// a time; a second request rejects instead of queueing.
+    #[napi]
+    pub fn show_alert(
+        &self,
+        options_json: String,
+        window_id: Option<f64>,
+    ) -> Result<AsyncTask<crate::alerts::AlertTask>> {
+        #[cfg(target_os = "macos")]
+        {
+            if !*self.initialized.lock().unwrap() {
+                return Err(Error::from_reason(
+                    "Renderer is not initialized. Call init() first.",
+                ));
+            }
+            let options = crate::alerts::parse_alert_options(&options_json)?;
+            let target = WindowTarget::from_arg(window_id)?;
+            let lease = crate::file_dialogs::DialogLease::acquire_as(
+                self.alert_state.clone(),
+                crate::alerts::ALERT_ALREADY_OPEN,
+            )?;
+            let receiver =
+                update_window_in(target, move |_view, window, cx| options.show(window, cx))?;
+            return Ok(crate::alerts::AlertTask::new(receiver, lease));
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (options_json, window_id);
+            Err(Error::from_reason("Alerts are supported only on macOS"))
         }
     }
 
