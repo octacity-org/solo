@@ -225,7 +225,7 @@ export function TasksApp() {
           gap: 8,
           paddingTop: 10,
           borderTopWidth: 1,
-          borderTopColor: "#313244",
+          borderColor: "#313244",
         }}
       >
         <input

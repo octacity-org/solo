@@ -54,6 +54,10 @@ async function awaitNavigationRequest(predicate, label) {
   assert.fail(`${label} was not emitted`)
 }
 
+// The WKWebView is created when its placeholder first paints. Draw now
+// instead of waiting for the display link, which a slow or occluded CI
+// window may not have run yet ("WebView 2 is not mounted").
+renderer.flush()
 await awaitWebKit(renderer.waitWebviewReady(2), "generated HTML readiness")
 
 const structured = JSON.parse(await awaitWebKit(
