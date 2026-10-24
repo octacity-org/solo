@@ -1,5 +1,6 @@
 //! Narrow desktop capabilities, independent of a mounted renderer.
 
+use napi::bindgen_prelude::{AsyncTask, Task};
 use napi::{Error, Result};
 use napi_derive::napi;
 
@@ -89,11 +90,104 @@ pub fn write_clipboard_text(text: String) -> Result<()> {
     }
 }
 
+/// Paths must be absolute, so none is resolved against the working directory.
+fn validate_trash_paths(paths: &[String]) -> Result<()> {
+    for path in paths {
+        if path.contains('\0') || !std::path::Path::new(path).is_absolute() {
+            return Err(Error::from_reason(format!(
+                "Expected an absolute path, got {path:?}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// The outcome of moving one path to the Trash.
+#[napi(object)]
+pub struct TrashResult {
+    pub path: String,
+    pub ok: bool,
+    /// Why the move failed, when `ok` is false.
+    pub error: Option<String>,
+}
+
+/// Runs on a libuv worker thread, not the main thread or the app Worker:
+/// trashing a large folder can take a while, and `NSFileManager` is safe to
+/// use off the main thread.
+pub struct MoveToTrashTask {
+    paths: Vec<String>,
+}
+
+#[napi]
+impl Task for MoveToTrashTask {
+    type Output = Vec<TrashResult>;
+    type JsValue = Vec<TrashResult>;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        #[cfg(target_os = "macos")]
+        {
+            let manager = objc2_foundation::NSFileManager::defaultManager();
+            Ok(std::mem::take(&mut self.paths)
+                .into_iter()
+                .map(|path| {
+                    match objc2::rc::autoreleasepool(|_| macos::trash(&manager, &path)) {
+                        Ok(_) => TrashResult {
+                            path,
+                            ok: true,
+                            error: None,
+                        },
+                        Err(error) => TrashResult {
+                            path,
+                            ok: false,
+                            error: Some(error),
+                        },
+                    }
+                })
+                .collect())
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            Err(Error::from_reason(
+                "Moving to the Trash is supported only on macOS",
+            ))
+        }
+    }
+
+    fn resolve(&mut self, _env: napi::Env, output: Self::Output) -> Result<Self::JsValue> {
+        Ok(output)
+    }
+}
+
+/// Move each path to the Trash, in order. A path that fails is reported in
+/// its result and does not stop the others. macOS only; elsewhere the promise
+/// rejects.
+#[napi]
+pub fn move_to_trash(paths: Vec<String>) -> Result<AsyncTask<MoveToTrashTask>> {
+    validate_trash_paths(&paths)?;
+    Ok(AsyncTask::new(MoveToTrashTask { paths }))
+}
+
 #[cfg(target_os = "macos")]
 mod macos {
     use super::*;
     use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
-    use objc2_foundation::NSString;
+    use objc2_foundation::{NSFileManager, NSString, NSURL};
+    use std::path::PathBuf;
+
+    /// Move one item to the Trash and return where it landed.
+    pub(super) fn trash(
+        manager: &NSFileManager,
+        path: &str,
+    ) -> std::result::Result<Option<PathBuf>, String> {
+        let url = NSURL::fileURLWithPath(&NSString::from_str(path));
+        let mut trashed = None;
+        manager
+            .trashItemAtURL_resultingItemURL_error(&url, Some(&mut trashed))
+            .map_err(|error| error.localizedDescription().to_string())?;
+        Ok(trashed
+            .and_then(|url| url.path())
+            .map(|path| PathBuf::from(path.to_string())))
+    }
 
     pub(super) fn require_main_thread() -> Result<()> {
         objc2::MainThreadMarker::new()
@@ -195,5 +289,44 @@ mod tests {
             assert_eq!(actual.to_string(), text);
         }
         board.clearContents();
+    }
+
+    #[test]
+    fn trash_paths_must_be_absolute_and_non_empty() {
+        assert!(validate_trash_paths(&[]).is_ok());
+        assert!(validate_trash_paths(&["/tmp/a b".into(), "/tmp/世界".into()]).is_ok());
+        for path in ["", "relative/file", "./file", "~/file", "/tmp/a\0b"] {
+            let error = validate_trash_paths(&["/tmp/ok".into(), path.into()]).unwrap_err();
+            assert!(error.to_string().contains("absolute path"), "{path:?}: {error}");
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn trashes_files_and_folders_and_reports_missing_paths() {
+        let dir = std::env::temp_dir().join(format!("solo-trash-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("folder/inner")).unwrap();
+        std::fs::write(dir.join("file 世界.txt"), "x").unwrap();
+        std::fs::write(dir.join("folder/inner/nested.txt"), "y").unwrap();
+
+        let manager = objc2_foundation::NSFileManager::defaultManager();
+        for name in ["file 世界.txt", "folder"] {
+            let path = dir.join(name);
+            let trashed = macos::trash(&manager, path.to_str().unwrap())
+                .unwrap()
+                .expect("macOS reports where the item went");
+            assert!(!path.exists(), "{name} left its folder");
+            assert!(trashed.exists(), "{name} is in the Trash");
+            // Never leave test files in the user's Trash.
+            if trashed.is_dir() {
+                std::fs::remove_dir_all(&trashed).unwrap();
+            } else {
+                std::fs::remove_file(&trashed).unwrap();
+            }
+        }
+
+        let missing = macos::trash(&manager, dir.join("missing").to_str().unwrap());
+        assert!(!missing.unwrap_err().is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
