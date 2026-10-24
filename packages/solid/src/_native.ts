@@ -4,6 +4,7 @@
 export {
   SoloRenderer,
   enableWorkerMainThread,
+  moveToTrash,
   openExternalUrl,
   requestProcessExit,
   runMainLoop,
