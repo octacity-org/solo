@@ -3,7 +3,7 @@
 /// In-process tests talk to TestRenderer through the same typed method catalog
 /// as a live app on SSE stdin/stdout. Locators query the retained tree.
 
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
+import { spawn } from "node:child_process"
 import { mkdir } from "node:fs/promises"
 import path from "node:path"
 import {
@@ -718,7 +718,7 @@ export async function launch(options: {
   cwd?: string
   env?: NodeJS.ProcessEnv
 }): Promise<App> {
-  const child: ChildProcessWithoutNullStreams = spawn(
+  const child = spawn(
     options.command,
     options.args ?? [],
     {
@@ -727,7 +727,9 @@ export async function launch(options: {
         ...process.env,
         ...options.env,
       },
-      stdio: ["pipe", "pipe", "pipe"],
+      // stdout carries the protocol. The app's stderr goes to ours, so its
+      // crash messages show, and an unread pipe can never fill and block it.
+      stdio: ["pipe", "pipe", "inherit"],
     }
   )
   const app = await connectStdio({
