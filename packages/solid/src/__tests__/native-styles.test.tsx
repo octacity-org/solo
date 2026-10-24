@@ -4,11 +4,13 @@
 /// macOS-only: requires the GPU-backed TestSoloRenderer.
 
 import fs from "fs"
-import { createSignal } from "solid-js"
+import { createSignal, flush } from "solid-js"
 import { beforeEach, describe, expect, it } from "vitest"
 import { createSolidNativeTestRoot, hasNativeTestRenderer } from "../testing.js"
 import type { SolidNativeTestRoot } from "../testing.js"
 import { Text, View } from "../components.js"
+import { flushMutations } from "../runtime.js"
+import { isCI, readPng } from "./test-utils.js"
 import type { StyleDesc } from "@solo/core"
 
 const describeNative = hasNativeTestRenderer ? describe : describe.skip
@@ -442,6 +444,54 @@ describeNative("style properties", () => {
         </Center>
       ))
       expect(texts()).toEqual(["motion-safe"])
+    })
+  })
+
+  describe("per-side border widths", () => {
+    // A black 120×60 box at (40, 40) with a red border, on a black window.
+    // Each edge is sampled at its midpoint, inside the 1px border band.
+    function edges(name: string) {
+      const path = shot(name)
+      testRoot.captureScreenshot(path)
+      const png = readPng(path)
+      const scale = png.width / testRoot.renderer.getWindowSize().width
+      const red = (x: number, y: number) => {
+        const [r, g, b] = png.rgb(x * scale, y * scale)
+        return r > 200 && g < 60 && b < 60
+      }
+      return { top: red(100, 40.5), right: red(159.5, 70), bottom: red(100, 99.5), left: red(40.5, 70), inside: red(100, 70) }
+    }
+    function Box(props: { style: StyleDesc }) {
+      return (
+        <View style={{ width: "100%", height: "100%", backgroundColor: "#000000" }}>
+          <View style={{ position: "absolute", left: 40, top: 40, width: 120, height: 60, backgroundColor: "#000000", borderColor: "#ff0000", ...props.style }} />
+        </View>
+      )
+    }
+    function update(apply: () => void) {
+      apply()
+      flush()
+      flushMutations()
+    }
+
+    it("paints borderTopWidth on the top edge only, and clears it at 0 or when removed", () => {
+      const [top, setTop] = createSignal<number | undefined>(1)
+      testRoot.render(() => <Box style={{ borderTopWidth: top() }} />)
+      expect(edges("solo-border-top")).toEqual({ top: true, right: false, bottom: false, left: false, inside: false })
+
+      // Metal on CI VMs does not repaint between captures (see expectScreenshotsDiffer).
+      if (isCI) return
+      update(() => setTop(0))
+      expect(edges("solo-border-top-zero").top).toBe(false)
+      update(() => setTop(1))
+      expect(edges("solo-border-top-again").top).toBe(true)
+      update(() => setTop(undefined))
+      expect(edges("solo-border-top-removed").top).toBe(false)
+    })
+
+    it("lets a per-side width override borderWidth for that side", () => {
+      testRoot.render(() => <Box style={{ borderWidth: 2, borderTopWidth: 0, borderLeftWidth: 0 }} />)
+      expect(edges("solo-border-override")).toEqual({ top: false, right: true, bottom: true, left: false, inside: false })
     })
   })
 })

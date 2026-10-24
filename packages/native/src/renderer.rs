@@ -4657,6 +4657,20 @@ pub(crate) fn apply_styles<E: gpui::Styled>(mut el: E, style: &StyleDesc) -> E {
     if let Some(width) = style.border_width {
         el = el.border(gpui::px(width.max(0.0) as f32));
     }
+    // A side's own width overrides `borderWidth` for that side; 0 clears it.
+    let side = |width: f64| gpui::px(width.max(0.0) as f32);
+    if let Some(width) = style.border_top_width {
+        el = el.border_t(side(width));
+    }
+    if let Some(width) = style.border_right_width {
+        el = el.border_r(side(width));
+    }
+    if let Some(width) = style.border_bottom_width {
+        el = el.border_b(side(width));
+    }
+    if let Some(width) = style.border_left_width {
+        el = el.border_l(side(width));
+    }
     if let Some(ref color) = style.border_color {
         if let Some(hex) = parse_color_hex(color) {
             el = el.border_color(gpui::rgba(hex));
