@@ -82,9 +82,10 @@ export function readPng(file: string) {
   return {
     width,
     height,
-    /** [r, g, b] at device pixel (x, y). */
+    /** [r, g, b] of the device pixel containing (x, y). Rounding instead
+     *  would move a half-pixel sample like 40.5 off a 1px band at scale 1. */
     rgb(x: number, y: number): [number, number, number] {
-      const i = Math.round(y) * stride + Math.round(x) * channels
+      const i = Math.floor(y) * stride + Math.floor(x) * channels
       return [pixels[i]!, pixels[i + 1]!, pixels[i + 2]!]
     },
   }
