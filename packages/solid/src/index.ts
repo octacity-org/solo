@@ -14,8 +14,8 @@ export { selectFiles, selectSavePath } from "./file-dialogs.js"
 export type { SelectFilesOptions, SelectSavePathOptions } from "./file-dialogs.js"
 export { createSystemAppearance } from "./system-appearance.js"
 export type { SystemAppearance } from "./system-appearance.js"
-export { View, Text, Button } from "./components.js"
-export type { ViewProps, TextProps, ButtonProps } from "./components.js"
+export { View, Text, Button, VirtualList } from "./components.js"
+export type { ViewProps, TextProps, ButtonProps, VirtualListProps } from "./components.js"
 export {
   resetIdCounter,
   flushMutations,

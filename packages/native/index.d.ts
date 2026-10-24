@@ -522,6 +522,18 @@ export interface EventPayload {
   oldLine?: number
   /** Line number on the post-change side. Populated for: `<diff>` lineClick. */
   newLine?: number
+  /**
+   * First item index a data-driven `<virtual-list>` wants mounted.
+   * Populated for: rangeChange.
+   */
+  rangeStart?: number
+  /** One past the last item index to mount. Populated for: rangeChange. */
+  rangeEnd?: number
+  /**
+   * Item index of the row holding focus, which must stay mounted while it
+   * is out of range. Populated for: rangeChange, when a row has focus.
+   */
+  focusedIndex?: number
   modifiers?: EventModifiers
 }
 

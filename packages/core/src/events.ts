@@ -10,6 +10,7 @@ export const EVENT_PROPS = [
   ["onShowMore", "showMore"],
   ["onLineClick", "lineClick"],
   ["onLinkClick", "linkClick"],
+  ["onRangeChange", "rangeChange"],
   ["onChange", "change"],
   ["onSubmit", "submit"],
   // <webview> events (macOS only)
