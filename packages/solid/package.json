@@ -60,7 +60,8 @@
     "build": "rm -rf dist *.tsbuildinfo && tsc && chmod +x dist/cli.js",
     "dev": "tsc --watch",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.fixtures.json"
   },
   "dependencies": {
     "@babel/core": "^7",

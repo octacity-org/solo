@@ -183,6 +183,11 @@ jobs:
         run: bun run build
         working-directory: packages/solid
 
+      # The fixtures import @solo/solid's built types, so this follows the build.
+      - name: Type-check Solid JSX fixtures
+        run: bun run typecheck
+        working-directory: packages/solid
+
       - name: Build tasks automation fixture
         run: bun run build
         working-directory: examples/tasks

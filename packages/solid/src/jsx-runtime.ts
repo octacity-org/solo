@@ -6,6 +6,7 @@
 /// solid-js/universal README). Types are deliberately permissive: the native
 /// protocol accepts style objects, event handlers and custom props.
 
+import type { Element as SolidElement } from "solid-js"
 import type { StyleDesc } from "@solo/core"
 import type { EventPayload } from "@solo/native"
 import type {
@@ -21,10 +22,21 @@ export interface SoloIntrinsicProps {
   onMouseUp?: (event: EventPayload) => void
   onMouseEnter?: (event: EventPayload) => void
   onMouseLeave?: (event: EventPayload) => void
+  onMouseMove?: (event: EventPayload) => void
+  onMouseDownOutside?: (event: EventPayload) => void
   onKeyDown?: (event: EventPayload) => void
   onKeyUp?: (event: EventPayload) => void
   onFocus?: (event: EventPayload) => void
   onBlur?: (event: EventPayload) => void
+  onScroll?: (event: EventPayload) => void
+  /** `<input>`/`<textarea>`: the text changed. `value` is the new text. */
+  onChange?: (event: EventPayload) => void
+  /** `<input>`/`<textarea>`: the text was submitted. `value` is the text. */
+  onSubmit?: (event: EventPayload) => void
+  onToggleFile?: (event: EventPayload) => void
+  onShowMore?: (event: EventPayload) => void
+  onLineClick?: (event: EventPayload) => void
+  onLinkClick?: (event: EventPayload) => void
   testId?: string
   [key: string]: unknown
 }
@@ -59,7 +71,8 @@ export interface WebviewProps extends SoloIntrinsicProps {
 }
 
 export namespace JSX {
-  export type Element = unknown
+  // Solid's own element type, so <Show>, <For> and render() accept Solo JSX.
+  export type Element = SolidElement
 
   export interface IntrinsicElements {
     div: SoloIntrinsicProps
