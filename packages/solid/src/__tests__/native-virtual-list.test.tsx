@@ -369,6 +369,32 @@ describeNative("<VirtualList>", () => {
     expect(renders - before).toBe(2)
   })
 
+  it("keys rows of a list that shrinks", () => {
+    const t = createSolidNativeTestRoot()
+    const folder = (prefix: string, count: number) =>
+      Array.from({ length: count }, (_, index) => ({ path: `${prefix}-${index}` }))
+    const [items, setItems] = createSignal(folder("big", 9))
+    t.render(() => (
+      <VirtualList
+        items={items()}
+        key={(entry) => entry.path}
+        estimatedItemHeight={40}
+        overdraw={0}
+        style={{ width: 400, height: 400 }}
+        renderRow={(entry) => (
+          <div style={{ height: 40 }}>
+            <Text>{entry.path}</Text>
+          </div>
+        )}
+      />
+    ))
+    expect(t.renderer.getPaintedText()).toContain("big-8")
+
+    setItems(folder("junk", 5))
+    expect(t.renderer.getPaintedText()).toContain("junk-4")
+    expect(t.getAllText()).not.toContain("big-0")
+  })
+
   it("keeps a focused row mounted and active when it scrolls out of range", () => {
     const t = createSolidNativeTestRoot()
     const [value, setValue] = createSignal("")

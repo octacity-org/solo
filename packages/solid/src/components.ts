@@ -99,6 +99,11 @@ export interface VirtualListProps<T> {
 /** Pixels of rows mounted before the list reports its first range. */
 const INITIAL_EXTENT = 1024
 
+interface MountedRow {
+  index: number
+  key: unknown
+}
+
 /**
  * A virtual list over data. Only the rows in view, plus `overdraw`, exist as
  * Solid nodes and native elements: the native list reports the item range it
@@ -108,7 +113,9 @@ const INITIAL_EXTENT = 1024
 export function VirtualList<T>(props: VirtualListProps<T>): SoloSolidNode {
   const [range, setRange] = createSignal<{ start: number; end: number; focused?: number }>()
   const estimate = (): number => props.itemHeight ?? props.estimatedItemHeight ?? 32
-  const mounted = createMemo(() => {
+  const key = (index: number): unknown =>
+    props.key ? props.key(props.items[index] as T, index) : props.items[index]
+  const mounted = createMemo((): MountedRow[] => {
     const count = props.items.length
     let current = range()
     if (!current) {
@@ -125,13 +132,15 @@ export function VirtualList<T>(props: VirtualListProps<T>): SoloSolidNode {
     if (focused !== undefined && focused < count && (focused < current.start || focused >= end)) {
       indices.push(focused)
     }
-    return indices
+    // Keys are taken now, while each index points into these items: Solid's
+    // keyed map also compares the previous rows, whose indices can be past
+    // the end of a list that shrank.
+    return indices.map((index) => ({ index, key: key(index) }))
   })
-  const key = (index: number): unknown =>
-    props.key ? props.key(props.items[index] as T, index) : props.items[index]
 
-  const row = (index: Accessor<number>): SoloSolidNode => {
+  const row = (mountedRow: Accessor<MountedRow>): SoloSolidNode => {
     const el = universal.createElement("div")
+    const index = createMemo(() => mountedRow().index)
     const item = createMemo(() => props.items[index()] as T)
     universal.spread(el, {
       get itemIndex() {
@@ -181,7 +190,7 @@ export function VirtualList<T>(props: VirtualListProps<T>): SoloSolidNode {
       get each() {
         return mounted()
       },
-      keyed: key,
+      keyed: (mountedRow: MountedRow) => mountedRow.key,
       children: row,
     }),
   })
