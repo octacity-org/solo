@@ -393,9 +393,12 @@ export class Locator {
     })
   }
 
+  /** The node's own text followed by its descendants' text, in document
+   *  order, as DOM and Playwright `textContent` do. */
   async textContent(): Promise<string> {
-    const node = await this.element()
-    return node.text ?? ""
+    const text = (node: TreeNode): string =>
+      (node.text ?? "") + (node.children ?? []).map(text).join("")
+    return text(await this.element())
   }
 
   async waitFor(options: { timeoutMs?: number } = {}): Promise<TreeNode> {

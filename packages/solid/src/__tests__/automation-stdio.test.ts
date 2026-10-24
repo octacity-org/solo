@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest"
 import {
   connectStdio,
+  connectTest,
   encodeSse,
   handleAutomationRequest,
   InProcessBackend,
@@ -10,7 +11,7 @@ import {
 } from "../automation.js"
 import type { TestAutomationRenderer } from "../automation.js"
 
-function fakeRenderer(): TestAutomationRenderer {
+function fakeRenderer(tree?: object): TestAutomationRenderer {
   let clicks = 0
   return {
     nativeSimulateClick() {
@@ -32,7 +33,7 @@ function fakeRenderer(): TestAutomationRenderer {
     clearSelection() {},
     captureScreenshot() {},
     getAutomationTree: () =>
-      JSON.stringify({
+      JSON.stringify(tree ?? {
         id: 1,
         type: "div",
         testId: "inc",
@@ -46,6 +47,29 @@ function fakeRenderer(): TestAutomationRenderer {
     clockResume: () => 0,
   }
 }
+
+describe("Locator.textContent", () => {
+  it("includes descendant text in document order", async () => {
+    // <Text testId="count">Presses: {count()}</Text> with a nested element.
+    const app = await connectTest(fakeRenderer({
+      id: 1,
+      type: "div",
+      children: [{
+        id: 2,
+        type: "text",
+        testId: "count",
+        children: [
+          { id: 3, type: "text", text: "Presses: " },
+          { id: 4, type: "text", text: "3" },
+          { id: 5, type: "div", children: [{ id: 6, type: "text", text: " (max)" }] },
+        ],
+      }],
+    }))
+    expect(await app.getByTestId("count").textContent()).toBe("Presses: 3 (max)")
+    expect(await app.getByText("Presses:").textContent()).toBe("Presses: ")
+    await app.close()
+  })
+})
 
 describe("automation stdio", () => {
   it("round-trips through data: lines with log noise", async () => {
