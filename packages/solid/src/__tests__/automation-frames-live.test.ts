@@ -10,7 +10,6 @@ import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
 import { describe, expect, it } from "vitest"
 import { connectStdio } from "../automation.js"
-import type { TreeNode } from "../automation.js"
 
 describe.skipIf(process.platform !== "darwin")("packaged automation frames", () => {
   it("acts on controls mounted by the previous click", async () => {
@@ -34,8 +33,7 @@ describe.skipIf(process.platform !== "darwin")("packaged automation frames", () 
           feed: (listener) => { child.stdout.on("data", (chunk) => listener(String(chunk))) },
           close: async () => { child.kill() },
         })
-        const flatten = (node: TreeNode): string => (node.text ?? "") + (node.children ?? []).map(flatten).join("")
-        const text = async (id: string) => flatten(await app.getByTestId(id).element())
+        const text = (id: string) => app.getByTestId(id).textContent()
         await expect.poll(() => text("presses")).toBe("Presses: 0")
         for (let round = 1; round <= 10; round++) {
           await app.getByTestId("toggle").click()

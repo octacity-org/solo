@@ -5,7 +5,6 @@ import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
 import { describe, expect, it } from "vitest"
 import { connectStdio } from "../automation.js"
-import type { TreeNode } from "../automation.js"
 
 describe.skipIf(process.platform !== "darwin")("packaged focus-aware shortcuts", () => {
   it("dispatches scoped chords, protects editing and controls, and handles repeats and disposal", async () => {
@@ -30,8 +29,7 @@ describe.skipIf(process.platform !== "darwin")("packaged focus-aware shortcuts",
           feed: (listener) => { child.stdout.on("data", (chunk) => listener(String(chunk))) },
           close: async () => { child.kill() },
         })
-        const flatten = (node: TreeNode): string => (node.text ?? "") + (node.children ?? []).map(flatten).join("")
-        const text = async (id: string) => flatten(await app.getByTestId(id).element())
+        const text = (id: string) => app.getByTestId(id).textContent()
         await expect.poll(() => text("validation")).toBe("Rejected: 2")
         await app.call("keyDown", { key: "cmd-r" })
         const expected: string[] = ["global"]
