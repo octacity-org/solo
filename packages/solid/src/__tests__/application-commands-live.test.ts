@@ -3,7 +3,6 @@ import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
 import { describe, expect, it } from "vitest"
 import { connectStdio } from "../automation.js"
-import type { TreeNode } from "../automation.js"
 
 describe.skipIf(process.platform !== "darwin")("packaged application commands", () => {
   it("dispatches across native focus targets, respects enabled/disposal, and preserves editing", async () => {
@@ -26,8 +25,7 @@ describe.skipIf(process.platform !== "darwin")("packaged application commands", 
           feed: (listener) => { child.stdout.on("data", (chunk) => listener(String(chunk))) },
           close: async () => { child.kill() },
         })
-        const flatten = (node: TreeNode): string => (node.text ?? "") + (node.children ?? []).map(flatten).join("")
-        const text = async (id: string): Promise<string> => flatten(await app.getByTestId(id).element())
+        const text = (id: string) => app.getByTestId(id).textContent()
         let count = 0
         for (const target of ["focus-target", "native-input", "native-textarea"]) {
           // Focus handlers are installed during paint, not retained-tree creation.
@@ -83,8 +81,7 @@ describe.skipIf(process.platform !== "darwin")("packaged background lifecycle", 
         feed: (listener) => { child.stdout.on("data", (chunk) => listener(String(chunk))) },
         close: async () => { child.kill() },
       })
-      const flatten = (node: TreeNode): string => (node.text ?? "") + (node.children ?? []).map(flatten).join("")
-      const ticks = async (): Promise<number> => Number(flatten(await app.getByTestId("ticks").element()).match(/\d+/)?.[0] ?? -1)
+      const ticks = async (): Promise<number> => Number((await app.getByTestId("ticks").textContent()).match(/\d+/)?.[0] ?? -1)
       let previous = await ticks()
       for (let cycle = 0; cycle < 2; cycle += 1) {
         await expect.poll(async () => (await app.getByTestId("close").bounds()).height, { timeout: 5_000 }).toBeGreaterThan(0)
@@ -160,14 +157,13 @@ describe.skipIf(process.platform !== "darwin")("packaged file dialogs", () => {
           close: async () => { child.kill() },
         })
         await expect.poll(async () => (await app.getByTestId("open").bounds()).height, { timeout: 5_000 }).toBeGreaterThan(0)
-        const flatten = (node: TreeNode): string => (node.text ?? "") + (node.children ?? []).map(flatten).join("")
         const ticks = async (): Promise<number> => {
-          const text = flatten(await app.getByTestId("ticks").element())
+          const text = await app.getByTestId("ticks").textContent()
           return Number(text.match(/^Ticks: (\d+)$/)?.[1] ?? -1)
         }
         const before = await ticks()
         await app.getByTestId("open").click()
-        await expect.poll(async () => flatten(await app.getByTestId("status").element())).toBe("Open pending")
+        await expect.poll(() => app.getByTestId("status").textContent()).toBe("Open pending")
         await expect.poll(ticks, { timeout: 5_000, interval: 50 }).toBeGreaterThan(before)
       })()])
     } catch (error) {
@@ -200,8 +196,7 @@ describe.skipIf(process.platform !== "darwin")("packaged system appearance", () 
           feed: (listener) => { child.stdout.on("data", (chunk) => listener(String(chunk))) },
           close: async () => { child.kill() },
         })
-        const flatten = (node: TreeNode): string => (node.text ?? "") + (node.children ?? []).map(flatten).join("")
-        const text = async (id: string): Promise<string> => flatten(await app.getByTestId(id).element())
+        const text = (id: string) => app.getByTestId(id).textContent()
         await expect.poll(() => text("system")).toMatch(/^System: (light|dark)$/)
         const initial = (await text("system")).slice("System: ".length)
         expect(await text("effective")).toBe(`Effective: ${initial}`)
@@ -247,8 +242,7 @@ describe.skipIf(process.platform !== "darwin")("packaged desktop actions", () =>
         })
         await expect.poll(async () => (await app.getByTestId("invalid").bounds()).height, { timeout: 5_000 }).toBeGreaterThan(0)
         await app.getByTestId("invalid").click()
-        const flatten = (node: TreeNode): string => (node.text ?? "") + (node.children ?? []).map(flatten).join("")
-        await expect.poll(async () => flatten(await app.getByTestId("status").element())).toContain("absolute HTTP/HTTPS URL")
+        await expect.poll(() => app.getByTestId("status").textContent()).toContain("absolute HTTP/HTTPS URL")
         // Validation failures leave the application responsive.
         await app.getByTestId("editor").fill("still responsive 世界")
       })()])
@@ -281,8 +275,7 @@ describe.skipIf(process.platform !== "darwin")("packaged multiple windows", () =
         feed: (listener) => { child.stdout.on("data", (chunk) => listener(String(chunk))) },
         close: async () => { child.kill() },
       })
-      const flatten = (node: TreeNode): string => (node.text ?? "") + (node.children ?? []).map(flatten).join("")
-      const text = async (id: string): Promise<string> => flatten(await app.getByTestId(id).element())
+      const text = (id: string) => app.getByTestId(id).textContent()
       const painted = (id: string) => async () => (await app.getByTestId(id).bounds()).height
       for (let round = 0; round < 2; round += 1) {
         await expect.poll(painted("open"), { timeout: 5_000 }).toBeGreaterThan(0)
