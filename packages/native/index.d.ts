@@ -545,10 +545,19 @@ export declare function moveToTrash(paths: Array<string>): Promise<Array<TrashRe
 export declare function openExternalUrl(url: string): void
 
 /**
+ * Open a file or folder with its default application, as a double-click in
+ * Finder would. macOS only.
+ */
+export declare function openPath(path: string): void
+
+/**
  * Worker mode: end the process with `code`. The Worker calls this from its
  * `exit` handler, after its own JS `exit` handlers have run.
  */
 export declare function requestProcessExit(code: number): void
+
+/** Show a file or folder selected in a Finder window. macOS only. */
+export declare function revealPath(path: string): void
 
 /**
  * Run GPUI's ordinary blocking macOS loop on the calling (main) thread.

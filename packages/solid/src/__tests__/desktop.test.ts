@@ -5,6 +5,8 @@ const platform = vi.hoisted(() => ({
   openExternalUrl: vi.fn(),
   writeClipboardText: vi.fn(),
   moveToTrash: vi.fn(),
+  revealPath: vi.fn(),
+  openPath: vi.fn(),
 }))
 vi.mock("@solo/native", async (original) => ({
   ...await original<typeof import("@solo/native")>(),
@@ -74,5 +76,31 @@ describe("moveToTrash", () => {
       throw new Error("Moving to the Trash is supported only on macOS")
     })
     await expect(solo.moveToTrash(["/tmp/a"])).rejects.toThrow("supported only on macOS")
+  })
+})
+
+describe("revealPath and openPath", () => {
+  it("pass absolute paths through unchanged", () => {
+    solo.revealPath("/Users/me/Downloads/a b 世界.zip")
+    solo.openPath("/Users/me/Documents/$(echo).txt")
+    expect(platform.revealPath).toHaveBeenCalledExactlyOnceWith("/Users/me/Downloads/a b 世界.zip")
+    expect(platform.openPath).toHaveBeenCalledExactlyOnceWith("/Users/me/Documents/$(echo).txt")
+  })
+
+  it("reject relative, empty, and non-string paths before platform dispatch", () => {
+    for (const value of [undefined, 42, "", "relative/file", "./file", "~/file"]) {
+      expect(() => solo.revealPath(value as never)).toThrow(TypeError)
+      expect(() => solo.openPath(value as never)).toThrow(TypeError)
+    }
+    expect(platform.revealPath).not.toHaveBeenCalled()
+    expect(platform.openPath).not.toHaveBeenCalled()
+  })
+
+  it("preserve catchable platform errors", () => {
+    const error = new Error("\"/missing\": No such file or directory (os error 2)")
+    platform.revealPath.mockImplementation(() => { throw error })
+    platform.openPath.mockImplementation(() => { throw error })
+    expect(() => solo.revealPath("/missing")).toThrow(error)
+    expect(() => solo.openPath("/missing")).toThrow(error)
   })
 })

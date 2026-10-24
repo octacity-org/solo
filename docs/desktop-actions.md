@@ -1,4 +1,4 @@
-# Browser, clipboard and Trash actions
+# Browser, clipboard, file and Trash actions
 
 ```ts
 import { openExternalUrl, writeClipboardText } from "@solo/solid"
@@ -44,6 +44,30 @@ A rejected pasteboard write throws; macOS may already have cleared the previous
 clipboard contents when that happens. Do not assume clipboard writes are
 transactional or that other applications cannot replace the contents afterward.
 
+## Showing and opening files
+
+```ts
+import { openPath, revealPath } from "@solo/solid"
+
+revealPath("/Users/me/Downloads/report.pdf") // Finder window with the file selected
+openPath("/Users/me/Downloads/report.pdf")   // opens in the default PDF viewer
+```
+
+Both take an absolute path to a file or folder, are synchronous, and throw
+catchable errors like the actions above. A relative path, or a path that does
+not exist, throws before anything reaches Finder; the message includes the
+operating system's reason, such as `No such file or directory`. The path is
+data, never shell input.
+
+`revealPath` uses `NSWorkspace selectFile:inFileViewerRootedAtPath:`.
+`openPath` uses `NSWorkspace openURL:` with a file URL, so it behaves like a
+double-click in Finder: an application bundle launches, a folder opens in
+Finder, and a `.command` or `.tool` script runs in Terminal. Applications
+decide which paths to open. Choosing a specific application ("Open With…") is
+not supported.
+
+On Linux and Windows both throw after the path checks.
+
 ## Moving to the Trash
 
 ```ts
@@ -66,9 +90,10 @@ while, and it works from the app Worker. Paths are data, never shell input.
 
 ## Verification
 
-Rust tests cover URL parsing, a real private-pasteboard Unicode round trip
-without touching the user's clipboard, and trashing a real file and folder
-(removed from the Trash afterwards). Public API tests check argument types,
+Rust tests cover URL parsing, absolute and existing path checks, a real
+private-pasteboard Unicode round trip without touching the user's clipboard,
+and trashing a real file and folder (removed from the Trash afterwards). Public
+API tests check argument types,
 unchanged text delivery, and error propagation. The packaged regression checks
 that an invalid URL reaches a catchable error and leaves the app responsive.
 
@@ -86,5 +111,7 @@ configured browser opens `https://example.com/#solo-desktop-check`. Choose
 **Copy Unicode URL**, then paste into a new document in another application;
 expect `https://example.com/世界?q=İstanbul#solo-desktop-check`. This manual copy
 replaces the system clipboard. **Reject invalid URL** must show an error without
-opening another application. **Move test file to Trash** must report success,
+opening another application. **Show test file in Finder** must open a Finder
+window with `Solo Path Check.txt` selected, and **Open test file** must open it
+in the default text editor. **Move test file to Trash** must report success,
 and Finder's Trash must show `Solo Trash Check.txt` with **Put Back** available.

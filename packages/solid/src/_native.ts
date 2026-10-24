@@ -6,7 +6,9 @@ export {
   enableWorkerMainThread,
   moveToTrash,
   openExternalUrl,
+  openPath,
   requestProcessExit,
+  revealPath,
   runMainLoop,
   writeClipboardText,
 } from "@solo/native"

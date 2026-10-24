@@ -91,15 +91,75 @@ pub fn write_clipboard_text(text: String) -> Result<()> {
 }
 
 /// Paths must be absolute, so none is resolved against the working directory.
-fn validate_trash_paths(paths: &[String]) -> Result<()> {
-    for path in paths {
-        if path.contains('\0') || !std::path::Path::new(path).is_absolute() {
-            return Err(Error::from_reason(format!(
-                "Expected an absolute path, got {path:?}"
-            )));
-        }
+fn validate_absolute_path(path: &str) -> Result<()> {
+    if path.contains('\0') || !std::path::Path::new(path).is_absolute() {
+        return Err(Error::from_reason(format!(
+            "Expected an absolute path, got {path:?}"
+        )));
     }
     Ok(())
+}
+
+/// Finder fails silently for a missing path, so report it before dispatch.
+fn validate_existing_path(path: &str) -> Result<()> {
+    validate_absolute_path(path)?;
+    std::fs::symlink_metadata(path)
+        .map(|_| ())
+        .map_err(|error| Error::from_reason(format!("{path:?}: {error}")))
+}
+
+/// Show a file or folder selected in a Finder window. macOS only.
+#[napi]
+pub fn reveal_path(path: String) -> Result<()> {
+    validate_existing_path(&path)?;
+    #[cfg(target_os = "macos")]
+    {
+        if crate::renderer::worker_main::must_forward() {
+            return crate::renderer::on_main(move || reveal_path(path));
+        }
+        macos::require_main_thread()?;
+        use objc2_foundation::NSString;
+        platform_result(
+            objc2_app_kit::NSWorkspace::sharedWorkspace().selectFile_inFileViewerRootedAtPath(
+                Some(&NSString::from_str(&path)),
+                &NSString::new(),
+            ),
+            "showing the path in Finder",
+        )
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err(Error::from_reason(
+            "Showing a path in Finder is supported only on macOS",
+        ))
+    }
+}
+
+/// Open a file or folder with its default application, as a double-click in
+/// Finder would. macOS only.
+#[napi]
+pub fn open_path(path: String) -> Result<()> {
+    validate_existing_path(&path)?;
+    #[cfg(target_os = "macos")]
+    {
+        if crate::renderer::worker_main::must_forward() {
+            return crate::renderer::on_main(move || open_path(path));
+        }
+        macos::require_main_thread()?;
+        let url = objc2_foundation::NSURL::fileURLWithPath(
+            &objc2_foundation::NSString::from_str(&path),
+        );
+        platform_result(
+            objc2_app_kit::NSWorkspace::sharedWorkspace().openURL(&url),
+            "opening the path",
+        )
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err(Error::from_reason(
+            "Opening a path with its default application is supported only on macOS",
+        ))
+    }
 }
 
 /// The outcome of moving one path to the Trash.
@@ -163,7 +223,7 @@ impl Task for MoveToTrashTask {
 /// rejects.
 #[napi]
 pub fn move_to_trash(paths: Vec<String>) -> Result<AsyncTask<MoveToTrashTask>> {
-    validate_trash_paths(&paths)?;
+    paths.iter().try_for_each(|path| validate_absolute_path(path))?;
     Ok(AsyncTask::new(MoveToTrashTask { paths }))
 }
 
@@ -292,13 +352,23 @@ mod tests {
     }
 
     #[test]
-    fn trash_paths_must_be_absolute_and_non_empty() {
-        assert!(validate_trash_paths(&[]).is_ok());
-        assert!(validate_trash_paths(&["/tmp/a b".into(), "/tmp/世界".into()]).is_ok());
+    fn paths_must_be_absolute() {
+        assert!(validate_absolute_path("/tmp/a b").is_ok());
+        assert!(validate_absolute_path("/tmp/世界").is_ok());
         for path in ["", "relative/file", "./file", "~/file", "/tmp/a\0b"] {
-            let error = validate_trash_paths(&["/tmp/ok".into(), path.into()]).unwrap_err();
+            let error = validate_absolute_path(path).unwrap_err();
             assert!(error.to_string().contains("absolute path"), "{path:?}: {error}");
         }
+    }
+
+    #[test]
+    fn reveal_and_open_require_an_existing_path() {
+        let dir = std::env::temp_dir();
+        assert!(validate_existing_path(dir.to_str().unwrap()).is_ok());
+        let missing = dir.join(format!("solo-missing-{}", std::process::id()));
+        let error = validate_existing_path(missing.to_str().unwrap()).unwrap_err();
+        assert!(error.to_string().contains("solo-missing-"), "{error}");
+        assert!(validate_existing_path("relative").is_err());
     }
 
     #[cfg(target_os = "macos")]
