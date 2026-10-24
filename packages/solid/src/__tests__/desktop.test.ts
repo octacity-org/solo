@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import * as solo from "@solo/solid"
 
-const platform = vi.hoisted(() => ({ openExternalUrl: vi.fn(), writeClipboardText: vi.fn() }))
+const platform = vi.hoisted(() => ({
+  openExternalUrl: vi.fn(),
+  writeClipboardText: vi.fn(),
+  moveToTrash: vi.fn(),
+}))
 vi.mock("@solo/native", async (original) => ({
   ...await original<typeof import("@solo/native")>(),
   ...platform,
@@ -39,5 +43,36 @@ describe("public desktop actions", () => {
     platform.writeClipboardText.mockImplementation(() => { throw error })
     expect(() => solo.openExternalUrl("https://example.com")).toThrow(error)
     expect(() => solo.writeClipboardText("text")).toThrow(error)
+  })
+})
+
+describe("moveToTrash", () => {
+  it("returns one result per path, in order", async () => {
+    const results = [
+      { path: "/tmp/a b.txt", ok: true },
+      { path: "/tmp/missing", ok: false, error: "The file doesn’t exist." },
+    ]
+    platform.moveToTrash.mockResolvedValue(results)
+    await expect(solo.moveToTrash(["/tmp/a b.txt", "/tmp/missing"])).resolves.toEqual(results)
+    expect(platform.moveToTrash).toHaveBeenCalledExactlyOnceWith(["/tmp/a b.txt", "/tmp/missing"])
+  })
+
+  it("resolves an empty list without platform dispatch", async () => {
+    await expect(solo.moveToTrash([])).resolves.toEqual([])
+    expect(platform.moveToTrash).not.toHaveBeenCalled()
+  })
+
+  it("rejects malformed input before platform dispatch", async () => {
+    for (const paths of [undefined, "/tmp/a", [42], [""], ["relative/file"], ["/tmp/a", "./b"]]) {
+      await expect(solo.moveToTrash(paths as never)).rejects.toThrow(TypeError)
+    }
+    expect(platform.moveToTrash).not.toHaveBeenCalled()
+  })
+
+  it("rejects when the platform cannot trash at all", async () => {
+    platform.moveToTrash.mockImplementation(() => {
+      throw new Error("Moving to the Trash is supported only on macOS")
+    })
+    await expect(solo.moveToTrash(["/tmp/a"])).rejects.toThrow("supported only on macOS")
   })
 })

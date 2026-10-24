@@ -1,4 +1,4 @@
-# Browser and clipboard actions
+# Browser, clipboard and Trash actions
 
 ```ts
 import { openExternalUrl, writeClipboardText } from "@solo/solid"
@@ -44,10 +44,31 @@ A rejected pasteboard write throws; macOS may already have cleared the previous
 clipboard contents when that happens. Do not assume clipboard writes are
 transactional or that other applications cannot replace the contents afterward.
 
+## Moving to the Trash
+
+```ts
+import { moveToTrash } from "@solo/solid"
+
+const results = await moveToTrash(["/Users/me/Downloads/old.zip", "/Users/me/tmp"])
+for (const { path, ok, error } of results) if (!ok) console.warn(path, error)
+```
+
+`moveToTrash(paths)` moves files and folders to the Trash, where the user can
+put them back, and resolves with one `{ path, ok, error? }` per input path, in
+input order. A path that cannot be moved (missing, no permission, a volume
+without a Trash) gets `ok: false` and macOS's reason; the other paths still
+move. The promise rejects only when a path is not absolute or on platforms
+other than macOS.
+
+Unlike the actions above it is asynchronous: it runs `NSFileManager`
+`trashItemAtURL` on a background thread, because a large folder can take a
+while, and it works from the app Worker. Paths are data, never shell input.
+
 ## Verification
 
-Rust tests cover URL parsing and a real private-pasteboard Unicode round trip
-without touching the user's clipboard. Public API tests check argument types,
+Rust tests cover URL parsing, a real private-pasteboard Unicode round trip
+without touching the user's clipboard, and trashing a real file and folder
+(removed from the Trash afterwards). Public API tests check argument types,
 unchanged text delivery, and error propagation. The packaged regression checks
 that an invalid URL reaches a catchable error and leaves the app responsive.
 
@@ -65,4 +86,5 @@ configured browser opens `https://example.com/#solo-desktop-check`. Choose
 **Copy Unicode URL**, then paste into a new document in another application;
 expect `https://example.com/世界?q=İstanbul#solo-desktop-check`. This manual copy
 replaces the system clipboard. **Reject invalid URL** must show an error without
-opening another application.
+opening another application. **Move test file to Trash** must report success,
+and Finder's Trash must show `Solo Trash Check.txt` with **Put Back** available.

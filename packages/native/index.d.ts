@@ -532,6 +532,13 @@ export interface MenuBarOptions {
 }
 
 /**
+ * Move each path to the Trash, in order. A path that fails is reported in
+ * its result and does not stop the others. macOS only; elsewhere the promise
+ * rejects.
+ */
+export declare function moveToTrash(paths: Array<string>): Promise<Array<TrashResult>>
+
+/**
  * Ask macOS to open an absolute HTTP/HTTPS URL in its default browser.
  * Success means the OS accepted the request, not that the page loaded.
  */
@@ -548,6 +555,14 @@ export declare function requestProcessExit(code: number): void
  * Never returns while the application runs.
  */
 export declare function runMainLoop(): void
+
+/** The outcome of moving one path to the Trash. */
+export interface TrashResult {
+  path: string
+  ok: boolean
+  /** Why the move failed, when `ok` is false. */
+  error?: string
+}
 
 export interface WindowOptions {
   title?: string
