@@ -245,6 +245,20 @@ describeNative("<virtual-list>", () => {
     expect(renderer.getPaintedText()).not.toContain("row-0")
   })
 
+  it("opens at the top when rows arrive in an empty list", () => {
+    const { render, renderer } = createSolidNativeTestRoot()
+    const [count, setCount] = createSignal(0)
+    render(() => (
+      <virtual-list overdraw={0} estimatedItemHeight={40} style={{ width: 400, height: 160 }}>
+        {Rows({ count: count() })}
+      </virtual-list>
+    ))
+
+    setCount(1000)
+    expect(renderer.getPaintedText()).toContain("row-0")
+    expect(renderer.getPaintedText()).not.toContain("row-999")
+  })
+
   it("lets overflow-x inside a row pan without moving the list", () => {
     const { render, renderer } = createSolidNativeTestRoot()
     render(() => (
@@ -393,6 +407,16 @@ describeNative("<VirtualList>", () => {
     setItems(folder("junk", 5))
     expect(t.renderer.getPaintedText()).toContain("junk-4")
     expect(t.getAllText()).not.toContain("big-0")
+  })
+
+  it("opens at the top when items arrive in an empty list", () => {
+    const t = createSolidNativeTestRoot()
+    const [items, setItems] = createSignal<string[]>([])
+    mountList(t, items)
+
+    setItems(ITEMS.slice(0, 1000))
+    expect(t.renderer.getPaintedText()).toContain("item-0")
+    expect(t.renderer.getPaintedText()).not.toContain("item-999")
   })
 
   it("keeps a focused row mounted and active when it scrolls out of range", () => {

@@ -3392,6 +3392,15 @@ impl VirtualListEntry {
         *self = replacement;
     }
 
+    /// Show the first rows of a top-aligned list that just went from empty to
+    /// having rows. An empty list's scroll top, item 0, is also its end, and
+    /// GPUI's splice keeps a scroll top at the end there, past the new rows.
+    fn open_at_top(&self) {
+        if self.config.alignment == gpui::ListAlignment::Top && !self.state.is_following_tail() {
+            self.state.scroll_to(gpui::ListOffset::default());
+        }
+    }
+
     fn row_index(&self, row_id: u64) -> Option<usize> {
         match &self.data {
             Some(data) => data
@@ -3438,6 +3447,7 @@ impl VirtualListEntry {
             self.replace(Self::new_data(config, count, rows));
             return;
         };
+        let was_empty = data.count == 0 && count > 0;
         if data.count != count {
             let kept = data.count.min(count);
             self.state.splice(kept..data.count, count - kept);
@@ -3465,6 +3475,9 @@ impl VirtualListEntry {
         self.seen_rows
             .retain(|id| rows.values().any(|row| row.id == *id));
         data.rows = rows;
+        if was_empty {
+            self.open_at_top();
+        }
     }
 
     fn sync(
@@ -3499,6 +3512,7 @@ impl VirtualListEntry {
             return;
         }
 
+        let was_empty = self.child_ids.is_empty();
         let mut spliced = self.child_ids != child_ids;
         if spliced {
             let prefix = self
@@ -3538,6 +3552,9 @@ impl VirtualListEntry {
                     .state
                     .clone()
                     .with_uniform_item_height(gpui::px(height));
+            }
+            if was_empty {
+                self.open_at_top();
             }
         }
 
