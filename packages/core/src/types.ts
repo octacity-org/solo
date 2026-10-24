@@ -91,6 +91,12 @@ export interface StyleDesc {
   opacity?: number
 
   borderWidth?: number
+  /** Width of one side; overrides `borderWidth` for that side. */
+  borderTopWidth?: number
+  borderRightWidth?: number
+  borderBottomWidth?: number
+  borderLeftWidth?: number
+  /** One color for every side; GPUI paints a single border color. */
   borderColor?: string
   borderRadius?: number
   borderTopLeftRadius?: number

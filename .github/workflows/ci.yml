@@ -188,6 +188,9 @@ jobs:
         run: bun run typecheck
         working-directory: packages/solid
 
+      - name: Type-check examples
+        run: bunx tsc -p examples
+
       - name: Build tasks automation fixture
         run: bun run build
         working-directory: examples/tasks

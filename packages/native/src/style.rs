@@ -151,6 +151,10 @@ pub struct StyleDesc {
 
     // Border
     pub border_width: Option<f64>,
+    pub border_top_width: Option<f64>,
+    pub border_right_width: Option<f64>,
+    pub border_bottom_width: Option<f64>,
+    pub border_left_width: Option<f64>,
     pub border_color: Option<String>,
     pub border_radius: Option<f64>,
     pub border_top_left_radius: Option<f64>,
