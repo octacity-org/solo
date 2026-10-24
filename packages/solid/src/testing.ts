@@ -7,6 +7,7 @@
 /// MockNativeRenderer-based tests instead.
 
 import type { EventPayload } from "@solo/native"
+import { flush as flushSolid } from "solid-js"
 import { clearEventHandlers, handleSoloEvent, wrapWithBatching } from "@solo/core"
 import type { WindowOptions } from "@solo/native"
 import { setWindowHost } from "./root.js"
@@ -131,13 +132,29 @@ export function createSolidNativeTestRoot(): SolidNativeTestRoot {
 
   let dispose: (() => void) | null = null
 
-  function dispatchNativeEvents(): void {
+  /** Returns whether there were any events. */
+  function dispatchNativeEvents(): boolean {
+    let dispatched = false
     for (;;) {
       const events = native.drainEvents()
-      if (events.length === 0) break
+      if (events.length === 0) return dispatched
+      dispatched = true
       for (const event of events) handleSoloEvent(event)
       // Force the mutations queued by Solid's handlers into the native tree.
       flushMutations()
+    }
+  }
+
+  /**
+   * Draw until a draw raises no events. A data-driven virtual list reports
+   * the rows it needs after layout, and mounting them takes another draw.
+   */
+  function settle(): void {
+    for (let pass = 0; pass < 8; pass++) {
+      flushSolid()
+      flushMutations()
+      native.flush()
+      if (!dispatchNativeEvents()) return
     }
   }
 
@@ -179,8 +196,7 @@ export function createSolidNativeTestRoot(): SolidNativeTestRoot {
       resetIdCounter()
       clearEventHandlers()
       dispose = mountTree(code as never, batched as never)
-      flushMutations()
-      native.flush()
+      settle()
     },
     unmount() {
       setWindowHost(undefined)
@@ -191,7 +207,10 @@ export function createSolidNativeTestRoot(): SolidNativeTestRoot {
     },
 
     getAllText: () => native.getAllText().filter((text) => text.length > 0),
-    getPaintedText: () => native.getPaintedText(),
+    getPaintedText() {
+      settle()
+      return native.getPaintedText()
+    },
 
     findByType(type) {
       return [...buildElementMap().values()].filter((element) => element.type === type)
@@ -281,13 +300,13 @@ export function createSolidNativeTestRoot(): SolidNativeTestRoot {
     scrollToItem(elementId: number, index: number) {
       native.flush()
       native.scrollToItem(elementId, index)
-      native.flush()
+      settle()
     },
 
     scrollTo(elementId: number, x: number, y: number) {
       native.flush()
       native.scrollTo(elementId, x, y)
-      native.flush()
+      settle()
     },
 
     getScrollOffset(elementId: number) {
@@ -311,6 +330,9 @@ export function createSolidNativeTestRoot(): SolidNativeTestRoot {
       switch (property) {
         case "findByType": return root.findByType
         case "getAllText": return root.getAllText
+        case "getPaintedText": return root.getPaintedText
+        case "scrollToItem": return root.scrollToItem
+        case "scrollTo": return root.scrollTo
         case "captureScreenshot": return root.captureScreenshot
         case "dragSelect": return root.dragSelect
         case "simulateKeystrokes": return root.simulateKeystrokes

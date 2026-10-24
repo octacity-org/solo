@@ -101,6 +101,16 @@ pub struct EventPayload {
     /// Line number on the post-change side. Populated for: `<diff>` lineClick.
     pub new_line: Option<f64>,
 
+    // ── Virtual list ─────────────────────────────────────────────────
+    /// First item index a data-driven `<virtual-list>` wants mounted.
+    /// Populated for: rangeChange.
+    pub range_start: Option<f64>,
+    /// One past the last item index to mount. Populated for: rangeChange.
+    pub range_end: Option<f64>,
+    /// Item index of the row holding focus, which must stay mounted while it
+    /// is out of range. Populated for: rangeChange, when a row has focus.
+    pub focused_index: Option<f64>,
+
     // ── Modifiers ────────────────────────────────────────────────────
     pub modifiers: Option<EventModifiers>,
 }
@@ -131,6 +141,9 @@ impl Default for EventPayload {
             is_new_window: None,
             old_line: None,
             new_line: None,
+            range_start: None,
+            range_end: None,
+            focused_index: None,
             modifiers: None,
         }
     }
