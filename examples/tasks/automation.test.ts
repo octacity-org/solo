@@ -9,6 +9,9 @@
 /// handshake, tree lookup, scroll positioning and cleanup everywhere, and
 /// pins down the paint-dependent behaviour per platform.
 
+import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 import { launch } from "@solo/solid/automation"
 import type { App } from "@solo/solid/automation"
@@ -136,6 +139,32 @@ describe("tasks app automation", () => {
         const [ax = 0, ay = 0] = a ?? []
         const [bx = 0, by = 0] = b ?? []
         return ax === bx && ay === by
+      }
+    } finally {
+      await app.close()
+    }
+  }, 30_000)
+
+  it("clicks through painted bounds and captures a screenshot", async () => {
+    const app = await launchTasksApp()
+    try {
+      const firstTask = app.getByTestId("task-1")
+      await firstTask.getByTestId("checkbox-off").waitFor({ timeoutMs: 15_000 })
+
+      // click() hit-tests the element's painted bounds, which are recorded
+      // during paint on the UI thread.
+      await firstTask.getByTestId("checkbox-off").click()
+      await firstTask.getByTestId("checkbox-on").waitFor({ timeoutMs: 5_000 })
+
+      const dir = mkdtempSync(join(tmpdir(), "tasks-automation-"))
+      try {
+        const path = await app.screenshot({ path: join(dir, "window.png") })
+        // A PNG starts with this 8-byte signature.
+        expect(readFileSync(path).subarray(0, 8)).toEqual(
+          Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+        )
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
       }
     } finally {
       await app.close()

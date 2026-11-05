@@ -5050,6 +5050,7 @@ dependencies = [
  "gpui",
  "gpui_macos",
  "gpui_platform",
+ "image",
  "libc",
  "log",
  "napi",
@@ -5084,6 +5085,7 @@ dependencies = [
  "tree-sitter-yaml",
  "unicode-segmentation",
  "url",
+ "x11rb",
 ]
 
 [[package]]

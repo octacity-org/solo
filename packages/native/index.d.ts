@@ -144,8 +144,8 @@ export declare class SoloRenderer {
   /**
    * Draw the latest committed tree in every window before returning, so
    * automation input and reads see it. The live counterpart of
-   * `TestSoloRenderer::flush`. Off macOS frames arrive asynchronously
-   * through the UI thread, and this does nothing.
+   * `TestSoloRenderer::flush`. Off macOS the draw runs on the UI thread,
+   * after every command sent before it, such as a focus change.
    */
   flush(): void
   getAutomationTree(): string

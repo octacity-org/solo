@@ -66,6 +66,13 @@ objc2-web-kit = { version = "0.3.2", default-features = false, features = ["std"
 # pinned GPUI fork.
 raw-window-handle = "0.6"
 
+# Live automation screenshots read the window back from the X server. Both
+# crates are already in the graph through gpui_linux and gpui.
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+raw-window-handle = "0.6"
+x11rb = "0.13"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
 [features]
 # Cargo's default build keeps Solo's complete developer surface. The
 # application release script uses --no-default-features for the lean runtime.
