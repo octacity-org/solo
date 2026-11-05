@@ -1248,6 +1248,10 @@ enum UiCommand {
     },
     FocusElement(u64),
     Blur,
+    /// Run a closure against the window on the UI thread (automation). Sent
+    /// by `SoloRenderer::on_ui`, which waits for the closure's reply.
+    #[cfg(feature = "automation")]
+    Run(Box<dyn FnOnce(gpui::AnyView, &mut gpui::Window, &mut gpui::App) + Send>),
 }
 
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
@@ -1371,6 +1375,8 @@ async fn run_ui_commands(
                 window.refresh();
             }),
             UiCommand::Blur => window.update(cx, |_view, window, cx| window.blur(cx)),
+            #[cfg(feature = "automation")]
+            UiCommand::Run(run) => cx.update_window(window.into(), run),
         };
         if let Err(error) = result {
             log::error!("Failed to handle GPUI UI command: {error:#}");
@@ -1441,6 +1447,39 @@ impl SoloRenderer {
             .ok_or_else(|| Error::from_reason("GPUI application is not initialized"))?
             .unbounded_send(command)
             .map_err(|_| Error::from_reason("The GPUI UI thread is not running"))
+    }
+
+    /// Run `f` against the window on the GPUI UI thread and wait for its
+    /// result; the counterpart of macOS `on_main`. Paint-time registries
+    /// (painted bounds and text) are thread-locals of that thread, so reading
+    /// them from the JS thread would see empty copies.
+    #[cfg(all(not(target_os = "macos"), feature = "automation"))]
+    fn on_ui<T: Send + 'static>(
+        &self,
+        f: impl FnOnce(gpui::AnyView, &mut gpui::Window, &mut gpui::App) -> T + Send + 'static,
+    ) -> Result<T> {
+        #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "freebsd")))]
+        {
+            let _ = f;
+            return Err(Error::from_reason("Unsupported operating system"));
+        }
+        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+        {
+            let (response, receiver) = sync_channel(1);
+            self.send_ui_command(UiCommand::Run(Box::new(move |root, window, cx| {
+                response.send(f(root, window, cx)).ok();
+            })))?;
+            match receiver.recv_timeout(Duration::from_secs(2)) {
+                Ok(value) => Ok(value),
+                Err(RecvTimeoutError::Timeout) => Err(Error::from_reason(
+                    "Timed out after 2 seconds waiting for the GPUI UI thread",
+                )),
+                // The closure is dropped unrun when the window is gone.
+                Err(RecvTimeoutError::Disconnected) => Err(Error::from_reason(
+                    "The GPUI window closed or its UI thread stopped before answering",
+                )),
+            }
+        }
     }
 
     fn request_invalidate(&self) -> Result<()> {
@@ -2474,15 +2513,21 @@ fn macos_scroll_offset(id: u64) -> Option<Vec<f64>> {
 impl SoloRenderer {
     /// Draw the latest committed tree in every window before returning, so
     /// automation input and reads see it. The live counterpart of
-    /// `TestSoloRenderer::flush`. Off macOS frames arrive asynchronously
-    /// through the UI thread, and this does nothing.
+    /// `TestSoloRenderer::flush`. Off macOS the draw runs on the UI thread,
+    /// after every command sent before it, such as a focus change.
     #[napi]
     pub fn flush(&self) -> Result<()> {
         #[cfg(target_os = "macos")]
         return draw_windows_now();
 
+        // The frame is drawn but not yet shown; GPUI presents it on the
+        // window's next frame request.
         #[cfg(not(target_os = "macos"))]
-        Ok(())
+        self.on_ui(|root, window, cx| {
+            cx.notify(root.entity_id());
+            window.refresh();
+            window.draw(cx).clear(cx);
+        })
     }
 
     #[napi]
@@ -2495,7 +2540,7 @@ impl SoloRenderer {
             crate::automation::all_bounds()
         };
         #[cfg(not(target_os = "macos"))]
-        let bounds = crate::automation::all_bounds();
+        let bounds = self.on_ui(|_, _, _| crate::automation::all_bounds())?;
         let tree = self.tree.lock().unwrap();
         let json = tree.to_json(&bounds);
         serde_json::to_string(&json)
@@ -2512,7 +2557,7 @@ impl SoloRenderer {
             crate::automation::all_bounds()
         };
         #[cfg(not(target_os = "macos"))]
-        let bounds = crate::automation::all_bounds();
+        let bounds = self.on_ui(|_, _, _| crate::automation::all_bounds())?;
         let json = self.tree.lock().unwrap().windows_to_json(&bounds);
         serde_json::to_string(&json)
             .map_err(|e| Error::from_reason(format!("JSON serialization failed: {}", e)))
@@ -2526,9 +2571,11 @@ impl SoloRenderer {
             return on_main(move || Ok(crate::automation::get_bounds(id)))
                 .map(|b| b.map(|bounds| vec![bounds.x, bounds.y, bounds.width, bounds.height]));
         }
-        Ok(crate::automation::get_bounds(id).map(|bounds| {
-            vec![bounds.x, bounds.y, bounds.width, bounds.height]
-        }))
+        #[cfg(target_os = "macos")]
+        let bounds = crate::automation::get_bounds(id);
+        #[cfg(not(target_os = "macos"))]
+        let bounds = self.on_ui(move |_, _, _| crate::automation::get_bounds(id))?;
+        Ok(bounds.map(|bounds| vec![bounds.x, bounds.y, bounds.width, bounds.height]))
     }
 
     #[napi]
@@ -2547,7 +2594,11 @@ impl SoloRenderer {
         if worker_main::must_forward() {
             return on_main(|| Ok(crate::text::painted_text()));
         }
-        Ok(crate::text::painted_text())
+        #[cfg(target_os = "macos")]
+        return Ok(crate::text::painted_text());
+
+        #[cfg(not(target_os = "macos"))]
+        self.on_ui(|_, _, _| crate::text::painted_text())
     }
 
     #[napi]
@@ -2563,10 +2614,13 @@ impl SoloRenderer {
             crate::automation::dispatch_click(window, cx, x, y, button.unwrap_or(0));
         });
 
+        // One window off macOS: openWindow is macOS-only.
         #[cfg(not(target_os = "macos"))]
         {
-            let _ = (x, y, button, element_id);
-            Err(Error::from_reason("simulateClick is only implemented on macOS"))
+            let _ = element_id;
+            self.on_ui(move |_, window, cx| {
+                crate::automation::dispatch_click(window, cx, x, y, button.unwrap_or(0));
+            })
         }
     }
 
@@ -2583,10 +2637,13 @@ impl SoloRenderer {
             crate::automation::dispatch_mouse_down(window, cx, x, y, button.unwrap_or(0));
         });
 
+        // One window off macOS: openWindow is macOS-only.
         #[cfg(not(target_os = "macos"))]
         {
-            let _ = (x, y, button, element_id);
-            Err(Error::from_reason("simulateMouseDown is only implemented on macOS"))
+            let _ = element_id;
+            self.on_ui(move |_, window, cx| {
+                crate::automation::dispatch_mouse_down(window, cx, x, y, button.unwrap_or(0));
+            })
         }
     }
 
@@ -2603,10 +2660,13 @@ impl SoloRenderer {
             crate::automation::dispatch_mouse_up(window, cx, x, y, button.unwrap_or(0));
         });
 
+        // One window off macOS: openWindow is macOS-only.
         #[cfg(not(target_os = "macos"))]
         {
-            let _ = (x, y, button, element_id);
-            Err(Error::from_reason("simulateMouseUp is only implemented on macOS"))
+            let _ = element_id;
+            self.on_ui(move |_, window, cx| {
+                crate::automation::dispatch_mouse_up(window, cx, x, y, button.unwrap_or(0));
+            })
         }
     }
 
@@ -2623,10 +2683,13 @@ impl SoloRenderer {
             crate::automation::dispatch_mouse_move(window, cx, x, y, pressed_button);
         });
 
+        // One window off macOS: openWindow is macOS-only.
         #[cfg(not(target_os = "macos"))]
         {
-            let _ = (x, y, pressed_button, element_id);
-            Err(Error::from_reason("simulateMouseMove is only implemented on macOS"))
+            let _ = element_id;
+            self.on_ui(move |_, window, cx| {
+                crate::automation::dispatch_mouse_move(window, cx, x, y, pressed_button);
+            })
         }
     }
 
@@ -2848,7 +2911,37 @@ impl SoloRenderer {
             Ok(())
         }
 
-        #[cfg(not(all(target_os = "macos", feature = "test-support")))]
+        // The capture reads back what the X server shows, so it waits for the
+        // latest tree to be presented. Next-frame callbacks run before that
+        // frame draws and presents: frame N shows the tree, frame N+1 reads.
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        {
+            let (response, receiver) = sync_channel(1);
+            self.send_ui_command(UiCommand::Run(Box::new(move |root, window, cx| {
+                cx.notify(root.entity_id());
+                window.refresh();
+                window.on_next_frame(move |window, _cx| {
+                    window.on_next_frame(move |window, _cx| {
+                        response.send(capture_x11_window(window, &path)).ok();
+                    });
+                });
+            })))?;
+            return match receiver.recv_timeout(Duration::from_secs(2)) {
+                Ok(result) => result.map_err(Error::from_reason),
+                Err(RecvTimeoutError::Timeout) => Err(Error::from_reason(
+                    "Timed out after 2 seconds waiting for a frame to capture",
+                )),
+                Err(RecvTimeoutError::Disconnected) => Err(Error::from_reason(
+                    "The GPUI window closed or its UI thread stopped before the capture",
+                )),
+            };
+        }
+
+        #[cfg(not(any(
+            all(target_os = "macos", feature = "test-support"),
+            target_os = "linux",
+            target_os = "freebsd"
+        )))]
         {
             let _ = path;
             Err(Error::from_reason(
@@ -2856,6 +2949,62 @@ impl SoloRenderer {
             ))
         }
     }
+}
+
+/// Save the window's pixels as a PNG, read back from the X server. GPUI's
+/// `render_to_image` exists only on macOS and its test platform.
+#[cfg(all(any(target_os = "linux", target_os = "freebsd"), feature = "automation"))]
+fn capture_x11_window(window: &gpui::Window, path: &str) -> std::result::Result<(), String> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use x11rb::connection::Connection as _;
+    use x11rb::protocol::xproto::{ConnectionExt as _, ImageFormat, ImageOrder};
+
+    let handle = HasWindowHandle::window_handle(window).map_err(|e| e.to_string())?;
+    let xid = match handle.as_raw() {
+        RawWindowHandle::Xcb(handle) => handle.window.get(),
+        RawWindowHandle::Xlib(handle) => handle.window as u32,
+        _ => return Err("captureScreenshot on Linux needs an X11 window; Wayland is not supported".into()),
+    };
+    let x11_error = |e: &dyn std::fmt::Display| format!("X11 screenshot failed: {e}");
+    let (conn, _) = x11rb::connect(None).map_err(|e| x11_error(&e))?;
+    let geometry = conn
+        .get_geometry(xid)
+        .map_err(|e| x11_error(&e))?
+        .reply()
+        .map_err(|e| x11_error(&e))?;
+    let (width, height) = (geometry.width, geometry.height);
+    let reply = conn
+        .get_image(ImageFormat::Z_PIXMAP, xid, 0, 0, width, height, !0)
+        .map_err(|e| x11_error(&e))?
+        .reply()
+        .map_err(|e| x11_error(&e))?;
+
+    // TrueColor at 24 or 32 bits of depth is stored as 32-bit B, G, R, X
+    // pixels; at 32 bits per pixel scanlines carry no padding.
+    let setup = conn.setup();
+    let bits_per_pixel = setup
+        .pixmap_formats
+        .iter()
+        .find(|format| format.depth == reply.depth)
+        .map(|format| format.bits_per_pixel);
+    if bits_per_pixel != Some(32) || setup.image_byte_order != ImageOrder::LSB_FIRST {
+        return Err(format!(
+            "X11 screenshot failed: unsupported pixel format (depth {}, {:?} bits per pixel)",
+            reply.depth, bits_per_pixel
+        ));
+    }
+    let byte_len = usize::from(width) * usize::from(height) * 4;
+    let Some(data) = reply.data.get(..byte_len) else {
+        return Err("X11 screenshot failed: the server returned a short image".into());
+    };
+    let rgba = data
+        .chunks_exact(4)
+        .flat_map(|pixel| [pixel[2], pixel[1], pixel[0], 255])
+        .collect();
+    image::RgbaImage::from_raw(u32::from(width), u32::from(height), rgba)
+        .ok_or_else(|| "X11 screenshot failed: image size mismatch".to_string())?
+        .save(path)
+        .map_err(|e| format!("Failed to save screenshot: {e}"))
 }
 
 #[cfg(feature = "automation")]
