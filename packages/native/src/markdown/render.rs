@@ -9,6 +9,7 @@
 //! `TextRun`s on the identical font, so layout never changes.
 
 use std::ops::Range;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{
@@ -154,6 +155,41 @@ pub fn flatten_runs(runs: &[InlineRun], theme: &Theme, base_weight: FontWeight) 
     }
 }
 
+// ── Frame cache ──────────────────────────────────────────────────────
+
+/// Results that change only with the document or theme, kept across frames:
+/// flattened text, highlighted code lines and measured tables. The owner
+/// clears it when either changes. Entries are found by position, in the
+/// document order a frame renders blocks in.
+#[derive(Default)]
+pub struct MdCache {
+    flats: Vec<Rc<FlatText>>,
+    code_blocks: Vec<Rc<Vec<(SharedString, Vec<TextRun>)>>>,
+    tables: Vec<Rc<TableLayout>>,
+    cursors: [usize; 3],
+}
+
+impl MdCache {
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+}
+
+/// The entry at `*cursor`, built on first use, then advance the cursor.
+fn cached<T>(entries: &mut Vec<Rc<T>>, cursor: &mut usize, build: impl FnOnce() -> T) -> Rc<T> {
+    if *cursor == entries.len() {
+        entries.push(Rc::new(build()));
+    }
+    *cursor += 1;
+    entries[*cursor - 1].clone()
+}
+
+/// A table's flattened cells and column geometry.
+struct TableLayout {
+    flats: Vec<Vec<Option<FlatText>>>,
+    geo: TableColumns,
+}
+
 // ── Render context ───────────────────────────────────────────────────
 
 /// Everything block rendering needs. Carries a mutable counter so each painted
@@ -170,6 +206,7 @@ pub struct MdContext {
     /// Called with the URL of the link under a click. Hit testing happens per
     /// byte range inside the painted text, not per block.
     pub on_link: Option<Arc<dyn Fn(&str)>>,
+    cache: MdCache,
 }
 
 impl MdContext {
@@ -180,7 +217,9 @@ impl MdContext {
         selection_wash: Hsla,
         theme: Theme,
         on_link: Option<Arc<dyn Fn(&str)>>,
+        mut cache: MdCache,
     ) -> Self {
+        cache.cursors = [0; 3];
         Self {
             element_id,
             selection,
@@ -189,7 +228,13 @@ impl MdContext {
             theme,
             next_sub: 0,
             on_link,
+            cache,
         }
+    }
+
+    /// Hand the cache back to its owner for the next frame.
+    pub fn into_cache(self) -> MdCache {
+        self.cache
     }
 
     fn take_sub(&mut self) -> usize {
@@ -339,7 +384,10 @@ fn text_element(
 ) -> AnyElement {
     use gpui::prelude::*;
 
-    let flat = flatten_runs(runs, &ctx.theme, weight);
+    let [cursor, _, _] = &mut ctx.cache.cursors;
+    let flat = cached(&mut ctx.cache.flats, cursor, || {
+        flatten_runs(runs, &ctx.theme, weight)
+    });
     let inner = flat_text_element(&flat, ctx);
     div()
         .text_size(px(size))
@@ -397,8 +445,28 @@ fn render_code_block(language: Option<&str>, code: &str, ctx: &mut MdContext) ->
 
     let theme = ctx.theme.clone();
     let m = &theme.metrics;
-    let mono = font(theme.font_mono.clone());
-    let highlight = highlight_cached(code, None, language);
+    let [_, cursor, _] = &mut ctx.cache.cursors;
+    let lines = cached(&mut ctx.cache.code_blocks, cursor, || {
+        let mono = font(theme.font_mono.clone());
+        let highlight = highlight_cached(code, None, language);
+        code.split('\n')
+            .enumerate()
+            .map(|(line_ix, line)| {
+                let spans: Vec<(Range<usize>, Hsla)> = highlight
+                    .as_ref()
+                    .and_then(|doc: &Arc<_>| doc.lines.get(line_ix))
+                    .map(|spans| {
+                        spans
+                            .iter()
+                            .map(|span| (span.range.clone(), theme.syntax.color(span.kind)))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let runs = runs_for_spans(line, &spans, &mono, theme.text);
+                (SharedString::from(line.to_string()), runs)
+            })
+            .collect()
+    });
 
     let mut body = div()
         .px(px(m.code_padding_x))
@@ -410,29 +478,18 @@ fn render_code_block(language: Option<&str>, code: &str, ctx: &mut MdContext) ->
         .flex()
         .flex_col();
 
-    for (line_ix, line) in code.split('\n').enumerate() {
-        let spans: Vec<(Range<usize>, Hsla)> = highlight
-            .as_ref()
-            .and_then(|doc: &Arc<_>| doc.lines.get(line_ix))
-            .map(|spans| {
-                spans
-                    .iter()
-                    .map(|span| (span.range.clone(), theme.syntax.color(span.kind)))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let runs = runs_for_spans(line, &spans, &mono, theme.text);
+    for (line, runs) in lines.iter() {
         let sub = ctx.take_sub();
         let text: AnyElement = if ctx.selectable {
             crate::text::selectable_text(crate::text::SelectableText::new(
-                SharedString::from(line.to_string()),
-                Some(runs),
+                line.clone(),
+                Some(runs.clone()),
                 crate::text::selection_key(ctx.element_id, sub),
                 ctx.selection.clone(),
                 ctx.selection_wash,
             ))
         } else {
-            crate::text::chrome_text(SharedString::from(line.to_string()), Some(runs))
+            crate::text::chrome_text(line.clone(), Some(runs.clone()))
         };
         body = body.child(div().h(px(m.code_line_height)).flex_none().child(text));
     }
@@ -499,52 +556,60 @@ fn render_table(
     let table_sub = ctx.take_sub();
     let hairline = hairline(&theme, 0.10);
 
-    // Flatten every cell once and take per-column max-content widths.
-    let text_system = window.text_system();
-    let mut flats: Vec<Vec<Option<FlatText>>> = Vec::with_capacity(all.len());
-    let mut content = vec![0.0f32; cols];
-    for (row_ix, row) in all.iter().enumerate() {
-        let weight = if has_header && row_ix == 0 {
-            FontWeight::BOLD
-        } else {
-            FontWeight::NORMAL
-        };
-        let mut out: Vec<Option<FlatText>> = Vec::with_capacity(cols);
-        for (col, natural) in content.iter_mut().enumerate() {
-            let Some(runs) = row.get(col) else {
-                out.push(None);
-                continue;
+    // Flatten every cell and take per-column max-content widths, once per
+    // document and theme.
+    let [_, _, cursor] = &mut ctx.cache.cursors;
+    let layout = cached(&mut ctx.cache.tables, cursor, || {
+        let text_system = window.text_system();
+        let mut flats: Vec<Vec<Option<FlatText>>> = Vec::with_capacity(all.len());
+        let mut content = vec![0.0f32; cols];
+        for (row_ix, row) in all.iter().enumerate() {
+            let weight = if has_header && row_ix == 0 {
+                FontWeight::BOLD
+            } else {
+                FontWeight::NORMAL
             };
-            let flat = flatten_runs(runs, &theme, weight);
-            if !flat.text.is_empty() {
-                // Cells are single-line; guard anyway, and keep the byte count
-                // identical so the runs still cover the text exactly.
-                let line: SharedString = if flat.text.contains('\n') {
-                    flat.text.replace('\n', " ").into()
-                } else {
-                    flat.text.clone()
+            let mut out: Vec<Option<FlatText>> = Vec::with_capacity(cols);
+            for (col, natural) in content.iter_mut().enumerate() {
+                let Some(runs) = row.get(col) else {
+                    out.push(None);
+                    continue;
                 };
-                let width = f32::from(
-                    text_system
-                        .shape_line(line, px(m.md_text_size), &flat.runs, None)
-                        .width(),
-                );
-                if width > *natural {
-                    *natural = width;
+                let flat = flatten_runs(runs, &theme, weight);
+                if !flat.text.is_empty() {
+                    // Cells are single-line; guard anyway, and keep the byte count
+                    // identical so the runs still cover the text exactly.
+                    let line: SharedString = if flat.text.contains('\n') {
+                        flat.text.replace('\n', " ").into()
+                    } else {
+                        flat.text.clone()
+                    };
+                    let width = f32::from(
+                        text_system
+                            .shape_line(line, px(m.md_text_size), &flat.runs, None)
+                            .width(),
+                    );
+                    if width > *natural {
+                        *natural = width;
+                    }
                 }
+                out.push(Some(flat));
             }
-            out.push(Some(flat));
+            flats.push(out);
         }
-        flats.push(out);
-    }
-    let geo = table_columns(&content, m);
+        TableLayout {
+            geo: table_columns(&content, m),
+            flats,
+        }
+    });
+    let geo = &layout.geo;
 
     let mut inner = div()
         .flex()
         .flex_col()
         .w_full()
         .min_w(px(geo.min_table_width));
-    for (row_ix, row) in flats.iter().enumerate() {
+    for (row_ix, row) in layout.flats.iter().enumerate() {
         if row_ix > 0 {
             inner = inner.child(div().flex_none().h(px(TABLE_DIVIDER)).w_full().bg(hairline));
         }

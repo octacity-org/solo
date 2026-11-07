@@ -1,6 +1,5 @@
 /// The native <diff> element: file headers, hunk headers, notices,
-/// collapse, events, gutters, virtualization, screenshots. Faithful port
-/// of packages/react diff-native.test.tsx.
+/// collapse, events, gutters, virtualization, screenshots.
 
 import fs from "fs"
 import path from "path"

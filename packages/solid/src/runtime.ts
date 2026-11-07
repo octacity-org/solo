@@ -35,7 +35,14 @@ export interface SoloSolidNode {
   type: string
   isText: boolean
   parent: SoloSolidNode | null
-  children: SoloSolidNode[]
+  // Children as a linked list, so sibling inserts, removals and lookups
+  // are O(1) even in long lists.
+  firstChild: SoloSolidNode | null
+  lastChild: SoloSolidNode | null
+  prev: SoloSolidNode | null
+  next: SoloSolidNode | null
+  /** The last style object sent to native, to skip resending equal ones. */
+  style?: StyleDesc
   /** Source values used to validate URL/HTML exclusivity. */
   webviewSource?: {
     url?: string
@@ -69,49 +76,7 @@ let flushNow: (() => void) | null = null
  * so everything a reactive transaction mutates lands in a single batch.
  */
 export function setSoloRenderer(renderer: NativeRenderer): void {
-  const batched = wrapWithBatching(renderer)
   let scheduled = false
-  let commitStep: (() => void) | null = null
-  const armCommit = (): void => {
-    if (scheduled) return
-    scheduled = true
-    queueMicrotask(() => {
-      scheduled = false
-      commitStep?.()
-    })
-  }
-
-  activeRenderer = new Proxy(batched, {
-    get(target, prop) {
-      if (prop === "commitMutations")
-        return () => {
-          armCommit()
-        }
-      if (
-        prop === "createElement" ||
-        prop === "destroyElement" ||
-        prop === "appendChild" ||
-        prop === "removeChild" ||
-        prop === "insertBefore" ||
-        prop === "setStyle" ||
-        prop === "setText" ||
-        prop === "setEventListener" ||
-        prop === "setCustomProp"
-      ) {
-        return (...args: unknown[]) => {
-          if (prop === "destroyElement" && typeof args[0] === "number") {
-            disposeNodeById(args[0])
-          }
-          ;(target as unknown as Record<string, (...a: unknown[]) => unknown>)[prop](...args)
-          armCommit()
-          if (prop === "destroyElement") return []
-        }
-      }
-      const value = Reflect.get(target, prop)
-      return typeof value === "function" ? value.bind(target) : value
-    },
-  })
-
   // Both commit paths drain reactions, tear down still-detached subtrees,
   // then flush the queue in a single applyBatch.
   const runCommit = (): void => {
@@ -122,7 +87,20 @@ export function setSoloRenderer(renderer: NativeRenderer): void {
     destroyStillDetached()
     batched.commitMutations()
   }
-  commitStep = runCommit
+  const batched = wrapWithBatching(renderer, {
+    onQueue() {
+      if (scheduled) return
+      scheduled = true
+      queueMicrotask(() => {
+        // A flushNow since this was queued already committed.
+        if (!scheduled) return
+        scheduled = false
+        runCommit()
+      })
+    },
+    onDestroy: disposeNodeById,
+  })
+  activeRenderer = batched
 
   // Immediate flush bypasses (and cancels) the microtask schedule.
   flushNow = () => {
@@ -185,10 +163,36 @@ function validateWebviewProps(node: SoloSolidNode, props: Record<string, unknown
 }
 
 function validateWebviewSources(): void {
-  for (const node of nodesById.values()) {
-    if (node.type !== "webview" || !node.webviewSource) continue
-    validateWebviewProps(node, node.webviewSource)
+  for (const id of webviewControllers.keys()) {
+    const node = nodesById.get(id)
+    if (node?.webviewSource) validateWebviewProps(node, node.webviewSource)
   }
+}
+
+function unlinked(): Pick<SoloSolidNode, "parent" | "firstChild" | "lastChild" | "prev" | "next"> {
+  return { parent: null, firstChild: null, lastChild: null, prev: null, next: null }
+}
+
+/** Take `node` out of its parent's child list. */
+function unlink(node: SoloSolidNode): void {
+  const parent = node.parent
+  if (!parent) return
+  if (node.prev) node.prev.next = node.next
+  else parent.firstChild = node.next
+  if (node.next) node.next.prev = node.prev
+  else parent.lastChild = node.prev
+  node.parent = node.prev = node.next = null
+}
+
+/** Put `node` into `parent`'s child list before `anchor`, or at the end. */
+function link(parent: SoloSolidNode, node: SoloSolidNode, anchor: SoloSolidNode | null): void {
+  node.parent = parent
+  node.next = anchor
+  node.prev = anchor ? anchor.prev : parent.lastChild
+  if (node.prev) node.prev.next = node
+  else parent.firstChild = node
+  if (anchor) anchor.prev = node
+  else parent.lastChild = node
 }
 
 export function createElement(tag: string, staticProps?: Record<string, unknown>): SoloSolidNode {
@@ -197,8 +201,7 @@ export function createElement(tag: string, staticProps?: Record<string, unknown>
     id: nextId(),
     type: NATIVE_TYPES.has(tag) ? tag : "div",
     isText: false,
-    parent: null,
-    children: [],
+    ...unlinked(),
   }
   if (staticProps) validateWebviewProps(node, staticProps)
   nodesById.set(node.id, node)
@@ -228,8 +231,7 @@ export function createTextNode(value: string | number): SoloSolidNode {
     id: nextId(),
     type: "text",
     isText: true,
-    parent: null,
-    children: [],
+    ...unlinked(),
   }
   r.createElement(node.id, "text")
   // Solid 2 passes numbers straight through; native wants strings.
@@ -249,24 +251,20 @@ export function insertNode(parent: SoloSolidNode, node: SoloSolidNode, anchor?: 
   const r = getSoloRenderer()
   detached.delete(node)
   // Detach from any previous parent first (the retained tree requires it).
-  if (node.parent) {
-    const oldChildren = node.parent.children
-    const index = oldChildren.indexOf(node)
-    if (index !== -1) oldChildren.splice(index, 1)
-    if (node.parent.id !== parent.id || anchor) {
-      r.removeChild(node.parent.id, node.id)
+  const oldParent = node.parent
+  if (oldParent) {
+    unlink(node)
+    if (oldParent.id !== parent.id || anchor) {
+      r.removeChild(oldParent.id, node.id)
     }
-    node.parent = null
   }
   if (anchor != null && anchor.parent === parent) {
-    const index = parent.children.indexOf(anchor)
-    parent.children.splice(index, 0, node)
+    link(parent, node, anchor)
     r.insertBefore(parent.id, node.id, anchor.id)
   } else {
-    parent.children.push(node)
+    link(parent, node, null)
     r.appendChild(parent.id, node.id)
   }
-  node.parent = parent
 }
 
 /**
@@ -280,15 +278,13 @@ const detached = new Set<SoloSolidNode>()
 
 function removeNode(parent: SoloSolidNode, node: SoloSolidNode): void {
   const r = getSoloRenderer()
-  const index = parent.children.indexOf(node)
-  if (index !== -1) parent.children.splice(index, 1)
-  node.parent = null
+  if (node.parent === parent) unlink(node)
   r.removeChild(parent.id, node.id)
   detached.add(node)
 }
 
 function disposeNode(node: SoloSolidNode): void {
-  for (const child of node.children) disposeNode(child)
+  for (let child = node.firstChild; child; child = child.next) disposeNode(child)
   webviewControllers.get(node.id)?.dispose()
   webviewControllers.delete(node.id)
   nodesById.delete(node.id)
@@ -324,11 +320,12 @@ function setProperty(
   // content and must never become a custom property on the retained element.
   if (name === "ref") return
   if (name === "style") {
-    if (value != null && typeof value === "object") {
-      r.setStyle(node.id, value as StyleDesc)
-    } else if (prev != null) {
-      r.setStyle(node.id, {})
-    }
+    const style = value != null && typeof value === "object" ? (value as StyleDesc) : undefined
+    // A new object with the same contents changes nothing natively.
+    if (style && node.style && sameStyle(style, node.style)) return
+    if (style) r.setStyle(node.id, style)
+    else if (node.style) r.setStyle(node.id, {})
+    node.style = style
     return
   }
   const eventType = soloEventTypeForProp(name)
@@ -357,13 +354,23 @@ function setProperty(
   )
 }
 
-const getParentNode = (node: SoloSolidNode): SoloSolidNode | undefined => node.parent ?? undefined
-const getFirstChild = (node: SoloSolidNode): SoloSolidNode | undefined => node.children[0]
-function getNextSibling(node: SoloSolidNode): SoloSolidNode | undefined {
-  const siblings = node.parent?.children
-  if (!siblings) return undefined
-  return siblings[siblings.indexOf(node) + 1]
+/** Equal keys with identical values; `hover`/`active` compare one level down. */
+function sameStyle(a: StyleDesc, b: StyleDesc): boolean {
+  const aKeys = Object.keys(a) as (keyof StyleDesc)[]
+  if (aKeys.length !== Object.keys(b).length) return false
+  for (const key of aKeys) {
+    const x = a[key]
+    const y = b[key]
+    if (x === y) continue
+    if ((key !== "hover" && key !== "active") || !x || !y) return false
+    if (!sameStyle(x as StyleDesc, y as StyleDesc)) return false
+  }
+  return true
 }
+
+const getParentNode = (node: SoloSolidNode): SoloSolidNode | undefined => node.parent ?? undefined
+const getFirstChild = (node: SoloSolidNode): SoloSolidNode | undefined => node.firstChild ?? undefined
+const getNextSibling = (node: SoloSolidNode): SoloSolidNode | undefined => node.next ?? undefined
 
 // ── Universal renderer ───────────────────────────────────────────────
 

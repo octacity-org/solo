@@ -2,6 +2,7 @@ import { createRenderEffect, flush, getOwner, onCleanup, untrack } from "solid-j
 import { registerEventHandler, unregisterEventHandler } from "@solo/core"
 import type { NativeRenderer } from "@solo/core"
 import { getSoloRenderer } from "./runtime.js"
+import { requireCapability } from "./capability.js"
 
 /** An application command owned by the Solid component that registers it. */
 export interface ApplicationCommand {
@@ -70,8 +71,7 @@ export function registerApplicationCommand(command: ApplicationCommand): () => v
     return value
   }
   const renderer = getSoloRenderer()
-  const replace = renderer.setApplicationCommands?.bind(renderer)
-  if (!replace) throw new Error("This renderer does not support application commands")
+  const replace = requireCapability(renderer, "setApplicationCommands", "support application commands")
   let registry = registries.get(renderer)
   if (!registry) {
     registry = new Map()

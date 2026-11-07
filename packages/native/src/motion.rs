@@ -1,5 +1,6 @@
 //! Native motion tracks resolved during GPUI rendering, outside Solid.
 
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
@@ -130,6 +131,9 @@ pub(crate) struct MotionState {
     transition: MotionTransition,
     started: Instant,
     valid: bool,
+    /// The resolved style of a settled animation, with the element revision
+    /// it was resolved against.
+    settled: Option<(u64, Rc<StyleDesc>)>,
 }
 
 impl MotionState {
@@ -148,6 +152,7 @@ impl MotionState {
             transition: description.transition,
             started: now,
             valid: true,
+            settled: None,
         })
     }
 
@@ -159,6 +164,7 @@ impl MotionState {
             transition: MotionTransition::default(),
             started: now,
             valid: false,
+            settled: None,
         }
     }
 
@@ -194,6 +200,30 @@ impl MotionState {
         self.source = source.clone();
         self.valid = true;
         Ok(())
+    }
+
+    /// `base` (the element's style, at `revision`) with this frame applied,
+    /// and whether the animation is still running. A settled animation reuses
+    /// its last result until the element changes.
+    pub(crate) fn resolve(
+        &mut self,
+        base: Option<&StyleDesc>,
+        revision: u64,
+        now: Instant,
+    ) -> (Rc<StyleDesc>, bool) {
+        let frame = self.frame(now);
+        if !frame.active {
+            if let Some((settled_revision, style)) = &self.settled {
+                if *settled_revision == revision {
+                    return (style.clone(), false);
+                }
+            }
+        }
+        let mut resolved = base.cloned().unwrap_or_default();
+        frame.style.apply_to(&mut resolved);
+        let resolved = Rc::new(resolved);
+        self.settled = (!frame.active).then(|| (revision, resolved.clone()));
+        (resolved, frame.active)
     }
 
     pub(crate) fn frame(&self, now: Instant) -> MotionFrame {

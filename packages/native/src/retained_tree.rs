@@ -14,7 +14,8 @@ pub struct RetainedElement {
     pub id: u64,
     pub element_type: String,
     pub style: Option<StyleDesc>,
-    pub content: Option<String>,
+    /// Shared so each frame's text run clones a pointer, not the string.
+    pub content: Option<gpui::SharedString>,
     pub events: HashSet<String>,
     pub children: Vec<u64>,
     pub parent: Option<u64>,
@@ -24,6 +25,8 @@ pub struct RetainedElement {
     /// Take keyboard focus the first time this element gets a focus handle.
     /// Without it an `<input>` is dead until the user clicks it.
     pub auto_focus: bool,
+    /// Last mutation applied to this element itself.
+    pub revision: u64,
     /// Last mutation applied to this element or one of its descendants.
     pub subtree_revision: u64,
     /// Stable locator id from the Solid `testId` prop.
@@ -41,9 +44,47 @@ impl RetainedElement {
             children: Vec::new(),
             parent: None,
             auto_focus: false,
+            revision,
             subtree_revision: revision,
             test_id: None,
             custom_props: HashMap::new(),
+        }
+    }
+}
+
+/// Remove `id` from a child list. Searches from the end, where Solid's
+/// appends and keyed moves usually land.
+fn remove_id(children: &mut Vec<u64>, id: u64) {
+    if let Some(index) = children.iter().rposition(|child| *child == id) {
+        children.remove(index);
+    }
+}
+
+/// Windows whose painted subtree changed since the last
+/// `take_dirty_windows`: the main window and `openWindow` roots.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct DirtyWindows {
+    pub main: bool,
+    pub roots: Vec<u64>,
+}
+
+impl DirtyWindows {
+    pub fn is_empty(&self) -> bool {
+        !self.main && self.roots.is_empty()
+    }
+
+    fn add_root(&mut self, root: u64) {
+        if !self.roots.contains(&root) {
+            self.roots.push(root);
+        }
+    }
+
+    /// Coalesces invalidations queued for the macOS main thread.
+    #[cfg(target_os = "macos")]
+    pub fn merge(&mut self, other: DirtyWindows) {
+        self.main |= other.main;
+        for root in other.roots {
+            self.add_root(root);
         }
     }
 }
@@ -56,6 +97,10 @@ pub struct RetainedTree {
     /// is a parentless subtree beside `root_id`, painted by its own window.
     pub window_roots: Vec<u64>,
     next_revision: u64,
+    /// Bumped by every change that can alter what a frame builds, so per-frame
+    /// bookkeeping can skip work when nothing changed.
+    generation: u64,
+    dirty: DirtyWindows,
 }
 
 impl RetainedTree {
@@ -65,7 +110,51 @@ impl RetainedTree {
             root_id: None,
             window_roots: Vec::new(),
             next_revision: 1,
+            generation: 0,
+            dirty: DirtyWindows::default(),
         }
+    }
+
+    /// See `generation`. Compare two reads to tell whether the tree changed.
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub fn set_root(&mut self, id: u64) {
+        self.root_id = Some(id);
+        self.generation += 1;
+        self.dirty.main = true;
+    }
+
+    /// The windows to repaint for the changes since the last call.
+    pub fn take_dirty_windows(&mut self) -> DirtyWindows {
+        std::mem::take(&mut self.dirty)
+    }
+
+    /// Every window, for a repaint that does not come from a tree change.
+    pub fn all_windows(&self) -> DirtyWindows {
+        DirtyWindows {
+            main: true,
+            roots: self.window_roots.clone(),
+        }
+    }
+
+    /// Mark the window that paints `top`, a parentless element, as dirty.
+    /// Detached subtrees paint nowhere.
+    fn mark_window_dirty(&mut self, top: u64) {
+        if self.root_id == Some(top) {
+            self.dirty.main = true;
+        } else if self.window_roots.contains(&top) {
+            self.dirty.add_root(top);
+        }
+    }
+
+    fn top_ancestor(&self, id: u64) -> u64 {
+        let mut current = id;
+        while let Some(parent) = self.elements.get(&current).and_then(|e| e.parent) {
+            current = parent;
+        }
+        current
     }
 
     /// The window root `id` is painted under, or None for the main window
@@ -92,6 +181,8 @@ impl RetainedTree {
             return Err(format!("Element {root} is already a window root"));
         }
         self.window_roots.push(root);
+        self.generation += 1;
+        self.dirty.add_root(root);
         Ok(())
     }
 
@@ -115,6 +206,7 @@ impl RetainedTree {
     }
 
     fn take_revision(&mut self) -> u64 {
+        self.generation += 1;
         let revision = self.next_revision;
         self.next_revision = self.next_revision.wrapping_add(1).max(1);
         revision
@@ -122,13 +214,21 @@ impl RetainedTree {
 
     fn mark_changed(&mut self, id: u64) {
         let revision = self.take_revision();
+        if let Some(element) = self.elements.get_mut(&id) {
+            element.revision = revision;
+        }
         let mut current = Some(id);
+        let mut top = None;
         while let Some(current_id) = current {
             let Some(element) = self.elements.get_mut(&current_id) else {
                 break;
             };
             element.subtree_revision = revision;
+            top = Some(current_id);
             current = element.parent;
+        }
+        if let Some(top) = top {
+            self.mark_window_dirty(top);
         }
     }
 
@@ -136,6 +236,9 @@ impl RetainedTree {
     /// Returns all destroyed IDs so the caller can clean up JS-side state.
     pub fn destroy_element(&mut self, id: u64) -> Vec<u64> {
         let mut destroyed = Vec::new();
+        self.generation += 1;
+        let top = self.top_ancestor(id);
+        self.mark_window_dirty(top);
         self.destroy_element_recursive(id, &mut destroyed);
         #[cfg(target_os = "macos")]
         crate::context_menu::cancel_destroyed(&destroyed);
@@ -157,12 +260,7 @@ impl RetainedTree {
 
     pub fn append_child(&mut self, parent_id: u64, child_id: u64) {
         // Remove from old parent if any
-        let old_parent_id = self.elements.get(&child_id).and_then(|e| e.parent);
-        if let Some(old_parent_id) = old_parent_id {
-            if let Some(old_parent) = self.elements.get_mut(&old_parent_id) {
-                old_parent.children.retain(|c| *c != child_id);
-            }
-        }
+        let old_parent_id = self.detach(child_id);
         // Set new parent
         if let Some(child) = self.elements.get_mut(&child_id) {
             child.parent = Some(parent_id);
@@ -179,7 +277,7 @@ impl RetainedTree {
 
     pub fn remove_child(&mut self, parent_id: u64, child_id: u64) {
         if let Some(parent) = self.elements.get_mut(&parent_id) {
-            parent.children.retain(|c| *c != child_id);
+            remove_id(&mut parent.children, child_id);
         }
         if let Some(child) = self.elements.get_mut(&child_id) {
             child.parent = None;
@@ -187,14 +285,18 @@ impl RetainedTree {
         self.mark_changed(parent_id);
     }
 
+    /// Take `child_id` out of its parent's children and return that parent.
+    fn detach(&mut self, child_id: u64) -> Option<u64> {
+        let old_parent_id = self.elements.get(&child_id).and_then(|e| e.parent)?;
+        if let Some(old_parent) = self.elements.get_mut(&old_parent_id) {
+            remove_id(&mut old_parent.children, child_id);
+        }
+        Some(old_parent_id)
+    }
+
     pub fn insert_before(&mut self, parent_id: u64, child_id: u64, before_id: u64) {
         // Remove from old parent if any
-        let old_parent_id = self.elements.get(&child_id).and_then(|e| e.parent);
-        if let Some(old_parent_id) = old_parent_id {
-            if let Some(old_parent) = self.elements.get_mut(&old_parent_id) {
-                old_parent.children.retain(|c| *c != child_id);
-            }
-        }
+        let old_parent_id = self.detach(child_id);
         // Set new parent
         if let Some(child) = self.elements.get_mut(&child_id) {
             child.parent = Some(parent_id);
@@ -204,7 +306,7 @@ impl RetainedTree {
             let pos = parent
                 .children
                 .iter()
-                .position(|c| *c == before_id)
+                .rposition(|c| *c == before_id)
                 .unwrap_or(parent.children.len());
             parent.children.insert(pos, child_id);
         }
@@ -230,8 +332,8 @@ impl RetainedTree {
     pub fn set_text(&mut self, id: u64, content: String) {
         let mut changed = false;
         if let Some(element) = self.elements.get_mut(&id) {
-            if element.content.as_ref() != Some(&content) {
-                element.content = Some(content);
+            if element.content.as_deref() != Some(content.as_str()) {
+                element.content = Some(content.into());
                 changed = true;
             }
         }
@@ -241,17 +343,24 @@ impl RetainedTree {
     }
 
     pub fn set_event_listener(&mut self, id: u64, event_type: String, has_handler: bool) {
-        if let Some(element) = self.elements.get_mut(&id) {
-            if has_handler {
-                element.events.insert(event_type);
-            } else {
-                element.events.remove(&event_type);
-            }
+        let Some(element) = self.elements.get_mut(&id) else {
+            return;
+        };
+        let changed = if has_handler {
+            element.events.insert(event_type)
+        } else {
+            element.events.remove(&event_type)
+        };
+        // Listeners change the built element (and its focus handle).
+        if changed {
+            self.mark_changed(id);
         }
     }
 
     /// Set a custom prop on an element (for non-div/text elements).
     pub fn set_custom_prop(&mut self, id: u64, key: String, value: serde_json::Value) {
+        // `autoFocus` changes focus bookkeeping without changing the element.
+        self.generation += 1;
         let mut changed = false;
         if let Some(element) = self.elements.get_mut(&id) {
             // `autoFocus` applies to every element type, so it is lifted out of
@@ -336,7 +445,7 @@ fn element_to_json(
     if let Some(ref content) = element.content {
         obj.insert(
             "text".to_string(),
-            serde_json::Value::String(content.clone()),
+            serde_json::Value::String(content.to_string()),
         );
     }
 

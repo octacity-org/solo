@@ -1,6 +1,6 @@
 /// Playwright-like automation client for Solo.
 ///
-/// In-process tests talk to TestRenderer through the same typed method catalog
+/// In-process tests talk to TestSoloRenderer through the same typed method catalog
 /// as a live app on SSE stdin/stdout. Locators query the retained tree.
 
 import { spawn } from "node:child_process"

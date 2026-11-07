@@ -198,6 +198,28 @@ fn duration_ms(ms: f64) -> Duration {
     Duration::from_secs_f64((ms / 1000.0).max(0.0))
 }
 
+/// Every text node's content under the main root, depth first.
+#[cfg(feature = "automation")]
+pub fn collect_text(tree: &crate::retained_tree::RetainedTree) -> Vec<String> {
+    fn walk(tree: &crate::retained_tree::RetainedTree, id: u64, texts: &mut Vec<String>) {
+        let Some(element) = tree.elements.get(&id) else {
+            return;
+        };
+        if let Some(content) = &element.content {
+            texts.push(content.to_string());
+        }
+        for &child in &element.children {
+            walk(tree, child, texts);
+        }
+    }
+    let mut texts = Vec::new();
+    if let Some(root) = tree.root_id {
+        walk(tree, root, &mut texts);
+    }
+    texts
+}
+
+/// JS button number (0=left, 1=middle, 2=right) to a GPUI button.
 #[cfg(feature = "automation")]
 pub fn mouse_button(button: u32) -> MouseButton {
     match button {

@@ -1,5 +1,4 @@
 /// The native <markdown> element: blocks, inline styling, selection, links.
-/// Faithful port of packages/react/src/__tests__/markdown.test.tsx.
 
 import fs from "fs"
 import path from "path"

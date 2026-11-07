@@ -122,20 +122,6 @@ describe("wrapWithBatching", () => {
     batched.focusElement?.(7)
     expect(inner.calls).toEqual([])
   })
-
-  it("falls back to per-call stringification when applyBatch is missing", () => {
-    const inner = mockRenderer()
-    delete (inner as Partial<typeof inner>).applyBatch
-    const wrapped = wrapWithBatching(inner)
-
-    wrapped.setStyle(1, { color: "#00ff00" })
-    wrapped.setCustomProp(1, "side", "top")
-
-    expect(inner.calls).toEqual([
-      ["setStyle", "1", JSON.stringify({ color: "#00ff00" })],
-      ["setCustomProp", "1", "side", JSON.stringify("top")],
-    ])
-  })
 })
 
 describe("event registry", () => {

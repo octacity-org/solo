@@ -141,21 +141,6 @@ export interface StyleDesc {
   active?: Omit<StyleDesc, "hover" | "active">
 }
 
-// Element types supported by Solo
-export type ElementType =
-  | "div"
-  | "text"
-  | "img"
-  | "svg"
-  | "canvas"
-  | "input"
-  | "textarea"
-  | "anchored"
-  | "code"
-  | "diff"
-  | "markdown"
-  | "virtual-list"
-
 // ── Theme ────────────────────────────────────────────────────────────
 
 /** Colours for one syntax capture class each. Every field is a CSS colour. */
@@ -257,9 +242,9 @@ export interface SoloTheme {
 
 export type DebugFrameOverlayMode = "hidden" | "minimal" | "full"
 
-/// Interface for the renderer that receives mutations from a framework
-/// reconciler. Implemented by the real napi SoloRenderer and by TestRenderer
-/// (which delegates to native TestSoloRenderer for tests).
+/// Interface for the renderer that receives mutations from the Solid
+/// reconciler. Implemented by the napi SoloRenderer, the native
+/// TestSoloRenderer and MockNativeRenderer.
 export interface NativeRenderer {
   /** Evaluate JavaScript in a mounted WebView and resolve serialized JSON. */
   evaluateWebviewJavaScript?(elementId: number, script: string): Promise<string>
@@ -296,7 +281,7 @@ export interface NativeRenderer {
   commitMutations(): void
   setCustomProp(id: number, key: string, valueJson: string | object | number | boolean | null): void
   /** Apply a batch of mutations in a single FFI call. Returns destroyed IDs. */
-  applyBatch?(json: string): Array<number>
+  applyBatch(json: string): Array<number>
 
   // ── Focus API ──────────────────────────────────────────────────
   focusElement?(elementId: number): void
@@ -335,14 +320,3 @@ export interface NativeRenderer {
   cycleDebugFrameOverlay?(): string
   resetDebugFrameOverlayStats?(): void
 }
-
-// Container holds the renderer reference.
-// Mutations go directly via napi calls.
-export interface Container {
-  renderer: NativeRenderer
-}
-
-// Deprecated aliases — remove in next major
-export type GpuixMetrics = SoloMetrics
-export type GpuixTheme = SoloTheme
-export type GpuixRenderer = NativeRenderer

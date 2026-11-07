@@ -1,5 +1,5 @@
 /// The native <virtual-list>: lazy rows, programmatic scrolling, and chat
-/// tail following. Faithful port of packages/react virtual-list.test.tsx.
+/// tail following.
 
 import { createSignal, onCleanup } from "solid-js"
 import { describe, expect, it } from "vitest"

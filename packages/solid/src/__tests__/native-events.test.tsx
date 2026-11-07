@@ -1,5 +1,4 @@
-/// End-to-end event pipeline tests. Faithful port of packages/react
-/// events.test.tsx ("events" describe) — macOS-only (GPU-backed renderer).
+/// End-to-end event pipeline tests. macOS-only (GPU-backed renderer).
 
 import fs from "fs"
 import { createSignal } from "solid-js"

@@ -91,6 +91,7 @@ pub fn selection_frame_reset(selection: SharedSelection) -> impl IntoElement {
                 }
             });
             register_copy_listener(window, &selection);
+            register_selection_listeners(window, &selection);
         },
     )
     .absolute()
@@ -245,7 +246,6 @@ pub fn selectable_text(opts: SelectableText) -> gpui::AnyElement {
                         layout: layout.clone(),
                     })
                 });
-                register_listeners(window, &key, &text, &layout, &selection);
             }
             #[cfg(feature = "automation")]
             push_painted(window, text.clone());
@@ -402,57 +402,65 @@ fn resolve_drag(
     })
 }
 
-/// Register this frame's window-level listeners for one text element.
+/// Register the frame's mouse listeners for text selection.
 ///
 /// Window-level, not element-level, so a drag keeps tracking after the mouse
-/// leaves the element's bounds. Frame-scoped, so paint re-registers every frame.
-fn register_listeners(
-    window: &mut Window,
-    key: &Arc<str>,
-    text: &SharedString,
-    layout: &TextLayout,
-    selection: &SharedSelection,
-) {
+/// leaves an element's bounds. One set per frame walks the frame's registry;
+/// registering a set per text element cost three closures per node per frame.
+/// Painted first, these run after every element's bubble listener, so a link
+/// still sees the drag's spans before the drag ends.
+fn register_selection_listeners(window: &mut Window, selection: &SharedSelection) {
     use gpui::{DispatchPhase, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
 
     {
-        let (key, text, layout, selection) =
-            (key.clone(), text.clone(), layout.clone(), selection.clone());
+        let selection = selection.clone();
         window.on_mouse_event(move |e: &MouseDownEvent, phase, window, _cx| {
             if phase != DispatchPhase::Bubble || e.button != MouseButton::Left {
                 return;
             }
-            if layout.bounds().contains(&e.position) {
-                let ix = match layout.index_for_position(e.position) {
-                    Ok(ix) | Err(ix) => ix,
+            let id = window.window_handle().window_id();
+            let refresh = REGISTRY.with(|r| {
+                let registries = r.borrow();
+                let Some(reg) = registries.get(&id) else {
+                    return false;
                 };
-                let mut sel = selection.lock();
-                match e.click_count {
-                    2 => {
-                        let range = selection::word_range(&text, ix);
-                        sel.begin_with_span(&key, &text, range);
+                let mut refresh = false;
+                // Last painted first, the order per-element listeners ran in.
+                for entry in reg.iter().rev() {
+                    let (key, text) = (entry.key.as_ref(), entry.text.as_ref());
+                    if entry.layout.bounds().contains(&e.position) {
+                        let ix = match entry.layout.index_for_position(e.position) {
+                            Ok(ix) | Err(ix) => ix,
+                        };
+                        let mut sel = selection.lock();
+                        match e.click_count {
+                            2 => sel.begin_with_span(key, text, selection::word_range(text, ix)),
+                            n if n >= 3 => sel.begin_with_span(key, text, 0..text.len()),
+                            _ => sel.begin(key, ix),
+                        }
+                        refresh = true;
+                    } else if selection.lock().clear_if_owner(key) {
+                        refresh = true;
                     }
-                    n if n >= 3 => sel.begin_with_span(&key, &text, 0..text.len()),
-                    _ => sel.begin(&key, ix),
                 }
-                drop(sel);
-                window.refresh();
-            } else if selection.lock().clear_if_owner(&key) {
+                refresh
+            });
+            if refresh {
                 window.refresh();
             }
         });
     }
     {
-        let (key, selection) = (key.clone(), selection.clone());
+        let selection = selection.clone();
         window.on_mouse_event(move |e: &MouseMoveEvent, phase, window, _cx| {
             if phase != DispatchPhase::Bubble || !e.dragging() {
                 return;
             }
-            // Only the anchor element's listener drives the drag.
-            let Some(anchor_ix) = selection.lock().drag_anchor(&key) else {
+            let id = window.window_handle().window_id();
+            // Only a drag anchored in this frame's text moves.
+            let Some((key, anchor_ix)) = anchor_entry(id, &selection) else {
                 return;
             };
-            let id = window.window_handle().window_id();
             let Some(head) = registry_point(id, e.position) else {
                 return;
             };
@@ -462,14 +470,29 @@ fn register_listeners(
         });
     }
     {
-        let (key, selection) = (key.clone(), selection.clone());
-        window.on_mouse_event(move |_: &MouseUpEvent, phase, _window, _cx| {
+        let selection = selection.clone();
+        window.on_mouse_event(move |_: &MouseUpEvent, phase, window, _cx| {
             if phase != DispatchPhase::Bubble {
                 return;
             }
-            selection.lock().end_drag(&key);
+            let id = window.window_handle().window_id();
+            if let Some((key, _)) = anchor_entry(id, &selection) {
+                selection.lock().end_drag(&key);
+            }
         });
     }
+}
+
+/// The registered key that owns the live drag, with its anchor offset.
+fn anchor_entry(window: WindowId, selection: &SharedSelection) -> Option<(Arc<str>, usize)> {
+    REGISTRY.with(|r| {
+        let registries = r.borrow();
+        let sel = selection.lock();
+        registries
+            .get(&window)?
+            .iter()
+            .find_map(|entry| Some((entry.key.clone(), sel.drag_anchor(&entry.key)?)))
+    })
 }
 
 /// Register the frame's single Cmd+C / Ctrl+C listener.

@@ -1,5 +1,6 @@
 import type { AppWindow } from "./root.js"
 import { getSoloRenderer } from "./runtime.js"
+import { requireCapability } from "./capability.js"
 
 export type AlertLevel = "info" | "warning" | "critical"
 
@@ -46,8 +47,7 @@ export async function showAlert(options: ShowAlertOptions): Promise<number> {
     }
   }
   const renderer = getSoloRenderer()
-  const show = renderer.showAlert?.bind(renderer)
-  if (!show) throw new Error("This renderer does not support alerts")
+  const show = requireCapability(renderer, "showAlert", "support alerts")
   return show(JSON.stringify({
     message: options.message,
     ...(options.detail !== undefined ? { detail: options.detail } : {}),

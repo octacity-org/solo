@@ -1,8 +1,8 @@
 import type { EventPayload } from "@solo/native"
 
-// Event handler registry — keyed by numeric element ID.
-// Shared by every framework package: the native side emits events by element
-// ID, and whichever framework owns an element registers its handler here.
+// Event handler registry, keyed by numeric element ID. The native side emits
+// events by element ID, and the Solid host registers each element's handlers
+// here.
 const eventHandlers = new Map<number, Map<string, (event: EventPayload) => void>>()
 
 export function handleSoloEvent(payload: EventPayload): void {
@@ -14,9 +14,6 @@ export function handleSoloEvent(payload: EventPayload): void {
     }
   }
 }
-
-// Deprecated alias — remove in next major
-export const handleGpuixEvent = handleSoloEvent
 
 export function registerEventHandler(
   elementId: number,

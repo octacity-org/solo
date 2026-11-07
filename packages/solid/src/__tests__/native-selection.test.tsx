@@ -1,5 +1,4 @@
-/// Cross-element text selection. Faithful port of packages/react
-/// selection.test.tsx.
+/// Cross-element text selection.
 
 import { describe, expect, it } from "vitest"
 import { createSolidNativeTestRoot, hasNativeTestRenderer } from "../testing.js"

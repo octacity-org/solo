@@ -231,7 +231,10 @@ pub(crate) fn show(
             "Context menu owner element is unmounted",
         ));
     }
-    let bounds = crate::automation::get_bounds(owner)
+    // Release builds record bounds only where something reads them, so an
+    // owner without listeners anchors to its nearest painted ancestor.
+    let bounds = std::iter::successors(Some(owner), |id| tree.elements.get(id)?.parent)
+        .find_map(crate::automation::get_bounds)
         .ok_or_else(|| Error::from_reason("Context menu owner element has not been painted"))?;
     let (x, y) = match (value.get("x"), value.get("y")) {
         (None, None) => (bounds.x, bounds.y + bounds.height),
