@@ -1,14 +1,13 @@
 /// macOS-only GPU-backed test harness for @solo/solid.
 ///
-/// Mirrors packages/react/src/testing.ts: mounts Solid trees through the
-/// native TestSoloRenderer so tests exercise the same GPUI pipeline as
-/// production. On non-macOS builds hasNativeTestRenderer is false and the
+/// Mounts Solid trees through the native TestSoloRenderer, so tests
+/// exercise the same GPUI pipeline as production. On non-macOS builds hasNativeTestRenderer is false and the
 /// suites using this harness skip themselves; headless coverage comes from
 /// MockNativeRenderer-based tests instead.
 
 import type { EventPayload } from "@solo/native"
 import { flush as flushSolid } from "solid-js"
-import { clearEventHandlers, handleSoloEvent, wrapWithBatching } from "@solo/core"
+import { clearEventHandlers, handleSoloEvent } from "@solo/core"
 import type { WindowOptions } from "@solo/native"
 import { setWindowHost } from "./root.js"
 import { mount as mountTree, resetIdCounter, flushMutations } from "./runtime.js"
@@ -132,7 +131,6 @@ export function createSolidNativeTestRoot(): SolidNativeTestRoot {
     )
   }
   const native = new NativeTestRenderer()
-  const batched = wrapWithBatching(native as never)
 
   let dispose: (() => void) | null = null
 
@@ -199,7 +197,7 @@ export function createSolidNativeTestRoot(): SolidNativeTestRoot {
       setWindowHost(native as never)
       resetIdCounter()
       clearEventHandlers()
-      dispose = mountTree(code as never, batched as never)
+      dispose = mountTree(code as never, native as never)
       settle()
     },
     unmount() {

@@ -23,12 +23,11 @@ use gpui::AppContext as _;
 
 use crate::element_tree::EventPayload;
 use crate::renderer::{
-    apply_batch_to_tree, debug_frame_overlay_mode_name, emit_event_full,
+    apply_batch_to_tree, parse_batch, debug_frame_overlay_mode_name, emit_event_full,
     parse_debug_frame_overlay_mode, to_element_id, validate_window_options, window_size,
     EventCallback, SoloView, WindowOptions, WindowSize, WINDOW_CLOSED_EVENT,
 };
 use crate::retained_tree::RetainedTree;
-use crate::style::StyleDesc;
 
 // ── Thread-local storage for !Send GPUI types ────────────────────────
 
@@ -141,13 +140,18 @@ fn with_window<R>(
     })
 }
 
-/// Convert JS button number (0=left, 1=middle, 2=right) to GPUI MouseButton.
-fn u32_to_mouse_button(button: u32) -> gpui::MouseButton {
-    match button {
-        1 => gpui::MouseButton::Middle,
-        2 => gpui::MouseButton::Right,
-        _ => gpui::MouseButton::Left,
-    }
+/// Run `f` against the root view of the window that paints `root`.
+fn in_view<R>(
+    root: Option<u64>,
+    f: impl FnOnce(&mut SoloView, &mut gpui::Window, &mut gpui::Context<SoloView>) -> R,
+) -> Result<R> {
+    with_window(root, |cx, window, view| {
+        let view = view.clone();
+        cx.update_window(window, |_, window, app| {
+            view.update(app, |view, cx| f(view, window, cx))
+        })
+        .map_err(|e| Error::from_reason(e.to_string()))
+    })
 }
 
 fn validate_display_count(display_count: usize) -> Result<()> {
@@ -169,6 +173,8 @@ fn ensure_macos_display_available() -> Result<()> {
 }
 
 // ── TestSoloRenderer ────────────────────────────────────────────────
+
+crate::renderer::tree_mutation_api!(TestSoloRenderer);
 
 /// GPU-backed GPUI test renderer. Uses VisualTestAppContext (real Metal
 /// rendering on macOS) with TestDispatcher for deterministic scheduling.
@@ -579,103 +585,6 @@ impl TestSoloRenderer {
         })
     }
 
-    #[napi]
-    pub fn create_element(&self, id: f64, element_type: String) -> Result<()> {
-        let id = to_element_id(id)?;
-        self.tree.lock().unwrap().create_element(id, element_type);
-        Ok(())
-    }
-
-    /// Destroy an element and all descendants. Returns destroyed IDs
-    /// so JS can clean up event handlers.
-    #[napi]
-    pub fn destroy_element(&self, id: f64) -> Result<Vec<f64>> {
-        let id = to_element_id(id)?;
-        let destroyed = self.tree.lock().unwrap().destroy_element(id);
-        Ok(destroyed.iter().map(|&id| id as f64).collect())
-    }
-
-    #[napi]
-    pub fn append_child(&self, parent_id: f64, child_id: f64) -> Result<()> {
-        let parent_id = to_element_id(parent_id)?;
-        let child_id = to_element_id(child_id)?;
-        self.tree.lock().unwrap().append_child(parent_id, child_id);
-        Ok(())
-    }
-
-    #[napi]
-    pub fn remove_child(&self, parent_id: f64, child_id: f64) -> Result<()> {
-        let parent_id = to_element_id(parent_id)?;
-        let child_id = to_element_id(child_id)?;
-        self.tree.lock().unwrap().remove_child(parent_id, child_id);
-        Ok(())
-    }
-
-    #[napi]
-    pub fn insert_before(&self, parent_id: f64, child_id: f64, before_id: f64) -> Result<()> {
-        let parent_id = to_element_id(parent_id)?;
-        let child_id = to_element_id(child_id)?;
-        let before_id = to_element_id(before_id)?;
-        self.tree
-            .lock()
-            .unwrap()
-            .insert_before(parent_id, child_id, before_id);
-        Ok(())
-    }
-
-    #[napi]
-    pub fn set_style(&self, id: f64, style_json: String) -> Result<()> {
-        let id = to_element_id(id)?;
-        let style: StyleDesc = serde_json::from_str(&style_json)
-            .map_err(|e| Error::from_reason(format!("Failed to parse style: {}", e)))?;
-        self.tree.lock().unwrap().set_style(id, style);
-        Ok(())
-    }
-
-    #[napi]
-    pub fn set_text(&self, id: f64, content: String) -> Result<()> {
-        let id = to_element_id(id)?;
-        self.tree.lock().unwrap().set_text(id, content);
-        Ok(())
-    }
-
-    #[napi]
-    pub fn set_event_listener(&self, id: f64, event_type: String, has_handler: bool) -> Result<()> {
-        let id = to_element_id(id)?;
-        self.tree
-            .lock()
-            .unwrap()
-            .set_event_listener(id, event_type, has_handler);
-        Ok(())
-    }
-
-    /// Set the root element (called from appendChildToContainer).
-    #[napi]
-    pub fn set_root(&self, id: f64) -> Result<()> {
-        let id = to_element_id(id)?;
-        self.tree.lock().unwrap().root_id = Some(id);
-        Ok(())
-    }
-
-    /// Set a custom prop on an element (for non-div/text elements like input, editor, diff).
-    #[napi]
-    pub fn set_custom_prop(&self, id: f64, key: String, value_json: String) -> Result<()> {
-        let id = to_element_id(id)?;
-        let value: serde_json::Value = serde_json::from_str(&value_json)
-            .map_err(|e| Error::from_reason(format!("Failed to parse custom prop value: {}", e)))?;
-        self.tree.lock().unwrap().set_custom_prop(id, key, value);
-        Ok(())
-    }
-
-    /// Get a custom prop value from an element.
-    #[napi]
-    pub fn get_custom_prop(&self, id: f64, key: String) -> Result<Option<String>> {
-        let id = to_element_id(id)?;
-        let tree = self.tree.lock().unwrap();
-        Ok(tree
-            .get_custom_prop(id, &key)
-            .map(|v| serde_json::to_string(v).unwrap_or_default()))
-    }
 
     /// Present a lifecycle-managed native menu for an element in this renderer.
     #[napi]
@@ -795,10 +704,8 @@ impl TestSoloRenderer {
     /// Returns accumulated destroyed IDs from all destroyElement ops.
     #[napi]
     pub fn apply_batch(&self, json: String) -> Result<Vec<f64>> {
-        let ops: Vec<serde_json::Value> = serde_json::from_str(&json)
-            .map_err(|e| Error::from_reason(format!("Failed to parse batch: {}", e)))?;
-        let mut tree = self.tree.lock().unwrap();
-        apply_batch_to_tree(&mut tree, &ops)
+        let ops = parse_batch(&json)?;
+        Ok(apply_batch_to_tree(&mut self.tree.lock().unwrap(), ops))
     }
 
     // ── Test-specific methods ────────────────────────────────────────
@@ -851,7 +758,7 @@ impl TestSoloRenderer {
         button: Option<u32>,
         element_id: Option<f64>,
     ) -> Result<()> {
-        let button = u32_to_mouse_button(button.unwrap_or(0));
+        let button = crate::automation::mouse_button(button.unwrap_or(0));
         with_window(self.window_root_of(element_id)?, |cx, window, _view| {
             let position = gpui::point(gpui::px(x as f32), gpui::px(y as f32));
             cx.simulate_mouse_down(window, position, button, gpui::Modifiers::default());
@@ -937,7 +844,7 @@ impl TestSoloRenderer {
         element_id: Option<f64>,
     ) -> Result<()> {
         with_window(self.window_root_of(element_id)?, |cx, window, _view| {
-            let button: Option<gpui::MouseButton> = pressed_button.map(u32_to_mouse_button);
+            let button: Option<gpui::MouseButton> = pressed_button.map(crate::automation::mouse_button);
 
             cx.simulate_mouse_move(
                 window,
@@ -958,21 +865,11 @@ impl TestSoloRenderer {
     pub fn focus_element(&self, id: f64) -> Result<()> {
         let root = self.window_root_of(Some(id))?;
         let id = to_element_id(id)?;
-
-        with_window(root, |cx, window, view| {
-            let view = view.clone();
-
-            cx.update_window(window, |_, window, app| {
-                view.update(app, |view, cx| {
-                    view.reveal_virtual_list_ancestor(id);
-                    if let Some(handle) = view.focus_handles.get(&id) {
-                        handle.focus(window, cx);
-                    }
-                    cx.notify();
-                });
-            })
-            .map_err(|e| Error::from_reason(e.to_string()))?;
-
+        in_view(root, |view, window, cx| {
+            view.focus_element(id, window, cx);
+            cx.notify();
+        })?;
+        with_window(root, |cx, _window, _view| {
             cx.run_until_parked();
             Ok(())
         })
@@ -992,7 +889,7 @@ impl TestSoloRenderer {
             cx.simulate_mouse_down(
                 window,
                 gpui::point(gpui::px(x as f32), gpui::px(y as f32)),
-                u32_to_mouse_button(button.unwrap_or(0)),
+                crate::automation::mouse_button(button.unwrap_or(0)),
                 gpui::Modifiers::default(),
             );
             Ok(())
@@ -1013,7 +910,7 @@ impl TestSoloRenderer {
             cx.simulate_mouse_up(
                 window,
                 gpui::point(gpui::px(x as f32), gpui::px(y as f32)),
-                u32_to_mouse_button(button.unwrap_or(0)),
+                crate::automation::mouse_button(button.unwrap_or(0)),
                 gpui::Modifiers::default(),
             );
             Ok(())
@@ -1115,20 +1012,8 @@ impl TestSoloRenderer {
     #[napi]
     pub fn scroll_to(&self, element_id: f64, x: f64, y: f64) -> Result<()> {
         let id = to_element_id(element_id)?;
-        with_window(self.window_root_of(Some(element_id))?, |cx, window, view| {
-            let view = view.clone();
-            cx.update_window(window, |_, _window, app| {
-                view.update(app, |view, _cx| {
-                    if view.set_virtual_list_offset(id, x as f32, y as f32) {
-                        return;
-                    }
-                    if let Some(handle) = view.scroll_handles.get(&id) {
-                        handle.set_offset(gpui::point(gpui::px(x as f32), gpui::px(y as f32)));
-                    }
-                });
-            })
-            .map_err(|e| Error::from_reason(e.to_string()))?;
-            Ok(())
+        in_view(self.window_root_of(Some(element_id))?, |view, _window, _cx| {
+            view.scroll_to(id, x as f32, y as f32)
         })
     }
 
@@ -1137,28 +1022,8 @@ impl TestSoloRenderer {
     #[napi]
     pub fn scroll_to_item(&self, element_id: f64, index: f64) -> Result<()> {
         let id = to_element_id(element_id)?;
-        let index = index as usize;
-        with_window(self.window_root_of(Some(element_id))?, |cx, window, view| {
-            let view = view.clone();
-            cx.update_window(window, |_, _window, app| {
-                view.update(app, |view, _cx| {
-                    if view.scroll_virtual_list_to_item(id, index) {
-                        return;
-                    }
-                    if let Some(handle) = view.scroll_handles.get(&id) {
-                        if !crate::renderer::scroll_retained_child_into_view(
-                            &view.tree,
-                            handle,
-                            id,
-                            index,
-                        ) {
-                            handle.scroll_to_item(index);
-                        }
-                    }
-                });
-            })
-            .map_err(|e| Error::from_reason(e.to_string()))?;
-            Ok(())
+        in_view(self.window_root_of(Some(element_id))?, |view, _window, _cx| {
+            view.scroll_to_item(id, index as usize)
         })
     }
 
@@ -1214,26 +1079,10 @@ impl TestSoloRenderer {
     #[napi]
     pub fn get_scroll_offset(&self, element_id: f64) -> Result<Option<Vec<f64>>> {
         let id = to_element_id(element_id)?;
-        with_window(self.window_root_of(Some(element_id))?, |cx, window, view| {
-            let view = view.clone();
-            let result = cx
-                .update_window(window, |_, _window, app| {
-                    view.update(app, |view, _cx| {
-                        if let Some(offset) = view.virtual_list_offset(id) {
-                            return Some(offset.to_vec());
-                        }
-                        view.scroll_handles.get(&id).map(|handle| {
-                            let offset = handle.offset();
-                            vec![
-                                f64::from(f32::from(offset.x)),
-                                f64::from(f32::from(offset.y)),
-                            ]
-                        })
-                    })
-                })
-                .map_err(|e| Error::from_reason(e.to_string()))?;
-            Ok(result)
-        })
+        let offset = in_view(self.window_root_of(Some(element_id))?, |view, _window, _cx| {
+            view.scroll_offset(id)
+        })?;
+        Ok(offset.map(|[x, y]| vec![x, y]))
     }
 
     /// Capture a screenshot of the current rendered state and save as PNG.
@@ -1287,12 +1136,7 @@ impl TestSoloRenderer {
     /// Get all text content in the tree (depth-first order).
     #[napi]
     pub fn get_all_text(&self) -> Vec<String> {
-        let tree = self.tree.lock().unwrap();
-        let mut texts = Vec::new();
-        if let Some(root_id) = tree.root_id {
-            Self::collect_text(root_id, &tree, &mut texts);
-        }
-        texts
+        crate::automation::collect_text(&self.tree.lock().unwrap())
     }
 
     /// Find element IDs matching the given type (e.g. "div", "text").
@@ -1323,7 +1167,7 @@ impl TestSoloRenderer {
     pub fn get_text(&self, id: f64) -> Result<Option<String>> {
         let id = to_element_id(id)?;
         let tree = self.tree.lock().unwrap();
-        Ok(tree.elements.get(&id).and_then(|e| e.content.clone()))
+        Ok(tree.elements.get(&id).and_then(|e| e.content.as_ref().map(|c| c.to_string())))
     }
 
     /// Get the full tree as JSON for snapshot testing.
@@ -1357,71 +1201,35 @@ impl TestSoloRenderer {
 
     #[napi]
     pub fn clock_pause(&self) -> Result<f64> {
-        with_test_state(|cx, window, view| {
-            let view = view.clone();
-            let now_ms = cx
-                .update_window(window, |_, _window, app| {
-                    view.update(app, |view, cx| {
-                        let now_ms = view.clock.pause();
-                        cx.notify();
-                        now_ms
-                    })
-                })
-                .map_err(|e| Error::from_reason(e.to_string()))?;
-            cx.run_until_parked();
-            Ok(now_ms)
-        })
+        self.with_clock(|clock| clock.pause())
     }
 
     #[napi]
     pub fn clock_set(&self, now_ms: f64) -> Result<f64> {
-        with_test_state(|cx, window, view| {
-            let view = view.clone();
-            let now_ms = cx
-                .update_window(window, |_, _window, app| {
-                    view.update(app, |view, cx| {
-                        let now_ms = view.clock.set_ms(now_ms);
-                        cx.notify();
-                        now_ms
-                    })
-                })
-                .map_err(|e| Error::from_reason(e.to_string()))?;
-            cx.run_until_parked();
-            Ok(now_ms)
-        })
+        self.with_clock(move |clock| clock.set_ms(now_ms))
     }
 
     #[napi]
     pub fn clock_fast_forward(&self, delta_ms: f64) -> Result<f64> {
-        with_test_state(|cx, window, view| {
-            let view = view.clone();
-            let now_ms = cx
-                .update_window(window, |_, _window, app| {
-                    view.update(app, |view, cx| {
-                        let now_ms = view.clock.fast_forward_ms(delta_ms);
-                        cx.notify();
-                        now_ms
-                    })
-                })
-                .map_err(|e| Error::from_reason(e.to_string()))?;
-            cx.run_until_parked();
-            Ok(now_ms)
-        })
+        self.with_clock(move |clock| clock.fast_forward_ms(delta_ms))
     }
 
     #[napi]
     pub fn clock_resume(&self) -> Result<f64> {
-        with_test_state(|cx, window, view| {
-            let view = view.clone();
-            let now_ms = cx
-                .update_window(window, |_, _window, app| {
-                    view.update(app, |view, cx| {
-                        let now_ms = view.clock.resume();
-                        cx.notify();
-                        now_ms
-                    })
-                })
-                .map_err(|e| Error::from_reason(e.to_string()))?;
+        self.with_clock(|clock| clock.resume())
+    }
+
+    /// Change the clock every window shares, then repaint the main window.
+    fn with_clock(
+        &self,
+        change: impl FnOnce(&crate::automation::AutomationClock) -> f64,
+    ) -> Result<f64> {
+        let now_ms = in_view(None, |view, _window, cx| {
+            let now_ms = change(&view.clock);
+            cx.notify();
+            now_ms
+        })?;
+        with_test_state(|cx, _window, _view| {
             cx.run_until_parked();
             Ok(now_ms)
         })
@@ -1431,19 +1239,6 @@ impl TestSoloRenderer {
     #[napi]
     pub fn get_root_id(&self) -> Option<f64> {
         self.tree.lock().unwrap().root_id.map(|id| id as f64)
-    }
-
-    // ── Private helpers ──────────────────────────────────────────────
-
-    fn collect_text(id: u64, tree: &RetainedTree, texts: &mut Vec<String>) {
-        if let Some(element) = tree.elements.get(&id) {
-            if let Some(ref content) = element.content {
-                texts.push(content.clone());
-            }
-            for &child_id in &element.children {
-                Self::collect_text(child_id, tree, texts);
-            }
-        }
     }
 }
 

@@ -1,5 +1,5 @@
 /// The native <code> element: line rendering, headers, line numbers,
-/// selection, themes. Faithful port of packages/react code.test.tsx.
+/// selection, themes.
 
 import fs from "fs"
 import path from "path"

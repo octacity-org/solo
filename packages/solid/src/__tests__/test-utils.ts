@@ -1,5 +1,4 @@
 /// Shared test utilities for @solo/solid suites.
-/// Ported from packages/react/src/__tests__/test-utils.ts.
 
 import fs from "fs"
 import path from "path"

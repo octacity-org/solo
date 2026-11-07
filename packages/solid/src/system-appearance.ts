@@ -3,6 +3,7 @@ import type { Accessor } from "solid-js"
 import { registerEventHandler, unregisterEventHandler } from "@solo/core"
 import type { NativeRenderer } from "@solo/core"
 import { getSoloRenderer } from "./runtime.js"
+import { requireCapability } from "./capability.js"
 
 export type SystemAppearance = "light" | "dark"
 
@@ -31,8 +32,7 @@ export function createSystemAppearance(): Accessor<SystemAppearance> {
   const renderer = getSoloRenderer()
   let subscription = byRenderer.get(renderer)
   if (!subscription) {
-    const replace = renderer.setSystemAppearanceSubscription?.bind(renderer)
-    if (!replace) throw new Error("This renderer does not support system appearance")
+    const replace = requireCapability(renderer, "setSystemAppearanceSubscription", "support system appearance")
     const token = String(++nextToken)
     const initial = replace(token)
     if (!isAppearance(initial)) {

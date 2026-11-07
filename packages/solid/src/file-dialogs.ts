@@ -1,5 +1,6 @@
 import { isAbsolute } from "node:path"
 import { getSoloRenderer } from "./runtime.js"
+import { requireCapability } from "./capability.js"
 
 export interface SelectFilesOptions {
   /** Allow more than one file. Defaults to false. */
@@ -35,8 +36,7 @@ export async function selectFiles(options: SelectFilesOptions = {}): Promise<str
   }
   const prompt = optionalText(options.prompt, "File dialog prompt")
   const renderer = getSoloRenderer()
-  const select = renderer.selectFiles?.bind(renderer)
-  if (!select) throw new Error("This renderer does not support file dialogs")
+  const select = requireCapability(renderer, "selectFiles", "support file dialogs")
   return select(JSON.stringify({
     ...(options.multiple !== undefined ? { multiple: options.multiple } : {}),
     ...(options.directories !== undefined ? { directories: options.directories } : {}),
@@ -55,8 +55,7 @@ export async function selectSavePath(options: SelectSavePathOptions = {}): Promi
     throw new TypeError("Initial directory must be an absolute path")
   }
   const renderer = getSoloRenderer()
-  const select = renderer.selectSavePath?.bind(renderer)
-  if (!select) throw new Error("This renderer does not support file dialogs")
+  const select = requireCapability(renderer, "selectSavePath", "support file dialogs")
   return select(JSON.stringify({
     ...(suggestedName !== undefined ? { suggestedName } : {}),
     ...(initialDirectory !== undefined ? { initialDirectory } : {}),

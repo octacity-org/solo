@@ -5,27 +5,6 @@ export declare class SoloRenderer {
   constructor(eventCallback?: (((err: Error | null, arg: EventPayload) => any)) | undefined | null)
   /** Initialize GPUI using the native event-loop architecture for this OS. */
   init(options?: WindowOptions | undefined | null): void
-  createElement(id: number, elementType: string): void
-  /**
-   * Destroy an element and all descendants. Returns array of destroyed IDs
-   * so JS can clean up event handlers for the entire subtree.
-   */
-  destroyElement(id: number): Array<number>
-  appendChild(parentId: number, childId: number): void
-  removeChild(parentId: number, childId: number): void
-  insertBefore(parentId: number, childId: number, beforeId: number): void
-  setStyle(id: number, styleJson: string): void
-  setText(id: number, content: string): void
-  setEventListener(id: number, eventType: string, hasHandler: boolean): void
-  /** Set the root element (called from appendChildToContainer). */
-  setRoot(id: number): void
-  /**
-   * Set a custom prop on an element (for non-div/text elements like input, editor, diff).
-   * Key is the prop name, value is JSON-encoded.
-   */
-  setCustomProp(id: number, key: string, valueJson: string): void
-  /** Get a custom prop value from an element. Returns JSON string or null. */
-  getCustomProp(id: number, key: string): string | null
   /** Signal that a batch of mutations is complete. Triggers re-render. */
   commitMutations(): void
   /**
@@ -183,6 +162,27 @@ export declare class SoloRenderer {
   clockFastForward(deltaMs: number): number
   clockResume(): number
   captureScreenshot(path: string): void
+  createElement(id: number, elementType: string): void
+  /**
+   * Destroy an element and all descendants. Returns array of destroyed IDs
+   * so JS can clean up event handlers for the entire subtree.
+   */
+  destroyElement(id: number): Array<number>
+  appendChild(parentId: number, childId: number): void
+  removeChild(parentId: number, childId: number): void
+  insertBefore(parentId: number, childId: number, beforeId: number): void
+  setStyle(id: number, styleJson: string): void
+  setText(id: number, content: string): void
+  setEventListener(id: number, eventType: string, hasHandler: boolean): void
+  /** Set the root element (called from appendChildToContainer). */
+  setRoot(id: number): void
+  /**
+   * Set a custom prop on an element (for non-div/text elements like input, editor, diff).
+   * Key is the prop name, value is JSON-encoded.
+   */
+  setCustomProp(id: number, key: string, valueJson: string): void
+  /** Get a custom prop value from an element. Returns JSON string or null. */
+  getCustomProp(id: number, key: string): string | null
   /** Present a lifecycle-managed native menu without blocking the app loop. */
   showContextMenu(json: string): Promise<string | null>
   cancelContextMenu(requestId: number): void
@@ -218,6 +218,27 @@ export declare class SoloRenderer {
  *   r.captureScreenshot("/tmp/test.png")  // saves rendered UI as PNG
  */
 export declare class TestSoloRenderer {
+  createElement(id: number, elementType: string): void
+  /**
+   * Destroy an element and all descendants. Returns array of destroyed IDs
+   * so JS can clean up event handlers for the entire subtree.
+   */
+  destroyElement(id: number): Array<number>
+  appendChild(parentId: number, childId: number): void
+  removeChild(parentId: number, childId: number): void
+  insertBefore(parentId: number, childId: number, beforeId: number): void
+  setStyle(id: number, styleJson: string): void
+  setText(id: number, content: string): void
+  setEventListener(id: number, eventType: string, hasHandler: boolean): void
+  /** Set the root element (called from appendChildToContainer). */
+  setRoot(id: number): void
+  /**
+   * Set a custom prop on an element (for non-div/text elements like input, editor, diff).
+   * Key is the prop name, value is JSON-encoded.
+   */
+  setCustomProp(id: number, key: string, valueJson: string): void
+  /** Get a custom prop value from an element. Returns JSON string or null. */
+  getCustomProp(id: number, key: string): string | null
   constructor()
   /** Open an offscreen window painting `root_id`, a parentless element. */
   openWindow(rootId: number, options?: WindowOptions | undefined | null): void
@@ -243,24 +264,6 @@ export declare class TestSoloRenderer {
   /** Test hook: click button `index` of the open alert. */
   answerAlert(index: number): void
   setSystemAppearanceSubscription(token?: string | undefined | null): string
-  createElement(id: number, elementType: string): void
-  /**
-   * Destroy an element and all descendants. Returns destroyed IDs
-   * so JS can clean up event handlers.
-   */
-  destroyElement(id: number): Array<number>
-  appendChild(parentId: number, childId: number): void
-  removeChild(parentId: number, childId: number): void
-  insertBefore(parentId: number, childId: number, beforeId: number): void
-  setStyle(id: number, styleJson: string): void
-  setText(id: number, content: string): void
-  setEventListener(id: number, eventType: string, hasHandler: boolean): void
-  /** Set the root element (called from appendChildToContainer). */
-  setRoot(id: number): void
-  /** Set a custom prop on an element (for non-div/text elements like input, editor, diff). */
-  setCustomProp(id: number, key: string, valueJson: string): void
-  /** Get a custom prop value from an element. */
-  getCustomProp(id: number, key: string): string | null
   /** Present a lifecycle-managed native menu for an element in this renderer. */
   showContextMenu(json: string): Promise<string | null>
   cancelContextMenu(requestId: number): void

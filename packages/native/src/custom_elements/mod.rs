@@ -140,7 +140,15 @@ pub trait CustomElementFactory: 'static {
 /// Stores factories (one per type) and live instances (one per element ID).
 pub struct CustomElementRegistry {
     factories: HashMap<String, Box<dyn CustomElementFactory>>,
-    instances: HashMap<u64, Box<dyn CustomElement>>,
+    instances: HashMap<u64, Instance>,
+}
+
+struct Instance {
+    element: Box<dyn CustomElement>,
+    /// The retained element's `revision` its props were last synced at.
+    synced_revision: Option<u64>,
+    /// The retained element's listeners this element supports.
+    events: HashSet<String>,
 }
 
 impl CustomElementRegistry {
@@ -174,17 +182,60 @@ impl CustomElementRegistry {
 
     /// Get an existing instance or create one via the factory.
     /// Returns None if no factory is registered for this element type.
-    pub fn get_or_create(
-        &mut self,
-        id: u64,
-        element_type: &str,
-    ) -> Option<&mut Box<dyn CustomElement>> {
+    fn instance(&mut self, id: u64, element_type: &str) -> Option<&mut Instance> {
         if !self.instances.contains_key(&id) {
             let factory = self.factories.get(element_type)?;
-            let instance = factory.create(id);
-            self.instances.insert(id, instance);
+            let element = factory.create(id);
+            self.instances.insert(
+                id,
+                Instance {
+                    element,
+                    synced_revision: None,
+                    events: HashSet::new(),
+                },
+            );
         }
         self.instances.get_mut(&id)
+    }
+
+    /// The instance for `element`, with its props and supported listeners
+    /// pushed from the retained element when that element changed since the
+    /// last call. Unchanged elements cost a lookup, so a `<svg>` does not
+    /// re-read its file and a `<code>` does not re-copy its source per frame.
+    pub fn sync(
+        &mut self,
+        element: &crate::retained_tree::RetainedElement,
+    ) -> Option<(&mut Box<dyn CustomElement>, &HashSet<String>)> {
+        let instance = self.instance(element.id, &element.element_type)?;
+        if instance.synced_revision != Some(element.revision) {
+            let custom = &mut instance.element;
+            // Known props are always sent; a missing one resets with null.
+            let known: Vec<String> =
+                custom.supported_props().iter().map(|key| key.to_string()).collect();
+            for key in &known {
+                let value = element
+                    .custom_props
+                    .get(key)
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                custom.set_prop(key, value);
+            }
+            // Unknown props pass through for forward compatibility.
+            for (key, value) in &element.custom_props {
+                if !custom.supported_props().contains(&key.as_str()) {
+                    custom.set_prop(key, value.clone());
+                }
+            }
+            let supported = custom.supported_events();
+            instance.events = element
+                .events
+                .iter()
+                .filter(|event| supported.contains(&event.as_str()))
+                .cloned()
+                .collect();
+            instance.synced_revision = Some(element.revision);
+        }
+        Some((&mut instance.element, &instance.events))
     }
 
     /// Called when Solid destroys an element.
@@ -198,8 +249,8 @@ impl CustomElementRegistry {
     }
 
     pub fn destroy(&mut self, id: u64) {
-        if let Some(mut el) = self.instances.remove(&id) {
-            el.destroy();
+        if let Some(mut instance) = self.instances.remove(&id) {
+            instance.element.destroy();
         }
     }
 

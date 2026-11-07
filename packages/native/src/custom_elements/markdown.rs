@@ -15,7 +15,7 @@ use gpui::SharedString;
 
 use super::{CustomElement, CustomElementFactory, CustomRenderContext};
 use crate::markdown::parser::{parse, BlockTree};
-use crate::markdown::render::{render_tree, MdContext};
+use crate::markdown::render::{render_tree, MdCache, MdContext};
 use crate::renderer::emit_event_full;
 use crate::theme::Theme;
 
@@ -40,6 +40,8 @@ pub struct MarkdownElement {
     tree: Option<Rc<BlockTree>>,
     parsed_len: Option<usize>,
     parsed_hash: Option<u64>,
+    /// Flattened text, code lines and table layout for this source and theme.
+    cache: MdCache,
 }
 
 impl MarkdownElement {
@@ -48,6 +50,7 @@ impl MarkdownElement {
         let stale = self.parsed_hash != Some(hash) || self.parsed_len != Some(self.source.len());
         if stale || self.tree.is_none() {
             self.tree = Some(Rc::new(parse(&self.source)));
+            self.cache.clear();
             self.parsed_hash = Some(hash);
             self.parsed_len = Some(self.source.len());
         }
@@ -104,8 +107,10 @@ impl CustomElement for MarkdownElement {
             ctx.selection_wash,
             theme.clone(),
             on_link,
+            std::mem::take(&mut self.cache),
         );
         let body = render_tree(&tree, &mut md, window);
+        self.cache = md.into_cache();
 
         let mut container = gpui::div()
             .id(SharedString::from(format!("__solo_markdown_{}", ctx.id)))
@@ -129,7 +134,10 @@ impl CustomElement for MarkdownElement {
     fn set_prop(&mut self, key: &str, value: serde_json::Value) {
         match key {
             "source" => self.source = value.as_str().unwrap_or("").to_string(),
-            "theme" => self.theme = Theme::from_prop(Some(&value)),
+            "theme" => {
+                self.theme = Theme::from_prop(Some(&value));
+                self.cache.clear();
+            }
             _ => {}
         }
     }
@@ -151,5 +159,6 @@ impl CustomElement for MarkdownElement {
 
     fn destroy(&mut self) {
         self.tree = None;
+        self.cache.clear();
     }
 }

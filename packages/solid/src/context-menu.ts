@@ -1,5 +1,6 @@
 import { flush, getOwner, onCleanup } from "solid-js"
 import { flushMutations, getSoloRenderer } from "./runtime.js"
+import { requireCapability } from "./capability.js"
 
 export type ContextMenuItem =
   | { readonly type: "separator" }
@@ -55,9 +56,8 @@ export function createContextMenu(
         (anchor.x !== undefined && (!Number.isFinite(anchor.x) || !Number.isFinite(anchor.y)))) {
         throw new TypeError("Context menu pointer coordinates must both be finite")
       }
-      if (!renderer.showContextMenu || !renderer.cancelContextMenu) {
-        throw new Error("This renderer does not support native context menus")
-      }
+      const showMenu = requireCapability(renderer, "showContextMenu", "support native context menus")
+      const cancelMenu = requireCapability(renderer, "cancelContextMenu", "support native context menus")
       controller.dismiss()
       flushMutations()
       const requestId = ++nextRequestId
@@ -67,7 +67,7 @@ export function createContextMenu(
           if (settled) return
           settled = true
           cancelPending = undefined
-          try { renderer.cancelContextMenu!(requestId) } finally { resolve(null) }
+          try { cancelMenu(requestId) } finally { resolve(null) }
         }
         cancelPending = cancel
         const finish = (id: string | null) => {
@@ -86,7 +86,7 @@ export function createContextMenu(
           } catch (error) { reject(error) }
         }
         try {
-          renderer.showContextMenu!(JSON.stringify({ requestId, elementId: anchor.elementId,
+          showMenu(JSON.stringify({ requestId, elementId: anchor.elementId,
             ...(anchor.x === undefined ? {} : { x: anchor.x, y: anchor.y }), items: snapshot }))
             .then(finish, (error: unknown) => {
               if (settled) return

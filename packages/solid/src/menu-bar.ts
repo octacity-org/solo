@@ -2,6 +2,7 @@ import { createRenderEffect, flush, getOwner, onCleanup, untrack } from "solid-j
 import { registerEventHandler, unregisterEventHandler } from "@solo/core"
 import type { NativeRenderer } from "@solo/core"
 import { getSoloRenderer } from "./runtime.js"
+import { requireCapability } from "./capability.js"
 
 export type MenuBarItem =
   | { readonly type: "separator" }
@@ -46,8 +47,7 @@ export function configureMenuBar(source: () => MenuBarConfiguration): () => void
   if (!getOwner()) throw new Error("Configure the menu bar inside a Solid component or owner")
   if (typeof source !== "function") throw new TypeError("Menu-bar configuration must be a function")
   const renderer = getSoloRenderer()
-  const replace = renderer.setMenuBar?.bind(renderer)
-  if (!replace) throw new Error("This renderer does not support menu-bar configuration")
+  const replace = requireCapability(renderer, "setMenuBar", "support menu-bar configuration")
   if (byRenderer.has(renderer)) throw new Error("This renderer already has a menu-bar configuration")
 
   const configuration: ActiveConfiguration = { actions: new Map() }

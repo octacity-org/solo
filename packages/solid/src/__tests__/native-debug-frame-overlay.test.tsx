@@ -1,5 +1,4 @@
 /// GPUI debug frame overlay: mode cycling and a visual paint check.
-/// Faithful port of packages/react debug-frame-overlay.test.tsx.
 
 import fs from "fs"
 import path from "path"

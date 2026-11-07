@@ -45,9 +45,6 @@ export function soloEventTypeForProp(name: string): string | null {
   return EVENT_PROP_TO_TYPE.get(name) ?? null
 }
 
-// Deprecated alias — remove in next major
-export const gpuixEventTypeForProp = soloEventTypeForProp
-
 /** Attach one event handler through the shared registry + native listener. */
 export function attachEventHandler(
   renderer: { setEventListener(id: number, eventType: string, hasHandler: boolean): void },

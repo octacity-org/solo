@@ -7,6 +7,7 @@
 
 import type { NativeRenderer } from "@solo/core"
 import type { EventPayload } from "@solo/native"
+import { requireCapability } from "./capability.js"
 
 export type WebviewValue =
   | string
@@ -60,8 +61,11 @@ function isWaitingForFirstPaint(error: unknown): boolean {
   return error instanceof Error && /WebView \d+ is not mounted/i.test(error.message)
 }
 
-function nextTurn(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0))
+/** Retry delays while a WebView waits for its first paint: 0, 1, 2, 4 … 50 ms. */
+const READY_RETRY_MAX_MS = 50
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 export interface WebviewController {
@@ -115,15 +119,19 @@ export function createWebviewController(
     isMounted: () => mounted,
     ready(): Promise<void> {
       if (!mounted) return Promise.reject(new Error("WebView is unmounted"))
-      const waitReady = renderer.waitWebviewReady?.bind(renderer)
-      if (!waitReady) return Promise.reject(new Error("This renderer does not support WebView readiness"))
+      let waitReady: NonNullable<NativeRenderer["waitWebviewReady"]>
+      try {
+        waitReady = requireCapability(renderer, "waitWebviewReady", "support WebView readiness")
+      } catch (error) {
+        return Promise.reject(error)
+      }
 
       const requestGeneration = generation
       return new Promise<void>((resolve, reject) => {
         const request: PendingReady = { reject }
         pendingReady.add(request)
         const waitForNativeView = async (): Promise<void> => {
-          for (;;) {
+          for (let delay = 0; ; delay = Math.min(Math.max(delay * 2, 1), READY_RETRY_MAX_MS)) {
             if (!mounted || requestGeneration !== generation) {
               throw new Error("WebView document changed before it became ready")
             }
@@ -132,7 +140,7 @@ export function createWebviewController(
               return
             } catch (error) {
               if (!isWaitingForFirstPaint(error)) throw error
-              await nextTurn()
+              await sleep(delay)
             }
           }
         }
@@ -156,8 +164,12 @@ export function createWebviewController(
       if (typeof script !== "string" || !script.trim()) {
         return Promise.reject(new TypeError("WebView JavaScript must be a non-empty string"))
       }
-      const evaluate = renderer.evaluateWebviewJavaScript?.bind(renderer)
-      if (!evaluate) return Promise.reject(new Error("This renderer does not support WebView JavaScript"))
+      let evaluate: NonNullable<NativeRenderer["evaluateWebviewJavaScript"]>
+      try {
+        evaluate = requireCapability(renderer, "evaluateWebviewJavaScript", "support WebView JavaScript")
+      } catch (error) {
+        return Promise.reject(error)
+      }
 
       const requestGeneration = generation
       return new Promise<WebviewValue>((resolve, reject) => {
@@ -195,18 +207,14 @@ export function createWebviewController(
       if (!Number.isSafeInteger(navigationId) || navigationId < 0) {
         throw new TypeError("WebView navigation ID must be a non-negative safe integer")
       }
-      const allow = renderer.allowWebviewNavigation?.bind(renderer)
-      if (!allow) throw new Error("This renderer does not support WebView navigation decisions")
-      allow(id, navigationId)
+      requireCapability(renderer, "allowWebviewNavigation", "support WebView navigation decisions")(id, navigationId)
     },
     cancelNavigation(navigationId: number): void {
       if (!mounted) throw new Error("WebView is unmounted")
       if (!Number.isSafeInteger(navigationId) || navigationId < 0) {
         throw new TypeError("WebView navigation ID must be a non-negative safe integer")
       }
-      const cancel = renderer.cancelWebviewNavigation?.bind(renderer)
-      if (!cancel) throw new Error("This renderer does not support WebView navigation decisions")
-      cancel(id, navigationId)
+      requireCapability(renderer, "cancelWebviewNavigation", "support WebView navigation decisions")(id, navigationId)
     },
     invalidateDocument(reason: string): void {
       generation += 1

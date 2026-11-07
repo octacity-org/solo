@@ -1,6 +1,5 @@
 /// Tests for the custom <img> element — native image rendering via the
 /// custom-element pipeline and visual screenshot behavior.
-/// Faithful port of packages/react img.test.tsx.
 
 import fs from "fs"
 import { beforeEach, describe, expect, it } from "vitest"

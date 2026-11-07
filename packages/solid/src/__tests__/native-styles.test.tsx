@@ -1,6 +1,4 @@
-/// Native style properties. Faithful port of packages/react
-/// styles.test.tsx (32 tests) — compact form, identical scenarios and
-/// assertions (explicit expected-text arrays replace inline snapshots).
+/// Native style properties, asserted with explicit expected-text arrays.
 /// macOS-only: requires the GPU-backed TestSoloRenderer.
 
 import fs from "fs"

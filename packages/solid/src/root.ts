@@ -15,6 +15,7 @@ import type { NativeRenderer } from "@solo/core"
 import type { Element as SolidElement } from "solid-js"
 import { automateWhenPiped } from "./automation-host.js"
 import { mount, mountWindowRoot, resetIdCounter } from "./runtime.js"
+import { requireCapability } from "./capability.js"
 
 export interface Root {
   unmount: () => void
@@ -136,12 +137,10 @@ export function render(code: () => SolidElement, options: RenderOptions = {}): R
     const renderer = createNativeRenderer(options.onEvent)
     renderer.init(options)
     slot.renderer = renderer
-      console.log("[solo] created native window")
   }
   const host = slot.renderer as NativeRenderer
 
   if (slot.root) {
-    console.log("[solo] remount: unmount previous tree")
     slot.root.unmount()
   }
   closeAllWindows()
@@ -156,43 +155,24 @@ export function render(code: () => SolidElement, options: RenderOptions = {}): R
       disposeTree = () => {}
       slot.root = undefined
     },
-    showWindow: () => {
-      if (!host.showWindow) throw new Error("This renderer does not support showing windows")
-      host.showWindow()
-    },
-    closeWindow: () => {
-      if (!host.closeWindow) throw new Error("This renderer does not support closing windows")
-      host.closeWindow()
-    },
-    maximizeWindow: () => {
-      if (!host.setWindowMaximized) throw new Error("This renderer does not support maximizing windows")
-      host.setWindowMaximized(true)
-    },
-    restoreWindow: () => {
-      if (!host.setWindowMaximized) throw new Error("This renderer does not support restoring windows")
-      host.setWindowMaximized(false)
-    },
+    showWindow: () => requireCapability(host, "showWindow", "support showing windows")(),
+    closeWindow: () => requireCapability(host, "closeWindow", "support closing windows")(),
+    maximizeWindow: () =>
+      requireCapability(host, "setWindowMaximized", "support maximizing windows")(true),
+    restoreWindow: () =>
+      requireCapability(host, "setWindowMaximized", "support restoring windows")(false),
     toggleWindowMaximized: () => {
-      if (!host.setWindowMaximized || !host.isWindowMaximized) {
-        throw new Error("This renderer does not support toggling maximized windows")
-      }
-      host.setWindowMaximized(!host.isWindowMaximized())
+      const toggling = "support toggling maximized windows"
+      const isMaximized = requireCapability(host, "isWindowMaximized", toggling)
+      requireCapability(host, "setWindowMaximized", toggling)(!isMaximized())
     },
-    isWindowMaximized: () => {
-      if (!host.isWindowMaximized) throw new Error("This renderer does not expose maximized window state")
-      return host.isWindowMaximized()
-    },
-    getWindowSize: () => {
-      if (!host.getWindowSize) throw new Error("This renderer does not expose the window size")
-      return host.getWindowSize()
-    },
-    quitApplication: () => {
-      if (!host.quitApplication) throw new Error("This renderer does not support quitting applications")
-      host.quitApplication()
-    },
+    isWindowMaximized: () =>
+      requireCapability(host, "isWindowMaximized", "expose maximized window state")(),
+    getWindowSize: () => requireCapability(host, "getWindowSize", "expose the window size")(),
+    quitApplication: () =>
+      requireCapability(host, "quitApplication", "support quitting applications")(),
   }
 
-  console.log("[solo] mount complete")
   return slot.root
 }
 
@@ -204,11 +184,11 @@ export function render(code: () => SolidElement, options: RenderOptions = {}): R
 export function openWindow(code: () => SolidElement, options: OpenWindowOptions = {}): AppWindow {
   const host = renderSlot().renderer
   if (!host) throw new Error("Call render() before openWindow()")
-  if (!host.openWindow) throw new Error("This renderer does not support multiple windows")
+  const open = requireCapability(host, "openWindow", "support multiple windows")
   const { onClose, ...windowOptions } = options
   const { rootId, dispose } = mountWindowRoot(code)
   try {
-    host.openWindow(rootId, windowOptions)
+    open(rootId, windowOptions)
   } catch (error) {
     dispose()
     throw error
@@ -243,13 +223,11 @@ export function openWindow(code: () => SolidElement, options: OpenWindowOptions 
   }
   const maximized = (): boolean => {
     assertOpen("read")
-    if (!host.isWindowMaximized) throw new Error("This renderer does not expose maximized window state")
-    return host.isWindowMaximized(rootId)
+    return requireCapability(host, "isWindowMaximized", "expose maximized window state")(rootId)
   }
   const setMaximized = (value: boolean): void => {
     assertOpen(value ? "maximize" : "restore")
-    if (!host.setWindowMaximized) throw new Error("This renderer does not support maximizing windows")
-    host.setWindowMaximized(value, rootId)
+    requireCapability(host, "setWindowMaximized", "support maximizing windows")(value, rootId)
   }
 
   return {
@@ -272,12 +250,7 @@ export function openWindow(code: () => SolidElement, options: OpenWindowOptions 
     isMaximized: maximized,
     size: () => {
       assertOpen("measure")
-      if (!host.getWindowSize) throw new Error("This renderer does not expose the window size")
-      return host.getWindowSize(rootId)
+      return requireCapability(host, "getWindowSize", "expose the window size")(rootId)
     },
   }
 }
-
-export { View, Text, Button } from "./components.js"
-export type { ViewProps, TextProps, ButtonProps } from "./components.js"
-export { resetIdCounter, flushMutations } from "./runtime.js"

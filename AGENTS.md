@@ -115,10 +115,14 @@ calls `SoloRenderer.openWindow(rootId)`; that root is listed in
 - Element-targeted native calls resolve their window with
   `tree.window_root_of(id)`; window methods take an optional window id
   (`WindowTarget`), and an unknown id is an error, never the main window.
-- Per-frame registries (text `REGISTRY`/`PAINTED`, automation `BOUNDS`,
-  `SCROLL_HANDLES`, `VIRTUAL_LIST_STATES`) are keyed by `gpui::WindowId`, so
-  one window's frame reset never clears another's. New per-frame state must be
-  keyed the same way and dropped in `forget_window_state`.
+- Per-frame registries (text `REGISTRY`/`PAINTED`, automation `BOUNDS`) are
+  keyed by `gpui::WindowId`, so one window's frame reset never clears
+  another's. New per-frame state must be keyed the same way and dropped in
+  `forget_window_state`. Scroll and virtual-list state lives on each window's
+  `SoloView`; napi scroll calls reach it through the element's window.
+- Release builds (no `automation` feature) record painted bounds only for
+  elements with listeners, scroll containers and their children; context
+  menus fall back to the nearest painted ancestor.
 - A secondary window closing natively emits `windowClosed` on its root; the
   JS side then disposes the tree. `reattach_macos_application` takes the
   secondary windows out of the registry before closing them, so a reloaded

@@ -1,6 +1,6 @@
 /// Showcase composition: markdown + code + diff in one frame, continuous
 /// selection across them, theme-metrics retuning, and diff scroll-model
-/// honesty. Faithful port of packages/react showcase.test.tsx.
+/// honesty.
 
 import fs from "fs"
 import path from "path"

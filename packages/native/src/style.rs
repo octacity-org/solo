@@ -9,6 +9,47 @@ pub enum FontWeightValue {
     Str(String),
 }
 
+/// A CSS colour string, parsed once when the style arrives so painting does
+/// not re-parse it every frame. Derefs to the source string.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Color {
+    source: String,
+    rgba: Option<u32>,
+}
+
+impl Color {
+    /// `0xRRGGBBAA`, or `None` when the source is not a colour Solo parses.
+    pub fn hex(&self) -> Option<u32> {
+        self.rgba
+    }
+}
+
+impl From<String> for Color {
+    fn from(source: String) -> Self {
+        let rgba = parse_color_hex(&source);
+        Self { source, rgba }
+    }
+}
+
+impl std::ops::Deref for Color {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.source
+    }
+}
+
+impl Serialize for Color {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.source)
+    }
+}
+
+impl<'de> Deserialize<'de> for Color {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(Self::from)
+    }
+}
+
 /// A dimension value that can be a number (pixels) or a string (percentage, auto, etc.)
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(untagged)]
@@ -144,9 +185,9 @@ pub struct StyleDesc {
     pub left: Option<f64>,
 
     // Background & Colors
-    pub background: Option<String>,
-    pub background_color: Option<String>,
-    pub color: Option<String>,
+    pub background: Option<Color>,
+    pub background_color: Option<Color>,
+    pub color: Option<Color>,
     pub opacity: Option<f64>,
 
     // Border
@@ -155,7 +196,7 @@ pub struct StyleDesc {
     pub border_right_width: Option<f64>,
     pub border_bottom_width: Option<f64>,
     pub border_left_width: Option<f64>,
-    pub border_color: Option<String>,
+    pub border_color: Option<Color>,
     pub border_radius: Option<f64>,
     pub border_top_left_radius: Option<f64>,
     pub border_top_right_radius: Option<f64>,
@@ -192,7 +233,7 @@ pub struct StyleDesc {
     pub user_select: Option<String>,
     /// Selection wash colour for this subtree. Defaults to the theme accent at
     /// 35% opacity, the same tone Comet uses.
-    pub selection_color: Option<String>,
+    pub selection_color: Option<Color>,
 
     // Pseudo-selector styles — applied by GPUI natively (no JS round-trip).
     // Uses Box to avoid infinite-size struct (StyleDesc contains StyleDesc).
@@ -292,12 +333,12 @@ pub fn should_occlude(style: &StyleDesc) -> bool {
     }
     let fill = style
         .background_color
-        .as_deref()
-        .or(style.background.as_deref());
+        .as_ref()
+        .or(style.background.as_ref());
     let Some(color) = fill else {
         return false;
     };
-    match parse_color_hex(color) {
+    match color.hex() {
         Some(hex) => hex & 0xFF > 0,
         None => true,
     }

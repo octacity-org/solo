@@ -300,7 +300,7 @@ impl CustomElement for AnchoredElement {
                 .background_color
                 .as_ref()
                 .or(style.background.as_ref())
-                .and_then(|color| crate::style::parse_color_hex(color))
+                .and_then(|color| color.hex())
                 .is_some_and(|hex| hex & 0xFF > 0)
         });
         if !has_fill {
