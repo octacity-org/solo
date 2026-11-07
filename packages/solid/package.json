@@ -67,9 +67,9 @@
     "@babel/core": "^7",
     "@solo/core": "workspace:^",
     "@solo/native": "workspace:^",
-    "@solidjs/universal": "2.0.0-rc.15",
-    "@solidjs/babel-plugin": "2.0.0-rc.15",
-    "solid-js": "2.0.0-rc.15"
+    "@solidjs/universal": "2.0.0-rc.21",
+    "@solidjs/babel-plugin": "2.0.0-rc.21",
+    "solid-js": "2.0.0-rc.21"
   },
   "devDependencies": {
     "@babel/parser": "^7.29.7",

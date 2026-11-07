@@ -174,6 +174,25 @@ describe("live keyboard injection", () => {
     ])
   })
 
+  it("attaches automation at the handshake, before any input", async () => {
+    // Attaching scripts native context menus, so a menu that the first
+    // command opens must already take its keys from automation.
+    const order: string[] = []
+    const { renderer } = recordingRenderer({
+      attachAutomation: () => order.push("attach"),
+      simulateClick: () => order.push("click"),
+      getElementBounds: () => [0, 0, 100, 20],
+    })
+    const app = await appOver(new InProcessBackend(liveRendererAsTest(renderer)))
+    try {
+      expect(order).toEqual(["attach"])
+      await app.getByTestId("search-input").click()
+    } finally {
+      await app.close()
+    }
+    expect(order).toEqual(["attach", "click"])
+  })
+
   it("draws pending changes before acting on or reading the window", async () => {
     // A live window draws on its next display frame, so input and bounds
     // that follow a mutation must flush first or they see the previous frame.

@@ -192,7 +192,7 @@ jobs:
         run: bunx tsc -p examples
 
       - name: Build tasks automation fixture
-        run: bun run build
+        run: bun run build:automation
         working-directory: examples/tasks
 
       - name: Run tasks automation regression

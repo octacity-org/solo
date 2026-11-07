@@ -70,6 +70,8 @@ export interface TestAutomationRenderer {
   clockResume(): number
   focusElement?(elementId: number): void
   blur?(): void
+  /** A client attached; native context menus stop depending on focus. */
+  attachAutomation?(): void
 }
 
 type HandlerMap = {
@@ -91,12 +93,15 @@ export class InProcessBackend implements AutomationBackend {
   async close(): Promise<void> {}
 
   private readonly handlers: HandlerMap = {
-    initialize: () => ({
-      protocolVersion: PROTOCOL_VERSION,
-      pid: process.pid,
-      capabilities: ["input", "screenshot", "clock", "tree"],
-      window: { width: 800, height: 600 },
-    }),
+    initialize: () => {
+      this.renderer.attachAutomation?.()
+      return {
+        protocolVersion: PROTOCOL_VERSION,
+        pid: process.pid,
+        capabilities: ["input", "screenshot", "clock", "tree"],
+        window: { width: 800, height: 600 },
+      }
+    },
     cancel: () => ({ ok: true as const }),
     click: (params) => {
       this.renderer.nativeSimulateClick(params.x, params.y, params.elementId)
@@ -505,6 +510,8 @@ export interface LiveAutomationRenderer {
   simulateKeyUp?(keystroke: string, elementId?: number): void
   focusElement(elementId: number): void
   blur(): void
+  /** macOS: scripts native context menus; see `SoloRenderer.attachAutomation`. */
+  attachAutomation?(): void
   scrollTo(elementId: number, x: number, y: number): void
   getScrollOffset(elementId: number): number[] | null
   getAllText(): string[]
@@ -683,6 +690,7 @@ export function liveRendererAsTest(
       return renderer.focusElement(id)
     },
     blur: () => renderer.blur(),
+    attachAutomation: () => renderer.attachAutomation?.(),
   }
 }
 
@@ -773,13 +781,37 @@ export function handleAutomationRequest(
   )
 }
 
+/**
+ * The error reply for a request that failed to parse, or `undefined` when it
+ * carries no integer id to answer. Without a reply the controller would wait
+ * for its timeout instead of seeing the cause.
+ */
+export function invalidRequestReply(raw: string, error: unknown): string | undefined {
+  let id: unknown
+  try {
+    const value = JSON.parse(raw) as unknown
+    if (typeof value === "object" && value !== null && "method" in value) id = (value as { id?: unknown }).id
+  } catch {
+    return undefined
+  }
+  if (typeof id !== "number" || !Number.isInteger(id)) return undefined
+  const failure = error instanceof AutomationError ? error : new AutomationError("Protocol", String(error))
+  return encodeSse({ id, error: { code: failure.code, message: failure.message, data: failure.data } })
+}
+
 export function serveAutomationStdio(backend: AutomationBackend): void {
-  const decoder = createSseDecoder((message) => {
-    if (!("method" in message)) return
-    void handleAutomationRequest(message, backend).then((reply) => {
-      process.stdout.write(reply)
-    })
-  })
+  const decoder = createSseDecoder(
+    (message) => {
+      if (!("method" in message)) return
+      void handleAutomationRequest(message, backend).then((reply) => {
+        process.stdout.write(reply)
+      })
+    },
+    (raw, error) => {
+      const reply = invalidRequestReply(raw, error)
+      if (reply) process.stdout.write(reply)
+    }
+  )
   process.stdin.setEncoding("utf8")
   process.stdin.on("data", (chunk: string) => {
     decoder.feed(chunk)

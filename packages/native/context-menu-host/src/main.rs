@@ -2,6 +2,8 @@ mod protocol;
 
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(any(target_os = "macos", test))]
+mod scripted;
 
 fn main() {
     #[cfg(target_os = "macos")]

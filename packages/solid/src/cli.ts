@@ -4,7 +4,7 @@
 
 import { resolve } from "node:path"
 import { enableAppReload, enableWorkerMainThread, runMainLoop } from "@solo/native"
-import { usesWorkerMode } from "./worker.js"
+import { appWorkerOptions, usesWorkerMode } from "./worker.js"
 
 const [command, root = "."] = process.argv.slice(2)
 if (command !== "dev") {
@@ -19,7 +19,8 @@ if (!usesWorkerMode()) {
 enableWorkerMainThread()
 enableAppReload()
 new Worker(new URL("./dev.js", import.meta.url).href, {
+  ...appWorkerOptions(),
   // Bun extension: readable through node:worker_threads in the Worker.
-  workerData: { soloStdinIsTTY: Boolean(process.stdin.isTTY), soloDevRoot: resolve(root) },
+  workerData: { soloDevRoot: resolve(root) },
 } as WorkerOptions)
 runMainLoop()

@@ -1,12 +1,45 @@
 # Solo
 
-Build native GPU-accelerated desktop apps with **Solid** and TypeScript.
-Your components render directly to the GPU via Metal, DirectX, or Vulkan —
-no Electron, no web views.
+Native, GPU-rendered desktop apps written in TypeScript and Solid.
 
-Solid is Solo's only supported frontend. Application code imports
-`@solo/solid`; `@solo/core` is private and `@solo/native` is an internal
-transitive dependency, not an application API.
+Solo renders Solid components straight to the GPU through
+[GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui), the UI
+framework behind the Zed editor. There is no browser engine and no DOM: your
+JSX becomes native elements in a Rust tree, painted with Metal, Vulkan or
+DirectX.
+
+Solo is pre-1.0 (`0.4.0`) and is not published to npm. You build it from
+source. macOS is the primary platform; see [Platform status](#platform-status).
+
+## Contents
+
+- [Quick start](#quick-start)
+- [Requirements](#requirements)
+- [How it works](#how-it-works)
+- [What you can build](#what-you-can-build)
+- [Development loop](#development-loop)
+- [Shipping an app](#shipping-an-app)
+- [Automation](#automation)
+- [Testing](#testing)
+- [Platform status](#platform-status)
+- [Current boundaries](#current-boundaries)
+- [Packages](#packages)
+- [Acknowledgements](#acknowledgements)
+
+## Quick start
+
+```bash
+git clone https://github.com/octacity-org/solo.git
+cd solo
+bun install
+bun run build                  # native addon, then @solo/core and @solo/solid
+cd examples/solid-counter
+bun run start                  # vite build, then bun dist/index.js
+```
+
+The first native build compiles GPUI and takes a few minutes.
+
+An app is a Solid component passed to `render()`:
 
 ```tsx
 import { createSignal } from "solid-js"
@@ -25,58 +58,67 @@ function Counter() {
 render(() => <Counter />, { title: "Counter", width: 480, height: 320 })
 ```
 
-## Architecture
+and a Vite config that compiles JSX for Solo:
 
-```
-TypeScript / TSX
-      ↓
-    Solid          ← custom renderer (@solidjs/babel-plugin, universal mode)
-      ↓
-@solo/core        ← private mutation kernel: types, batching, events
-      ↓
-@solo/native      ← internal napi-rs bridge; retained element tree in Rust
-      ↓
-     GPUI           ← Zed's GPU UI framework (pinned revision)
+```ts
+import { defineConfig } from "vite"
+import { solidUniversal } from "@solo/solid/vite"
+
+export default defineConfig({
+  plugins: [solidUniversal()],
+  build: { ssr: "index.tsx", outDir: "dist", target: "node20" },
+})
 ```
 
-Solo is **description-driven**, not DOM-like. Solid never mutates a
-retained JS tree: each commit queues a minimal batch of native mutations
-(`createElement`, `appendChild`, `setText`, `setStyle`, `setCustomProp`,
-`setEventListener`) that is flushed to Rust through a single `applyBatch`
-FFI call. GPUI's retained tree owns all real state.
+Applications import only `@solo/solid`, plus `solid-js` (Solid 2,
+`2.0.0-rc.21`).
 
-## Packages
+## Requirements
 
-| package | role |
+| Tool | Version |
 |---|---|
-| [`@solo/solid`](packages/solid) | **The public application package.** Solid components and JSX types, window `render()`, Vite integration via `@solo/solid/vite`, automation, and testing. |
-| [`@solo/core`](packages/core) | Private TypeScript implementation: protocol/style types, event registry, mutation batching, frame loop, automation implementation, and mock renderer. |
-| [`@solo/native`](packages/native) | Internal Rust/napi implementation and transitive dependency: retained tree, GPUI element building, text, custom elements, automation host, and GPU-backed test renderer. |
+| Bun | required to run apps; Node is not supported on macOS |
+| Rust | 1.98.1, pinned in `rust-toolchain.toml` to match GPUI |
+| Xcode Metal Toolchain (macOS) | `xcodebuild -downloadComponent MetalToolchain` |
 
-## Runtime model
+## How it works
 
-- Solid compiles JSX to universal renderer ops (`createElement`,
-  `insertNode`, `insert`, `setProp`, …) against `@solo/solid/runtime`.
-- Every op maps onto a native mutation and is queued through
-  `wrapWithBatching`; exactly one microtask-scheduled `applyBatch` flushes
-  per reactive transaction. A signal-driven text change becomes a single
-  `setText`.
-- Removal is a *detach*: nodes are only destroyed at commit time if they
-  were not reattached, so keyed list moves preserve subtrees.
-- Native events arrive by element ID on the JS thread and dispatch into a
-  shared handler registry (`handleGpuixEvent`).
+```mermaid
+flowchart TD
+    App["Your app (TSX + Solid)"]
+    Solid["@solo/solid: Solid custom renderer"]
+    Core["@solo/core: mutation batching, events (private)"]
+    Native["@solo/native: retained element tree in Rust (napi-rs)"]
+    GPUI["GPUI: layout and GPU painting"]
 
-## Native elements
+    App --> Solid --> Core --> Native --> GPUI
+```
 
-`div`, `text`, `img`, `svg`, `input`, `textarea`, `anchored`, `code`
-(Tree-sitter highlighting), `diff` (unified patches), `markdown`
-(GFM), `virtual-list` (windowed rows), `webview` (macOS only — a real
-WKWebView). Styles are a CSS-like subset
-(`StyleDesc`) applied natively, including hover/active pseudo-states,
-overflow scrolling, opacity, borders, and text metrics.
+Solo is description-driven. Solid never keeps a JavaScript DOM. Each reactive
+update queues the smallest set of native mutations (`createElement`,
+`appendChild`, `setText`, `setStyle`, and so on), and one `applyBatch` call
+per microtask sends them to Rust. A signal that changes one label produces
+one `setText`, not a re-render.
 
-`virtual-list` paints only the rows near the viewport, but every child still
-exists. For large data sets use `VirtualList`, which mounts only those rows:
+Native events arrive by element id and dispatch to your Solid handlers.
+
+On macOS, GPUI owns the process main thread and your app runs in a Bun
+`Worker`. A production build emits two files for this: `index.js`, which
+starts the native loop, and `index.app.js`, your app.
+
+## What you can build
+
+**Elements.** `View`, `Text`, `Button` and `VirtualList` components, plus the
+native elements `div`, `text`, `img`, `svg`, `input`, `textarea`,
+`anchored`, `code`, `diff` (unified patches), `markdown` (GFM),
+`virtual-list` and `webview` (macOS only, a real WKWebView).
+
+**Styling.** A CSS-like subset (`StyleDesc`) applied natively: flexbox,
+borders, opacity, hover and active states, scrolling, and text metrics.
+GPUI's default `display` is block, so set `display: "flex"` wherever you use
+flex properties.
+
+**Large lists.** `VirtualList` mounts only the rows near the viewport:
 
 ```tsx
 <VirtualList
@@ -88,85 +130,140 @@ exists. For large data sets use `VirtualList`, which mounts only those rows:
 />
 ```
 
-The native list reports the item range it needs after each layout and paints
-a placeholder at the estimated height until that row is mounted, so a row can
-appear one frame after it scrolls into view. A row re-renders only when its
-item changes, and the row holding focus stays mounted while it is out of range.
-`scrollToItem` takes an item index.
+Rows outside the mounted range paint as placeholders at the estimated height,
+so a row can appear one frame after it scrolls into view. The row holding
+focus stays mounted. `scrollToItem` takes an item index.
 
-Nested scroll containers chain wheel input to ancestors by default. Add
-`overscrollBehavior: "contain"` to keep both axes in the inner container, or
-use `overscrollBehaviorX` / `overscrollBehaviorY` for one axis. Containment is
-handled synchronously by the native event path, including at scroll boundaries.
+**Scrolling.** Nested scroll containers pass wheel input to their ancestors.
+Set `overscrollBehavior: "contain"` (or `overscrollBehaviorX` /
+`overscrollBehaviorY`) to stop it at an inner container.
+
+**Syntax highlighting.** Tree-sitter highlighting for `code`, `diff` and
+markdown code blocks is opt-in: build `@solo/native` with a `syntax-*`
+feature (`syntax-all` adds every grammar, about 8 MB). Without one, code
+renders as plain text.
+
+**Desktop integration (macOS).**
+
+| Feature | API | Guide |
+|---|---|---|
+| More windows sharing app state | `openWindow()` | [multiple-windows.md](docs/multiple-windows.md) |
+| Context menus | `createContextMenu()` | [context-menus.md](docs/context-menus.md) |
+| Application commands | `registerApplicationCommand()` | [application-commands.md](docs/application-commands.md) |
+| Menu-bar apps that outlive their windows | `render(..., { menuBar })`, `configureMenuBar()` | [menu-bar-apps.md](docs/menu-bar-apps.md) |
+| Alerts | `showAlert()` | [alerts.md](docs/alerts.md) |
+| Open, folder and save dialogs | `selectFiles()`, `selectSavePath()` | [file-dialogs.md](docs/file-dialogs.md) |
+| URLs, clipboard, Finder, Trash | `openExternalUrl()`, `writeClipboardText()`, `openPath()`, `revealPath()`, `moveToTrash()` | [desktop-actions.md](docs/desktop-actions.md) |
+| Light and dark mode | `createSystemAppearance()` | [system-appearance.md](docs/system-appearance.md) |
+
+## Development loop
+
+```bash
+cd examples/solid-counter
+bun run dev                    # runs `solo dev`
+```
+
+On macOS, `solo dev` rebuilds on save and restarts only the app's Worker.
+The process, GPUI and the window stay up, and the counter repaints about
+0.4 s after a save. App state starts fresh on each reload.
+
+Rust changes need a native rebuild and an app restart. For native work,
+`bun run dev` at the repository root rebuilds the addon and reruns the
+screenshot tests.
+
+## Shipping an app
+
+Build the app with Vite, then compile both output files into one executable
+with Bun:
+
+```bash
+vite build
+bun build dist/index.js dist/index.app.js --compile --minify --outfile MyApp
+```
+
+Both files must be entrypoints, because Bun embeds a Worker only when it is
+listed. The native addon is embedded in the executable.
+[`examples/tasks/package.mts`](examples/tasks/package.mts) goes further and
+produces a signed `.app` and a `.dmg`.
+
+For the smallest app:
+
+- Build the native addon with `bun run build:release` in `packages/native`.
+  This leaves out test support and syntax grammars.
+- Compile with `--aot --trim` on a Bun build that supports them (a Bun canary
+  at the time of writing).
+
+Built that way, the counter example is a single 40,215,634-byte (40.2 MB)
+executable. An app that uses context menus also ships the 389,088-byte menu
+helper next to it; inside an `.app`, it goes in `Contents/Resources`.
 
 ## Automation
 
-Solo ships a Playwright-style automation protocol over stdio (SSE
-framing). Any app whose stdin is not a TTY serves it automatically:
-tree queries by testId/text/type, click/mouse/keyboard/wheel injection,
-programmatic scrolling, bounds, screenshots, clock control. Import the client
-from `@solo/solid/automation`; see `examples/tasks/diagnose-scroll.mts`.
+Solo apps speak a Playwright-style automation protocol over stdio. It covers
+element lookup by test id, text or type; clicks, mouse, keyboard and wheel
+input; scrolling; bounds; screenshots; and clock control. An app serves it
+whenever its stdin is not a TTY. Use the client from
+`@solo/solid/automation`; [`examples/tasks/diagnose-scroll.mts`](examples/tasks/diagnose-scroll.mts)
+is a working driver.
+
+Development and test builds always include the server. Production builds
+leave it out, since it keeps Node's stdio streams in the app (about 5.9 MB of
+the tasks app's executable). Build with `SOLO_AUTOMATION=1 vite build`, or
+pass `solidUniversal({ automation: true })`, when tests need to drive a
+production build.
 
 ## Testing
 
-- Headless (all platforms): `MockNativeRenderer` records every mutation op
-  for protocol-level assertions. See
-  `packages/solid/src/__tests__/lifecycle.test.tsx`.
-- GPU-backed (macOS): `createSolidNativeTestRoot()` from
-  `@solo/solid/testing` drives real frames, hit testing, selection, and
-  screenshots through `TestGpuixRenderer`.
-
-Run tests:
-
 ```bash
-cd packages/solid && bun run test   # vitest
-cd packages/native && cargo test --lib && cargo test --test layout_probe
+cd packages/solid && bun run test       # vitest; use `bun run test`, not `bun test`
+cd packages/core && bun run test
+cd packages/native && cargo test --features test-support --lib --test layout_probe
 ```
 
-## Examples
-
-| example | demonstrates |
-|---|---|
-| `examples/tasks` | full task manager: store state, keyed list, scroll, input, automation regression suite |
-| `examples/solid-counter` | minimal counter window |
-| `examples/webview-preview` | macOS-only embedded WKWebView beside a fully native pane |
-
-## Build
-
-Requirements: Bun, Rust 1.98.1 (see `rust-toolchain.toml`), plus Xcode's
-Metal Toolchain on macOS (`xcodebuild -downloadComponent MetalToolchain`).
-
-```bash
-bun install
-bun run build:native        # napi release build (~minutes)
-cd examples/tasks && bun run build && bun dist/index.js
-```
-
-While editing app code on macOS, `bun run dev` in an example runs `solo dev`:
-each save rebuilds the app and restarts only its Worker, so the process, GPUI
-and the window stay up (about 0.4 s from save to repaint on the counter). App
-state starts fresh on every reload; Rust changes still need a native rebuild
-and a restart.
-
-On macOS an app can open more windows with `openWindow()`; they share the
-app's signals and state. See [docs/multiple-windows.md](docs/multiple-windows.md).
-
-GPUI comes from a pinned git revision of upstream `zed-industries/zed`; see
-[docs/gpui-dependency.md](docs/gpui-dependency.md).
+- `MockNativeRenderer` records every mutation, so tests can assert protocol
+  traffic on any platform.
+- On macOS, `createSolidNativeTestRoot()` from `@solo/solid/testing` drives a
+  GPU-backed offscreen renderer: real frames, hit testing, selection and
+  screenshots.
+- Tests that open real, on-screen context menus are skipped unless
+  `SOLO_INTERACTIVE_MENUS=1` is set. Run them on an idle machine, since a
+  click or key at the computer can dismiss an open menu.
 
 ## Platform status
 
-| platform | windows | input | notes |
-|---|---|---|---|
-| macOS | ✅ | ✅ incl. synthetic input & GPU test renderer | GPUI on the main thread, app in a Bun Worker (Bun required); only platform with `<webview>` |
-| Linux (Wayland/X11) | ✅ | ✅ physical input; synthetic wheel via automation | blocking UI thread |
-| Windows | ✅ builds | ⚠️ untested | same blocking-thread model |
+| Platform | Status |
+|---|---|
+| macOS | Primary. Windows, input, desktop APIs, `<webview>`, live automation and the GPU test renderer. |
+| Linux (Wayland, X11) | Windows and input work. Live automation works; screenshots need X11. Most desktop APIs report that they are macOS-only. |
+| Windows | Builds in CI. Untested. |
+
+## Current boundaries
+
+- Not published to npm; there is no release pipeline yet.
+- Desktop integration APIs are macOS-only for now.
+- `<webview>` is macOS-only; there is no WebView2 or WebKitGTK backend.
+- Native code has no hot reload: Rust changes need a rebuild and restart.
+- Solid is the only supported frontend. React support was removed.
+
+## Packages
+
+| Package | Role |
+|---|---|
+| [`@solo/solid`](packages/solid) | The public package: components, `render()`, `solo` CLI, Vite plugin, automation client and test helpers. |
+| [`@solo/core`](packages/core) | Private: mutation protocol types, batching, event registry, mock renderer, automation implementation. |
+| [`@solo/native`](packages/native) | Internal Rust and napi-rs addon: retained tree, GPUI elements, text, automation host, test renderer. |
+
+| Example | Shows |
+|---|---|
+| [`examples/solid-counter`](examples/solid-counter) | The smallest app |
+| [`examples/tasks`](examples/tasks) | A task manager: store state, keyed lists, scrolling, input, automation tests, packaging |
+| [`examples/webview-preview`](examples/webview-preview) | A WKWebView beside a native pane (macOS) |
+
+GPUI comes from a pinned revision of upstream `zed-industries/zed`; see
+[docs/gpui-dependency.md](docs/gpui-dependency.md).
 
 ## Acknowledgements
 
-Solo originated as a fork of GPUIX and has since diverged into an independent
-Solid-first native TypeScript desktop framework built on GPUI.
-
-Inherited license notices are preserved in
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and were not replaced by the
-transfer to independent ownership.
+Solo began as a fork of GPUIX and has since become an independent,
+Solid-first desktop framework on GPUI. Inherited license notices are kept in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

@@ -4,15 +4,16 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
+    "build:automation": "SOLO_AUTOMATION=1 vite build",
     "dev": "solo dev",
     "start": "vite build && bun dist/index.js",
-    "diagnose": "bun diagnose-scroll.mts",
+    "diagnose": "bun run build:automation && bun diagnose-scroll.mts",
     "package": "bun package.mts",
     "test": "vitest run"
   },
   "dependencies": {
     "@solo/solid": "workspace:^",
-    "solid-js": "2.0.0-rc.15"
+    "solid-js": "2.0.0-rc.21"
   },
   "devDependencies": {
     "vite": "^7.0.0",

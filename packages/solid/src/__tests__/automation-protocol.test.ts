@@ -6,6 +6,7 @@ import {
   createSseDecoder,
   decodeSseChunk,
   encodeSse,
+  invalidRequestReply,
   parseRequest,
   parseWireMessage,
   PROTOCOL_VERSION,
@@ -100,6 +101,38 @@ describe("automation protocol", () => {
       parseRequest({ id: 1, method: "click", params: { x: "left" } })
     ).toThrow(AutomationError)
     expect(() => parseWireMessage({ hello: true })).toThrow(AutomationError)
+  })
+
+  it("validates requests without generating code at run time", () => {
+    // A binary built with `bun build --compile --aot --trim` may not contain
+    // `new Function`, so validation must never generate code.
+    const original = globalThis.Function
+    globalThis.Function = function () {
+      throw new Error("Function isn't in this executable")
+    } as unknown as FunctionConstructor
+    try {
+      const params = { x: 10, y: 20, deltaX: 0, deltaY: 3 }
+      expect(parseRequest({ id: 1, method: "scrollWheel", params }))
+        .toEqual({ id: 1, method: "scrollWheel", params })
+    } finally {
+      globalThis.Function = original
+    }
+  })
+
+  it("answers an invalid request with an error instead of dropping it", () => {
+    const raw = JSON.stringify({ id: 7, method: "click", params: { x: "left" } })
+    let error: unknown
+    try {
+      parseWireMessage(JSON.parse(raw))
+    } catch (caught) {
+      error = caught
+    }
+    const [reply] = decodeSseChunk(invalidRequestReply(raw, error) ?? "")
+    expect(reply).toMatchObject({ id: 7, error: { code: "Protocol" } })
+    expect((reply as { error: { message: string } }).error.message).toMatch(/Invalid params for click/)
+    // Without an id there is nobody to answer.
+    expect(invalidRequestReply("not json", new Error("bad"))).toBeUndefined()
+    expect(invalidRequestReply(JSON.stringify({ method: "click" }), new Error("bad"))).toBeUndefined()
   })
 
   it("keeps request and result types aligned for every method", () => {

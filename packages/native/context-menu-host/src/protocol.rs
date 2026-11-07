@@ -28,6 +28,9 @@ pub struct MenuRequest {
     pub x: f64,
     pub y: f64,
     pub items: Vec<MenuItem>,
+    /// Automation drives this menu: build it, but never open it.
+    #[serde(default)]
+    pub scripted: bool,
 }
 
 pub fn parse_request(json: &str) -> Result<MenuRequest, String> {

@@ -12,6 +12,9 @@
 //! per-line rendering needs and what makes a code block's height exact before
 //! any highlighting has run.
 
+// Without a `syntax-*` feature only the plain-text contract is used.
+#![cfg_attr(not(feature = "syntax"), allow(dead_code))]
+
 pub mod cache;
 
 use std::collections::BTreeSet;

@@ -3,7 +3,7 @@ import { createContextMenu, getSoloRenderer, Text } from "@solo/solid"
 import { createSolidNativeTestRoot, hasNativeTestRenderer } from "../testing.js"
 
 describe.skipIf(!hasNativeTestRenderer)("native context menu bridge", () => {
-  it("routes automation keys to the visible menu and settles owner destruction", async () => {
+  it("routes automation keys to the native menu and settles owner destruction", async () => {
     const root = createSolidNativeTestRoot()
     root.render(() => <div><Text>Owner</Text></div>)
     const owner = root.findByType("div")[0]!.id

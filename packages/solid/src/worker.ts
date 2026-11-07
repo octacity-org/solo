@@ -7,13 +7,22 @@
 /// thread's event loop, which never runs again once the main thread enters
 /// `runMainLoop`, so console output and stdio automation would stop.
 
-import { isMainThread, workerData } from "node:worker_threads"
-import { writeSync } from "node:fs"
 import { enableWorkerMainThread, requestProcessExit, runMainLoop } from "@solo/native"
+import { markStdinAsTTY, stdinIsTTY } from "./automation-host.js"
 
-const STDIN_IS_TTY = "soloStdinIsTTY"
-// Set for app Workers that `solo dev` (dev.ts) supervises.
-const DEV = "soloDev"
+declare const Bun: { readonly isMainThread: boolean }
+
+// What the main thread tells an app Worker, as JSON in this environment
+// variable: Bun's web Worker takes an `env`, and reading it needs no
+// `node:worker_threads`, whose import alone adds about 11 MB of Node streams
+// to a `bun build --compile` binary.
+const WORKER_ENV = "SOLO_APP_WORKER"
+
+interface WorkerData {
+  stdinIsTTY?: boolean
+  /** Set for app Workers that `solo dev` (dev.ts) supervises. */
+  dev?: boolean
+}
 
 /**
  * Whether the app runs in a Worker: always on macOS, where GPUI needs the
@@ -27,18 +36,33 @@ export function usesWorkerMode(): boolean {
   return true
 }
 
-/** Start an app Worker. `dev` leaves ending the process to `solo dev`. */
-export function createAppWorker(appUrl: URL, dev = false): Worker {
-  return new Worker(appUrl.href, {
-    // Bun extension: readable through node:worker_threads in the Worker.
-    workerData: { [STDIN_IS_TTY]: Boolean(process.stdin.isTTY), [DEV]: dev },
-  } as WorkerOptions)
+/** Options for an app Worker. `dev` leaves ending the process to `solo dev`. */
+export function appWorkerOptions(dev = false): WorkerOptions {
+  const data: WorkerData = { stdinIsTTY: stdinIsTTY(), dev }
+  return { env: { ...process.env, [WORKER_ENV]: JSON.stringify(data) } } as WorkerOptions
 }
 
-/** Main thread: start the app Worker, then run the native loop. Never returns. */
-export function runAppWorker(appUrl: URL): void {
+/** Read what the main thread passed, and drop it so child processes don't inherit it. */
+function takeWorkerData(): WorkerData {
+  const raw = process.env[WORKER_ENV]
+  delete process.env[WORKER_ENV]
+  return raw ? (JSON.parse(raw) as WorkerData) : {}
+}
+
+/** Start an app Worker. `dev` leaves ending the process to `solo dev`. */
+export function createAppWorker(appUrl: URL, dev = false): Worker {
+  return new Worker(appUrl.href, appWorkerOptions(dev))
+}
+
+/**
+ * Main thread: start the app Worker with `start`, then run the native loop.
+ * Never returns. The generated bootstrap passes a literal
+ * `new Worker(new URL(…, import.meta.url))` so that
+ * `bun build --compile --aot` can see the code the Worker runs.
+ */
+export function runAppWorker(start: () => Worker): void {
   enableWorkerMainThread()
-  createAppWorker(appUrl)
+  start()
   runMainLoop()
 }
 
@@ -49,19 +73,20 @@ export function runAppWorker(appUrl: URL): void {
  * supervisor decides instead, so a crashed app can wait for the next build.
  */
 export function prepareAppWorker(): void {
-  if (isMainThread) return
-  // A Worker's process.stdin.isTTY is undefined, which root.ts would read as
-  // "a controller owns stdin" and start automation for a human-run app.
-  if (workerData?.[STDIN_IS_TTY]) {
-    Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true })
-  }
-  // Written synchronously: the process ends right after the exit handler.
+  if (Bun.isMainThread) return
+  const data = takeWorkerData()
+  // A Worker's process.stdin.isTTY is undefined, which automation reads as
+  // "a controller owns stdin", and would start for a human-run app.
+  if (data.stdinIsTTY) markStdinAsTTY()
+  // The process ends right after the exit handler, so the text must be written
+  // synchronously. Bun's console.error is, to a file or a pipe, and unlike
+  // node:fs's writeSync it adds nothing to a `bun build --compile` binary.
   const fail = (error: unknown): void => {
     const text = error instanceof Error ? (error.stack ?? String(error)) : String(error)
-    writeSync(2, `${text}\n`)
+    console.error(text)
     process.exit(1)
   }
   process.on("uncaughtException", fail)
   process.on("unhandledRejection", fail)
-  if (!workerData?.[DEV]) process.on("exit", (code) => requestProcessExit(code))
+  if (!data.dev) process.on("exit", (code) => requestProcessExit(code))
 }
