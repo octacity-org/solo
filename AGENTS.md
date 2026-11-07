@@ -21,7 +21,8 @@ TypeScript / TSX
 - **`packages/native`** (`@solo/native`): Rust + napi-rs. Owns the retained
   element tree (`RetainedTree`), GPUI element building (`build_element`,
   `apply_styles`), text selection registry, Tree-sitter syntax
-  highlighting, markdown/diff rendering, native input editors, motion,
+  highlighting (opt-in `syntax-*` features, enabled by `test-support`;
+  release builds ship without grammars), markdown/diff rendering, native input editors, motion,
   automation host + GPU-backed test renderer (macOS), and the frame clock.
 - **`packages/core`** (`@solo/core`): private, framework-free TypeScript
   implementation. The
@@ -84,7 +85,14 @@ supported on macOS. Compile both files with `bun build --compile`.
   element-0 `applicationQuitRequested` event; the Worker calls
   `process.exit(0)`, with a 2 s fallback in Rust.
 - Use the web `Worker`, not `node:worker_threads`: the latter relays stdio
-  through the main thread's event loop, which stops in `runMainLoop`.
+  through the main thread's event loop, which stops in `runMainLoop`. Don't
+  import `node:worker_threads` in code that ships either; the main thread
+  passes data through the Worker's `env` (`SOLO_APP_WORKER`).
+- Shipped code stays off `node:fs` too: `bun build --compile --trim` keeps
+  Bun's fs (about 0.5 MB) for any use. Production builds import the platform
+  `.node` directly (`\0solo:native` in `vite.ts`), skipping napi-rs's loader
+  and its `readFileSync`; keep `NATIVE_EXPORTS` in step with `_native.ts`.
+  Its `NAPI_RS_NATIVE_LIBRARY_PATH` override is then unavailable.
 - `solo dev` (`packages/solid/src/cli.ts`, `dev.ts`) adds a supervisor Worker
   between main and the app: Vite rebuilds in watch mode, and each good build
   terminates the app Worker and starts a new one. `enableAppReload()` lets the
@@ -151,6 +159,11 @@ screenshots, and clock control. The public client is
 `@solo/solid/automation`;
 see `examples/tasks/diagnose-scroll.mts`.
 
+Production builds leave the server out unless `solidUniversal({ automation:
+true })` or `SOLO_AUTOMATION=1`: stdio keeps Node's streams in a compiled
+binary. `@solo/solid/vite` swaps `automation-host.ts` for `automation-off.ts`,
+so keep their exports identical and every stdin/stdout access in the host.
+
 Two renderers sit behind the same protocol. `TestSoloRenderer` is the
 GPU-backed native test harness; `SoloRenderer` is a live application, adapted
 to the same interface by `liveRendererAsTest`. Keep them symmetrical — a
@@ -195,6 +208,10 @@ token rather than being swallowed by the `UiCommand` channel.
   `cargo test --features test-support --lib --test layout_probe` in
   packages/native (plain `cargo test` skips the macOS GPU test-renderer
   tests). Use `bun run test`, not `bun test` (vitest).
+- Context-menu tests script their menus by default. Tests that open real
+  AppKit menus are opt-in: run them with `SOLO_INTERACTIVE_MENUS=1` on an idle
+  machine, since any click or key at the machine can dismiss or steer an open
+  menu.
 
 ## Native child views (`<webview>`)
 

@@ -13,7 +13,7 @@
       "name": "solid-counter",
       "dependencies": {
         "@solo/solid": "workspace:^",
-        "solid-js": "2.0.0-rc.15",
+        "solid-js": "2.0.0-rc.21",
       },
       "devDependencies": {
         "vite": "^7.0.0",
@@ -23,7 +23,7 @@
       "name": "tasks",
       "dependencies": {
         "@solo/solid": "workspace:^",
-        "solid-js": "2.0.0-rc.15",
+        "solid-js": "2.0.0-rc.21",
       },
       "devDependencies": {
         "vite": "^7.0.0",
@@ -34,7 +34,7 @@
       "name": "webview-preview",
       "dependencies": {
         "@solo/solid": "workspace:^",
-        "solid-js": "2.0.0-rc.15",
+        "solid-js": "2.0.0-rc.21",
       },
       "devDependencies": {
         "vite": "^7.0.0",
@@ -46,7 +46,6 @@
       "dependencies": {
         "@solo/native": "workspace:^",
         "eventsource-parser": "^4.1.0",
-        "zod": "^4.4.3",
       },
       "devDependencies": {
         "@types/node": "^25.3.3",
@@ -69,11 +68,11 @@
       },
       "dependencies": {
         "@babel/core": "^7",
-        "@solidjs/babel-plugin": "2.0.0-rc.15",
-        "@solidjs/universal": "2.0.0-rc.15",
+        "@solidjs/babel-plugin": "2.0.0-rc.21",
+        "@solidjs/universal": "2.0.0-rc.21",
         "@solo/core": "workspace:^",
         "@solo/native": "workspace:^",
-        "solid-js": "2.0.0-rc.15",
+        "solid-js": "2.0.0-rc.21",
       },
       "devDependencies": {
         "@babel/parser": "^7.29.7",
@@ -86,7 +85,7 @@
     },
   },
   "overrides": {
-    "@solidjs/signals": "2.0.0-rc.15",
+    "@solidjs/signals": "2.0.0-rc.21",
   },
   "packages": {
     "@babel/code-frame": ["@babel/code-frame@7.29.7", "", { "dependencies": { "@babel/helper-validator-identifier": "^7.29.7", "js-tokens": "^4.0.0", "picocolors": "^1.1.1" } }, "sha512-Aup7aUOfpbAUg2ROOJN6Iw5f9DMBlzu0mIkm/malLQFN/YQgO48wCj0Kxa3sEHJvPVFg7siR+qRInwXd2qhQKw=="],
@@ -403,11 +402,11 @@
 
     "@rollup/rollup-win32-x64-msvc": ["@rollup/rollup-win32-x64-msvc@4.59.0", "", { "os": "win32", "cpu": "x64" }, "sha512-2HRCml6OztYXyJXAvdDXPKcawukWY2GpR5/nxKp4iBgiO3wcoEGkAaqctIbZcNB6KlUQBIqt8VYkNSj2397EfA=="],
 
-    "@solidjs/babel-plugin": ["@solidjs/babel-plugin@2.0.0-rc.15", "", { "dependencies": { "@babel/helper-module-imports": "7.18.6", "@babel/plugin-syntax-jsx": "^7.18.6", "@babel/types": "^7.20.7", "html-entities": "2.3.3", "parse5": "^7.1.2" }, "peerDependencies": { "@babel/core": "^7.20.12", "@tsrx/core": "0.1.63" }, "optionalPeers": ["@tsrx/core"] }, "sha512-jsz08IPwxue2qQ6Nol2hnRN2M2z/Fymp7ka8L7XoV129L5N8l31s9tEWF/JXw+hbdGrrXTI3KM4kYvZdtma13A=="],
+    "@solidjs/babel-plugin": ["@solidjs/babel-plugin@2.0.0-rc.21", "", { "dependencies": { "@babel/helper-module-imports": "7.18.6", "@babel/plugin-syntax-jsx": "^7.18.6", "@babel/types": "^7.20.7", "html-entities": "2.3.3", "parse5": "^7.1.2" }, "peerDependencies": { "@babel/core": "^7.20.12 || ^8.0.0", "@tsrx/core": "0.1.63" }, "optionalPeers": ["@tsrx/core"] }, "sha512-LswbizBsWGJsroI8wAv70RraeXzxMru3VMAzm0hxIM9pg88lkhVAWmTHjRPZFj/y5EznqfQNaiiTxt+q84alrg=="],
 
-    "@solidjs/signals": ["@solidjs/signals@2.0.0-rc.15", "", {}, "sha512-rMhLaYnBvpb9sB3NJGPsqIxjgr0XKU2nvBS7jhWX2fKx+K/m5O0VoAuCgYuTie3BMBZU9vX08NdnFXg508pcew=="],
+    "@solidjs/signals": ["@solidjs/signals@2.0.0-rc.21", "", {}, "sha512-F1TUMO/nd1XC//+tcaWxibOOgXBHQGmNQnAeiDnpLh+1smnlwIgKF6pc20evlyfQwqf0gP6rH4sNEqCPBNcpgg=="],
 
-    "@solidjs/universal": ["@solidjs/universal@2.0.0-rc.15", "", { "peerDependencies": { "solid-js": "^2.0.0-rc.15" } }, "sha512-N3RWZgKOyAx8FY7mD1y2ShPbi1if2+9Eyx0IuQq6hNlwZyR1/grUXfSRO4UDfXqnjoM5AKxifhnSkG4S/rxtCg=="],
+    "@solidjs/universal": ["@solidjs/universal@2.0.0-rc.21", "", { "peerDependencies": { "solid-js": "^2.0.0-rc.21" } }, "sha512-XJOdoMcsl1Dp+v92pXZ2ooBZZCqRCO3y/5cAACf34wQzaJDS9qUPM5tO9XBCIJc+YEDBwKDqckNDmG9tTnYe+w=="],
 
     "@solo/core": ["@solo/core@workspace:packages/core"],
 
@@ -559,9 +558,9 @@
 
     "semver": ["semver@7.7.4", "", { "bin": { "semver": "bin/semver.js" } }, "sha512-vFKC2IEtQnVhpT78h1Yp8wzwrf8CM+MzKMHGJZfBtzhZNycRFnXsHk6E5TxIkkMsgNS7mdX3AGB7x2QM2di4lA=="],
 
-    "seroval": ["seroval@1.6.7", "", {}, "sha512-AeDcLh0yO2SFm9W71essgnSzLV9DI8ZH0x0knXn2DMnUZj728mpLbxjlbB6IqKCmqh8JA3cEqRyGoNkt584JcQ=="],
+    "seroval": ["seroval@1.7.0", "", {}, "sha512-FU+LUkmDzWNsJ6oubZFN3dGPKny53DRhPJG6nftEaXDL8MIn19+kEE1Gvc+63Go+qPOwVUlKIdKhsu2HN6tksw=="],
 
-    "seroval-plugins": ["seroval-plugins@1.6.7", "", { "peerDependencies": { "seroval": "^1.0" } }, "sha512-4Nk35ttD3DTDJW4hgw5StsVAPeU6qnDFnULAouw6tQ7oLTV/ICXrWpsXo2EE52eSP2joUMazbVf52mFEcADqRw=="],
+    "seroval-plugins": ["seroval-plugins@1.7.0", "", { "peerDependencies": { "seroval": "^1.0" } }, "sha512-WM4rArfPtLZriTuxC5DBvNulEwAaRcjNe/dkMOEesOcuvXf5nEwKf5Bw3AT92WHohqcc45+57GdtsCuBTI0mjw=="],
 
     "siginfo": ["siginfo@2.0.0", "", {}, "sha512-ybx0WO1/8bSBLEWXZvEd7gMW3Sn3JFlW3TvX1nREbDLRNQNaeNN8WK0meBwPdAaOI7TtRRRJn/Es1zhrrCHu7g=="],
 
@@ -569,7 +568,7 @@
 
     "solid-counter": ["solid-counter@workspace:examples/solid-counter"],
 
-    "solid-js": ["solid-js@2.0.0-rc.15", "", { "dependencies": { "@solidjs/signals": "^2.0.0-rc.15", "csstype": "^3.1.0", "seroval": "1.6.7", "seroval-plugins": "1.6.7" } }, "sha512-HXiWAEG5Rjp5C7reElUlvdriIadcbpwWwVdztTf0wuxeirw49rGuIzVbSRn06p6GjlINwi5d24Z46b478hNdvw=="],
+    "solid-js": ["solid-js@2.0.0-rc.21", "", { "dependencies": { "@solidjs/signals": "^2.0.0-rc.21", "csstype": "^3.1.0", "seroval": "1.7.0", "seroval-plugins": "1.7.0" } }, "sha512-0Z8/qiJKnK6A2g8QspGthwxR0W8WauMOD2/LQtNmxBT8gpZkKaXmo/fdek/+cB+84w4HYejWJixSAn4fcAI0Uw=="],
 
     "source-map-js": ["source-map-js@1.2.1", "", {}, "sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA=="],
 
@@ -610,8 +609,6 @@
     "why-is-node-running": ["why-is-node-running@2.3.0", "", { "dependencies": { "siginfo": "^2.0.0", "stackback": "0.0.2" }, "bin": { "why-is-node-running": "cli.js" } }, "sha512-hUrmaWBdVDcxvYqnyh09zunKzROWjbZTiNy8dBEjkS7ehEDQibXJ7XvlmtbwuTclUiIyN+CyXQD4Vmko8fNm8w=="],
 
     "yallist": ["yallist@3.1.1", "", {}, "sha512-a4UGQaWPH59mOXUYnAG2ewncQS4i4F43Tv3JoAM+s2VDAmS9NsK8GpDMLrCHPksFT7h3K6TOoUNn2pb7RoXx4g=="],
-
-    "zod": ["zod@4.4.3", "", {}, "sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ=="],
 
     "@babel/core/semver": ["semver@6.3.1", "", { "bin": { "semver": "bin/semver.js" } }, "sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA=="],
 

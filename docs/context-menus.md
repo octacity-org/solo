@@ -65,8 +65,8 @@ Bun extracts embedded `.node` files into temporary storage, so including only
 the `.node` binary is insufficient for packaged context menus.
 
 Each menu session copies that helper into a private temporary directory before
-launching it. This avoids the bundled-helper keyboard-tracking failure covered
-by the packaged regression test. The copy is removed after the child exits;
+launching it. This avoids an AppKit keyboard-tracking failure in a helper that
+inherits the enclosing `.app` bundle's identity. The copy is removed after the child exits;
 `TMPDIR` selects its disk. If the parent exits first, EOF dismisses the child,
 which removes its own staged executable and empty directory before exiting.
 An independent pipe-disconnection watchdog also exits the helper if AppKit
@@ -78,5 +78,20 @@ has no Dock icon. Menu labels contain application data, so the helper receives
 no shell commands, paths chosen by menu descriptors, or network instructions.
 
 The existing keyboard automation methods route to the menu while it is open.
-GPU-backed tests and the live renderer share this behavior. Physical mouse and
-keyboard input are handled by AppKit.
+Physical mouse and keyboard input are handled by AppKit.
+
+An open menu is a system-wide modal: a click or key from the person at the
+machine can dismiss or steer it. Once an automation client attaches (its
+`initialize` request), menus are scripted instead. The helper builds the
+`NSMenu` and chooses through the item's action, but never opens it or
+activates itself. It applies arrow keys, Enter, Escape and typed prefixes with
+AppKit's rules: arrows skip disabled items and stop at the ends, Up with nothing
+highlighted starts at the bottom, and Enter with nothing highlighted cancels.
+One difference: a typed prefix that matches no item leaves the highlight where
+it was, while AppKit jumps to a nearby item. GPU-backed tests always script
+their menus.
+
+The tests that open real menus on screen are skipped unless
+`SOLO_INTERACTIVE_MENUS=1` is set; run them on an idle machine. They cover
+AppKit's keyboard tracking, including in the packaged app's staged helper.
+The packaged test gets real menus by skipping `initialize`.

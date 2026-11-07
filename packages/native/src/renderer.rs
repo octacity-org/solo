@@ -792,6 +792,7 @@ fn open_macos_window(cx: &mut gpui::App) -> Result<gpui::WindowHandle<SoloView>>
 #[cfg(target_os = "macos")]
 fn reattach_macos_application(config: MacWindowConfig, cx: &mut gpui::App) -> Result<()> {
     crate::context_menu::cancel_all();
+    crate::context_menu::detach_automation();
     crate::native_view::with_registry(|registry| registry.destroy_all());
     // The previous app's other windows go with it. Taken out of the registry
     // first, so their close never reaches the new app as a windowClosed event.
@@ -5697,8 +5698,9 @@ impl SoloRenderer {
             .and_then(|value| value["elementId"].as_f64())
             .and_then(|id| to_element_id(id).ok());
         let target = owner.map_or(WindowTarget::Main, |id| self.window_of(id));
+        let scripted = crate::context_menu::automation_attached();
         let task = update_window_in(target, move |_view, window, _cx| {
-            crate::context_menu::show(&json, &tree.lock().unwrap(), window)
+            crate::context_menu::show(&json, &tree.lock().unwrap(), window, scripted)
         })??;
         Ok(AsyncTask::new(task))
     }
@@ -5707,6 +5709,14 @@ impl SoloRenderer {
     pub fn cancel_context_menu(&self, request_id: f64) -> Result<()> {
         crate::context_menu::cancel(to_element_id(request_id)?);
         Ok(())
+    }
+
+    /// An automation client attached. Context menus opened from now on are
+    /// scripted: they take keys only from automation and never open on screen,
+    /// so they stay independent of the user's own input and of app focus.
+    #[napi]
+    pub fn attach_automation(&self) {
+        crate::context_menu::attach_automation();
     }
 
     /// Evaluate an expression in a mounted macOS WebView without blocking JS.

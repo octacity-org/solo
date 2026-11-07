@@ -17,7 +17,8 @@ use objc2_core_foundation::{
 };
 use objc2_foundation::{NSObject, NSObjectProtocol, NSProcessInfo, NSString};
 
-use crate::protocol::{parse_request, MenuItem};
+use crate::protocol::{parse_request, MenuItem, MenuRequest};
+use crate::scripted::{Navigator, Step};
 
 struct TargetIvars {
     selected: Cell<Option<usize>>,
@@ -110,8 +111,9 @@ unsafe extern "C-unwind" fn check_cancel(_: *mut CFRunLoopTimer, info: *mut c_vo
     if !context.target.ivars().tracking.get() {
         return;
     }
-    // Automation uses real NSEvents so AppKit retains responsibility for
-    // highlighting, skipping disabled items, keyboard selection and Escape.
+    // Keys for an open menu (automation that never sent `initialize`) are real
+    // NSEvents, so AppKit handles highlighting, disabled items and Escape.
+    // Depends on focus; attached automation scripts its menus instead.
     if let Ok(command) = context.keys.try_recv() {
         let Some(key) = command["key"].as_str() else {
             return;
@@ -173,6 +175,8 @@ pub fn run() -> Result<(), String> {
             }
         }
         reader_cancelled.store(true, Ordering::Release);
+        // Ends a scripted menu's wait for keys.
+        drop(key_sender);
         // If the parent has died, nobody remains to enforce its kill deadline.
         // This thread is independent of AppKit: even stuck menu tracking must
         // release the private executable and stop after owner disconnection.
@@ -186,8 +190,11 @@ pub fn run() -> Result<(), String> {
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
     let main_menu = NSMenu::initWithTitle(NSMenu::alloc(mtm), &NSString::from_str(""));
     app.setMainMenu(Some(&main_menu));
-    #[allow(deprecated)]
-    app.activateIgnoringOtherApps(true);
+    // A scripted menu never opens, so it leaves the frontmost app alone.
+    if !request.scripted {
+        #[allow(deprecated)]
+        app.activateIgnoringOtherApps(true);
+    }
 
     let menu = NSMenu::initWithTitle(NSMenu::alloc(mtm), &NSString::from_str(""));
     menu.setAutoenablesItems(false);
@@ -219,6 +226,23 @@ pub fn run() -> Result<(), String> {
                 menu.addItem(&item);
             }
         }
+    }
+    if request.scripted {
+        let _ = writeln!(std::io::stdout(), "{{\"ready\":true}}");
+        let mut navigator = Navigator::default();
+        // Ends on Enter, Escape, or parent EOF (the reader drops the sender).
+        while let Ok(command) = keys.recv() {
+            match navigator.key(&request.items, command["key"].as_str().unwrap_or_default()) {
+                Step::Continue => {}
+                Step::Cancel => break,
+                // Through the item's action, as a click would choose it.
+                Step::Select(index) => {
+                    menu.performActionForItemAtIndex(index as isize);
+                    break;
+                }
+            }
+        }
+        return finish(&request, &menu, &target);
     }
     let mut cancellation = Cancellation {
         menu: &menu,
@@ -265,6 +289,10 @@ pub fn run() -> Result<(), String> {
         app.run();
     }
     drop(timer);
+    finish(&request, &menu, &target)
+}
+
+fn finish(request: &MenuRequest, menu: &NSMenu, target: &MenuTarget) -> Result<(), String> {
     menu.setDelegate(None);
     let selected = target
         .ivars()

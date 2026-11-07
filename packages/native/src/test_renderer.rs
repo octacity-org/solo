@@ -690,7 +690,8 @@ impl TestSoloRenderer {
             .and_then(|value| value["elementId"].as_f64());
         with_window(self.window_root_of(owner)?, |cx, window, _view| {
             cx.update_window(window, |_, window, _app| {
-                crate::context_menu::show(&json, &self.tree.lock().unwrap(), window)
+                // Every menu in this harness is automation's.
+                crate::context_menu::show(&json, &self.tree.lock().unwrap(), window, true)
             })
             .map_err(|error| Error::from_reason(error.to_string()))?
         })

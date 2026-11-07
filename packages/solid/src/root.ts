@@ -11,14 +11,9 @@ import {
   registerEventHandler,
   unregisterEventHandler,
 } from "@solo/core"
-import {
-  InProcessBackend,
-  liveRendererAsTest,
-  serveAutomationStdio,
-} from "@solo/core/automation"
 import type { NativeRenderer } from "@solo/core"
-import type { LiveAutomationRenderer } from "@solo/core/automation"
 import type { Element as SolidElement } from "solid-js"
+import { automateWhenPiped } from "./automation-host.js"
 import { mount, mountWindowRoot, resetIdCounter } from "./runtime.js"
 
 export interface Root {
@@ -109,11 +104,6 @@ export function setWindowHost(renderer: NativeRenderer | undefined): void {
   renderSlot().renderer = renderer
 }
 
-/** Serve the automation protocol over stdio when a controller owns stdin. */
-export function enableAutomation(renderer: LiveAutomationRenderer): void {
-  serveAutomationStdio(new InProcessBackend(liveRendererAsTest(renderer)))
-}
-
 function createNativeRenderer(
   onEvent?: (event: EventPayload) => void
 ): SoloRenderer {
@@ -132,14 +122,7 @@ function createNativeRenderer(
       onEvent?.(event)
     }
   })
-  // A pipe means a controller owns stdin. A TTY is a human keyboard.
-  if (!process.stdin.isTTY) {
-    const init = renderer.init.bind(renderer)
-    renderer.init = (options) => {
-      init(options)
-      enableAutomation(renderer)
-    }
-  }
+  automateWhenPiped(renderer)
   return renderer
 }
 

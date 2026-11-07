@@ -20,6 +20,6 @@
   },
   "dependencies": {},
   "overrides": {
-    "@solidjs/signals": "2.0.0-rc.15"
+    "@solidjs/signals": "2.0.0-rc.21"
   }
 }

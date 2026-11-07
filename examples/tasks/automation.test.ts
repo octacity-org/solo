@@ -8,6 +8,9 @@
 /// its text input handler during paint. So this suite verifies launch/
 /// handshake, tree lookup, scroll positioning and cleanup everywhere, and
 /// pins down the paint-dependent behaviour per platform.
+///
+/// Drives `dist/`, built with `bun run build:automation`: a plain production
+/// build leaves stdio automation out.
 
 import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"

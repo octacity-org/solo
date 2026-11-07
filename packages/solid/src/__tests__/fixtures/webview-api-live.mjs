@@ -4,9 +4,9 @@ import assert from "node:assert/strict"
 import { setTimeout as delay } from "node:timers/promises"
 import { isMainThread } from "node:worker_threads"
 import { SoloRenderer } from "@solo/native"
-import { prepareAppWorker, runAppWorker } from "../../worker.ts"
+import { createAppWorker, prepareAppWorker, runAppWorker } from "../../worker.ts"
 
-if (isMainThread) runAppWorker(new URL(import.meta.url))
+if (isMainThread) runAppWorker(() => createAppWorker(new URL(import.meta.url)))
 prepareAppWorker()
 
 const events = []

@@ -33,7 +33,7 @@ if (fixture === "background-lifecycle") {
 mkdirSync(join(output, "node_modules", "@solo"), { recursive: true })
 symlinkSync(root, join(output, "node_modules", "@solo", "solid"), "dir")
 await build({
-  root, configFile: false, plugins: [solidUniversal()],
+  root, configFile: false, plugins: [solidUniversal({ automation: true })],
   ssr: { noExternal: true },
   build: { ssr: `src/__tests__/fixtures/${fixture}.tsx`, outDir: join(output, "js"), target: "node20" },
 })

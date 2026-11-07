@@ -9,6 +9,10 @@ import { expect } from "vitest"
 
 export const isCI = !!process.env.CI
 
+/** Opt in to tests that open real AppKit menus. An open menu is a system-wide
+ *  modal, so run them with SOLO_INTERACTIVE_MENUS=1 on an idle machine. */
+export const interactiveMenus = process.env.SOLO_INTERACTIVE_MENUS === "1"
+
 /** Where visual tests write their PNGs. Kept in the repo (gitignored) rather
  *  than /tmp so the output can actually be looked at after a run. */
 export const SHOTS_DIR = path.resolve(

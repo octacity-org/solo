@@ -6,7 +6,7 @@
 /// would otherwise leak into the next message.
 
 import { createParser, type EventSourceMessage } from "eventsource-parser"
-import { z } from "zod"
+import { SchemaError, v, type Infer, type Schema } from "./schema.js"
 
 export const PROTOCOL_VERSION = 1 as const
 
@@ -35,37 +35,35 @@ export class AutomationError extends Error {
   }
 }
 
-const errorCodeSchema = z.enum(automationErrorCodes)
-
-const pointSchema = z.object({
-  x: z.number(),
-  y: z.number(),
+const pointSchema = v.object({
+  x: v.number(),
+  y: v.number(),
   /** Window-local coordinates in the window of this element; default main. */
-  elementId: z.number().optional(),
+  elementId: v.number().optional(),
 })
 
-const buttonSchema = z.number().int().min(0).max(2).optional()
+const buttonSchema = v.number().int().min(0).max(2).optional()
 
-export const boundsSchema = z.object({
-  x: z.number(),
-  y: z.number(),
-  width: z.number(),
-  height: z.number(),
+export const boundsSchema = v.object({
+  x: v.number(),
+  y: v.number(),
+  width: v.number(),
+  height: v.number(),
 })
 
-export type ElementBounds = z.infer<typeof boundsSchema>
+export type ElementBounds = Infer<typeof boundsSchema>
 
-export const treeNodeSchema: z.ZodType<TreeNode> = z.lazy(() =>
-  z.object({
-    id: z.number(),
-    type: z.string(),
-    text: z.string().optional(),
-    testId: z.string().optional(),
-    style: z.record(z.string(), z.unknown()).optional(),
-    events: z.array(z.string()).optional(),
-    customProps: z.record(z.string(), z.unknown()).optional(),
+export const treeNodeSchema: Schema<TreeNode> = v.lazy(() =>
+  v.object({
+    id: v.number(),
+    type: v.string(),
+    text: v.string().optional(),
+    testId: v.string().optional(),
+    style: v.record(v.unknown()).optional(),
+    events: v.array(v.string()).optional(),
+    customProps: v.record(v.unknown()).optional(),
     bounds: boundsSchema.optional(),
-    children: z.array(treeNodeSchema).optional(),
+    children: v.array(treeNodeSchema).optional(),
   })
 )
 
@@ -81,31 +79,31 @@ export interface TreeNode {
   children?: TreeNode[]
 }
 
-const okSchema = z.object({ ok: z.literal(true) })
+const okSchema = v.object({ ok: v.literal(true) })
 
-const capabilitiesSchema = z.array(
-  z.enum(["input", "screenshot", "clock", "tree"])
+const capabilitiesSchema = v.array(
+  v.enum(["input", "screenshot", "clock", "tree"])
 )
 
 /** Single source of truth for method names, params, and results. */
 export const methods = {
   initialize: {
-    params: z.object({
-      protocolVersion: z.literal(PROTOCOL_VERSION),
-      client: z.string(),
+    params: v.object({
+      protocolVersion: v.literal(PROTOCOL_VERSION),
+      client: v.string(),
     }),
-    result: z.object({
-      protocolVersion: z.literal(PROTOCOL_VERSION),
-      pid: z.number().int(),
+    result: v.object({
+      protocolVersion: v.literal(PROTOCOL_VERSION),
+      pid: v.number().int(),
       capabilities: capabilitiesSchema,
-      window: z.object({
-        width: z.number(),
-        height: z.number(),
+      window: v.object({
+        width: v.number(),
+        height: v.number(),
       }),
     }),
   },
   cancel: {
-    params: z.object({ id: z.number().int() }),
+    params: v.object({ id: v.number().int() }),
     result: okSchema,
   },
   click: {
@@ -126,108 +124,108 @@ export const methods = {
   },
   scrollWheel: {
     params: pointSchema.extend({
-      deltaX: z.number(),
-      deltaY: z.number(),
+      deltaX: v.number(),
+      deltaY: v.number(),
     }),
     result: okSchema,
   },
   keystrokes: {
-    params: z.object({
-      keys: z.string(),
-      elementId: z.number().optional(),
+    params: v.object({
+      keys: v.string(),
+      elementId: v.number().optional(),
     }),
     result: okSchema,
   },
   keyDown: {
-    params: z.object({
-      key: z.string(),
-      isHeld: z.boolean().optional(),
-      elementId: z.number().optional(),
+    params: v.object({
+      key: v.string(),
+      isHeld: v.boolean().optional(),
+      elementId: v.number().optional(),
     }),
     result: okSchema,
   },
   keyUp: {
-    params: z.object({
-      key: z.string(),
-      elementId: z.number().optional(),
+    params: v.object({
+      key: v.string(),
+      elementId: v.number().optional(),
     }),
     result: okSchema,
   },
   focus: {
-    params: z.object({ elementId: z.number() }),
+    params: v.object({ elementId: v.number() }),
     result: okSchema,
   },
   blur: {
-    params: z.object({}),
+    params: v.object({}),
     result: okSchema,
   },
   scrollTo: {
-    params: z.object({
-      elementId: z.number(),
-      x: z.number(),
-      y: z.number(),
+    params: v.object({
+      elementId: v.number(),
+      x: v.number(),
+      y: v.number(),
     }),
     result: okSchema,
   },
   getScrollOffset: {
-    params: z.object({ elementId: z.number() }),
-    result: z.object({
-      offset: z.tuple([z.number(), z.number()]).nullable(),
+    params: v.object({ elementId: v.number() }),
+    result: v.object({
+      offset: v.tuple([v.number(), v.number()]).nullable(),
     }),
   },
   getTree: {
-    params: z.object({}),
-    result: z.object({
+    params: v.object({}),
+    result: v.object({
       tree: treeNodeSchema.nullable(),
       /** Windows opened with openWindow, in opening order. */
-      windows: z.array(treeNodeSchema).optional(),
+      windows: v.array(treeNodeSchema).optional(),
     }),
   },
   getPaintedText: {
-    params: z.object({}),
-    result: z.object({ text: z.array(z.string()) }),
+    params: v.object({}),
+    result: v.object({ text: v.array(v.string()) }),
   },
   getAllText: {
-    params: z.object({}),
-    result: z.object({ text: z.array(z.string()) }),
+    params: v.object({}),
+    result: v.object({ text: v.array(v.string()) }),
   },
   getBounds: {
-    params: z.object({ elementId: z.number() }),
-    result: z.object({ bounds: boundsSchema.nullable() }),
+    params: v.object({ elementId: v.number() }),
+    result: v.object({ bounds: boundsSchema.nullable() }),
   },
   getSelectedText: {
-    params: z.object({}),
-    result: z.object({ text: z.string().nullable() }),
+    params: v.object({}),
+    result: v.object({ text: v.string().nullable() }),
   },
   clearSelection: {
-    params: z.object({}),
+    params: v.object({}),
     result: okSchema,
   },
   screenshot: {
-    params: z.object({ path: z.string() }),
-    result: z.object({ path: z.string() }),
+    params: v.object({ path: v.string() }),
+    result: v.object({ path: v.string() }),
   },
   clockPause: {
-    params: z.object({}),
-    result: z.object({ nowMs: z.number() }),
+    params: v.object({}),
+    result: v.object({ nowMs: v.number() }),
   },
   clockSet: {
-    params: z.object({ nowMs: z.number().nonnegative() }),
-    result: z.object({ nowMs: z.number() }),
+    params: v.object({ nowMs: v.number().nonnegative() }),
+    result: v.object({ nowMs: v.number() }),
   },
   clockFastForward: {
-    params: z.object({ deltaMs: z.number().nonnegative() }),
-    result: z.object({ nowMs: z.number() }),
+    params: v.object({ deltaMs: v.number().nonnegative() }),
+    result: v.object({ nowMs: v.number() }),
   },
   clockResume: {
-    params: z.object({}),
-    result: z.object({ nowMs: z.number() }),
+    params: v.object({}),
+    result: v.object({ nowMs: v.number() }),
   },
 } as const
 
 export type MethodName = keyof typeof methods
-export type ParamsOf<M extends MethodName> = z.infer<(typeof methods)[M]["params"]>
-export type ResultOf<M extends MethodName> = z.infer<(typeof methods)[M]["result"]>
+export type ParamsOf<M extends MethodName> = Infer<(typeof methods)[M]["params"]>
+export type ResultOf<M extends MethodName> = Infer<(typeof methods)[M]["result"]>
 
 export type AutomationRequest<M extends MethodName = MethodName> = {
   [K in M]: { id: number; method: K; params: ParamsOf<K> }
@@ -287,15 +285,14 @@ export function parseRequest(value: unknown): AutomationRequest {
     throw new AutomationError("Protocol", "Request id must be an integer")
   }
   const method = parseMethodName(value.method)
-  const parsed = methods[method].params.safeParse(value.params)
-  if (!parsed.success) {
-    throw new AutomationError(
-      "Protocol",
-      `Invalid params for ${method}: ${parsed.error.message}`,
-      parsed.error.issues
-    )
+  let params: unknown
+  try {
+    params = methods[method].params.parse(value.params)
+  } catch (error) {
+    if (!(error instanceof SchemaError)) throw error
+    throw new AutomationError("Protocol", `Invalid params for ${method}: ${error.message}`, { path: error.path })
   }
-  return { id: value.id, method, params: parsed.data } as AutomationRequest
+  return { id: value.id, method, params } as AutomationRequest
 }
 
 export function parseResponse(value: unknown): AutomationResponse {
@@ -309,14 +306,14 @@ export function parseResponse(value: unknown): AutomationResponse {
     if (!isObject(value.error) || typeof value.error.message !== "string") {
       throw new AutomationError("Protocol", "Invalid error payload")
     }
-    const code = errorCodeSchema.safeParse(value.error.code)
-    if (!code.success) {
+    const code = value.error.code
+    if (typeof code !== "string" || !automationErrorCodes.includes(code as AutomationErrorCode)) {
       throw new AutomationError("Protocol", "Invalid error code")
     }
     return {
       id: value.id,
       error: {
-        code: code.data,
+        code: code as AutomationErrorCode,
         message: value.error.message,
         ...(value.error.data === undefined ? {} : { data: value.error.data }),
       },
@@ -333,17 +330,17 @@ export function parseServerEvent(value: unknown): AutomationServerEvent {
     throw new AutomationError("Protocol", "Event must have an event name")
   }
   if (value.event === "console") {
-    const params = z.object({ text: z.string() }).parse(value.params)
+    const params = v.object({ text: v.string() }).parse(value.params)
     return { event: "console", params }
   }
   if (value.event === "frame") {
-    const params = z
-      .object({ n: z.number(), path: z.string().optional() })
+    const params = v
+      .object({ n: v.number(), path: v.string().optional() })
       .parse(value.params)
     return { event: "frame", params }
   }
   if (value.event === "closed") {
-    const params = z.object({ reason: z.string() }).parse(value.params)
+    const params = v.object({ reason: v.string() }).parse(value.params)
     return { event: "closed", params }
   }
   throw new AutomationError(

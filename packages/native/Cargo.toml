@@ -74,9 +74,10 @@ x11rb = "0.13"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 [features]
-# Cargo's default build keeps Solo's complete developer surface. The
-# application release script uses --no-default-features for the lean runtime.
-default = ["automation", "syntax-all"]
+# Syntax highlighting is opt-in: its grammars are about 8 MB of the library,
+# and without them `code`, `diff` and markdown code blocks render plain.
+# test-support enables every grammar so the highlighter stays tested.
+default = ["automation"]
 automation = []
 profiling = ["gpui/profiler"]
 syntax = ["dep:tree-sitter", "dep:tree-sitter-highlight"]

@@ -34,6 +34,24 @@ thread_local! { static ACTIVE: RefCell<Option<ActiveMenu>> = const { RefCell::ne
 // not just the menu currently accepting input.
 thread_local! { static PENDING: RefCell<Vec<Weak<Session>>> = const { RefCell::new(Vec::new()) }; }
 
+/// Set when an automation client attaches. Its menus are scripted: the helper
+/// builds the AppKit menu but never opens it, because an open menu is a
+/// system-wide modal that the person at the machine could dismiss or steer.
+static AUTOMATION_ATTACHED: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn attach_automation() {
+    AUTOMATION_ATTACHED.store(true, Ordering::Release);
+}
+
+/// A reloaded app is unattached until its own client sends `initialize`.
+pub(crate) fn detach_automation() {
+    AUTOMATION_ATTACHED.store(false, Ordering::Release);
+}
+
+pub(crate) fn automation_attached() -> bool {
+    AUTOMATION_ATTACHED.load(Ordering::Acquire)
+}
+
 pub(crate) fn has_pending_cleanup() -> bool {
     PENDING.with(|pending| {
         let mut pending = pending.borrow_mut();
@@ -110,7 +128,7 @@ pub(crate) fn cancel_destroyed(ids: &[u64]) {
     }
 }
 
-/// Automation follows the native menu's keyboard focus while it is tracking.
+/// While a menu is pending, automation keys go to it instead of the window.
 #[cfg(feature = "automation")]
 pub(crate) fn dispatch_keys(keys: &[gpui::Keystroke]) -> bool {
     if crate::renderer::worker_main::must_forward() {
@@ -191,10 +209,12 @@ fn helper_path() -> Result<PathBuf> {
     Ok(parent.join(name))
 }
 
+/// `scripted` menus take their keys only from automation; see `attach_automation`.
 pub(crate) fn show(
     json: &str,
     tree: &crate::retained_tree::RetainedTree,
     window: &gpui::Window,
+    scripted: bool,
 ) -> Result<ContextMenuTask> {
     if crate::macos_shutdown::is_quitting() {
         return Err(Error::from_reason("Application is quitting"));
@@ -245,6 +265,7 @@ pub(crate) fn show(
     let point = host_window.convertPointToScreen(view.convertPoint_toView(point, None));
     value["x"] = point.x.into();
     value["y"] = point.y.into();
+    value["scripted"] = scripted.into();
     let request = protocol::parse_request(&value.to_string()).map_err(Error::from_reason)?;
     let payload = serde_json::to_string(&request).map_err(|e| Error::from_reason(e.to_string()))?;
     let helper = helper_path()?;

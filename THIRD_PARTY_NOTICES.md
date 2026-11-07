@@ -30,8 +30,9 @@ is ported from **[Comet](https://github.com/zeronsh/comet)** (MIT, Copyright (c)
 
 ## Bundled grammars
 
-Syntax highlighting bundles the following Tree-sitter components. Versions are
-pinned in `packages/native/Cargo.lock`.
+Syntax highlighting, when built with a `syntax-*` feature, bundles the
+following Tree-sitter components. Versions are pinned in
+`packages/native/Cargo.lock`.
 
 | Component | License | Source |
 | --- | --- | --- |

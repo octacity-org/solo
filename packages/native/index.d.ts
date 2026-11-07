@@ -186,6 +186,12 @@ export declare class SoloRenderer {
   /** Present a lifecycle-managed native menu without blocking the app loop. */
   showContextMenu(json: string): Promise<string | null>
   cancelContextMenu(requestId: number): void
+  /**
+   * An automation client attached. Context menus opened from now on are
+   * scripted: they take keys only from automation and never open on screen,
+   * so they stay independent of the user's own input and of app focus.
+   */
+  attachAutomation(): void
   /** Evaluate an expression in a mounted macOS WebView without blocking JS. */
   evaluateWebviewJavaScript(elementId: number, script: string): Promise<string>
   /** Resolve when the intended macOS WebView document has finished loading. */

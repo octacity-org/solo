@@ -33,8 +33,6 @@ export type {
   WebviewValue,
 } from "./webview.js"
 
-export {
-  createSolidNativeTestRoot,
-  hasNativeTestRenderer,
-} from "./testing.js"
-export type { SolidNativeTestRoot } from "./testing.js"
+// The test harness lives only in `@solo/solid/testing`: testing.ts looks up
+// the native test renderer at load time, which would put napi-rs's loader and
+// its `node:fs`/`child_process` into every app bundle.
