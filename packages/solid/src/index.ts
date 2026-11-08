@@ -5,6 +5,8 @@ export type { AppWindow, OpenWindowOptions, Root, RenderOptions } from "./root.j
 export { registerApplicationCommand } from "./commands.js"
 export { configureMenuBar } from "./menu-bar.js"
 export type { MenuBarConfiguration, MenuBarItem } from "./menu-bar.js"
+export { addRecentDocument, configureDockMenu, onApplicationReopen } from "./dock.js"
+export type { DockMenuItem } from "./dock.js"
 export { createContextMenu } from "./context-menu.js"
 export type { ContextMenu, ContextMenuAnchor, ContextMenuItem } from "./context-menu.js"
 export type { ApplicationCommand } from "./commands.js"

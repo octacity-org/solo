@@ -123,7 +123,7 @@ fn validate_absolute_path(path: &str) -> Result<()> {
 }
 
 /// Finder fails silently for a missing path, so report it before dispatch.
-fn validate_existing_path(path: &str) -> Result<()> {
+pub(crate) fn validate_existing_path(path: &str) -> Result<()> {
     validate_absolute_path(path)?;
     std::fs::symlink_metadata(path)
         .map(|_| ())

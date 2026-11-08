@@ -53,6 +53,7 @@ const NATIVE_ID = "\0solo:native"
 // What _native.ts re-exports; a test keeps the two equal.
 const NATIVE_EXPORTS = [
   "SoloRenderer",
+  "addRecentDocument",
   "enableWorkerMainThread",
   "moveToTrash",
   "openExternalUrl",
@@ -62,6 +63,7 @@ const NATIVE_EXPORTS = [
   "requestProcessExit",
   "revealPath",
   "runMainLoop",
+  "setDockMenu",
   "writeClipboardText",
 ]
 const BOOT_ID = "\0solo:boot"

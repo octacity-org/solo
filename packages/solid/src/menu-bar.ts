@@ -25,18 +25,67 @@ export interface MenuBarConfiguration {
 }
 
 interface ActiveConfiguration {
-  actions: Map<string, { enabled: boolean; run: () => void }>
+  actions: Map<string, MenuAction>
 }
 
 const byRenderer = new WeakMap<NativeRenderer, ActiveConfiguration>()
 let activeConfiguration: ActiveConfiguration | undefined
 let nextToken = 0
 
-function validateText(value: unknown, name: string): string {
+function validateText(value: unknown, name: string, noun = "Menu-bar"): string {
   if (typeof value !== "string" || !value.trim()) {
-    throw new TypeError(`Menu-bar ${name} must be a non-empty string`)
+    throw new TypeError(`${noun} ${name} must be a non-empty string`)
   }
   return value
+}
+
+type MenuAction = { enabled: boolean; run: () => void }
+
+/**
+ * Validate menu items and give each action a fresh token, which the native
+ * menu sends back when it is chosen. Shared with the Dock menu; `noun`
+ * names the menu in errors.
+ */
+export function toNativeMenuItems(
+  items: readonly MenuBarItem[] | undefined,
+  noun: string,
+): { items: Array<Record<string, unknown>>; actions: Map<string, MenuAction> } {
+  if (items !== undefined && !Array.isArray(items)) {
+    throw new TypeError(`${noun} items must be an array`)
+  }
+  const native: Array<Record<string, unknown>> = []
+  const ids = new Set<string>()
+  const actions = new Map<string, MenuAction>()
+  for (const item of items ?? []) {
+    if (!item || typeof item !== "object") throw new TypeError(`${noun} items must be objects`)
+    if ("type" in item && item.type === "separator") {
+      native.push({ type: "separator" })
+      continue
+    }
+    if ("type" in item && item.type === "status") {
+      native.push({ type: "status", label: validateText(item.label, "status label", noun) })
+      continue
+    }
+    if (!("id" in item) || !("label" in item) || !("run" in item)) {
+      throw new TypeError(`${noun} actions require id, label, and run`)
+    }
+    const id = validateText(item.id, "action ID", noun)
+    const label = validateText(item.label, "action label", noun)
+    if (ids.has(id)) throw new TypeError(`Duplicate ${noun.toLowerCase()} action ID: ${id}`)
+    ids.add(id)
+    if (typeof item.run !== "function") throw new TypeError(`${noun} action run must be a function`)
+    if (item.enabled !== undefined && typeof item.enabled !== "boolean") {
+      throw new TypeError(`${noun} action enabled must be boolean`)
+    }
+    if (item.checked !== undefined && typeof item.checked !== "boolean") {
+      throw new TypeError(`${noun} action checked must be boolean`)
+    }
+    const enabled = item.enabled ?? true
+    const token = String(++nextToken)
+    actions.set(token, { enabled, run: item.run })
+    native.push({ type: "action", token, label, enabled, checked: item.checked ?? false })
+  }
+  return { items: native, actions }
 }
 
 /**
@@ -68,40 +117,8 @@ export function configureMenuBar(source: () => MenuBarConfiguration): () => void
     if (value.tooltip !== undefined) {
       native.tooltip = value.tooltip === null ? null : validateText(value.tooltip, "tooltip")
     }
-    if (value.items !== undefined && !Array.isArray(value.items)) {
-      throw new TypeError("Menu-bar items must be an array")
-    }
-    const ids = new Set<string>()
-    const actions = new Map<string, { enabled: boolean; run: () => void }>()
-    for (const item of value.items ?? []) {
-      if (!item || typeof item !== "object") throw new TypeError("Menu-bar items must be objects")
-      if ("type" in item && item.type === "separator") {
-        native.items.push({ type: "separator" })
-        continue
-      }
-      if ("type" in item && item.type === "status") {
-        native.items.push({ type: "status", label: validateText(item.label, "status label") })
-        continue
-      }
-      if (!("id" in item) || !("label" in item) || !("run" in item)) {
-        throw new TypeError("Menu-bar actions require id, label, and run")
-      }
-      const id = validateText(item.id, "action ID")
-      const label = validateText(item.label, "action label")
-      if (ids.has(id)) throw new TypeError(`Duplicate menu-bar action ID: ${id}`)
-      ids.add(id)
-      if (typeof item.run !== "function") throw new TypeError("Menu-bar action run must be a function")
-      if (item.enabled !== undefined && typeof item.enabled !== "boolean") {
-        throw new TypeError("Menu-bar action enabled must be boolean")
-      }
-      if (item.checked !== undefined && typeof item.checked !== "boolean") {
-        throw new TypeError("Menu-bar action checked must be boolean")
-      }
-      const enabled = item.enabled ?? true
-      const token = String(++nextToken)
-      actions.set(token, { enabled, run: item.run })
-      native.items.push({ type: "action", token, label, enabled, checked: item.checked ?? false })
-    }
+    const { items, actions } = toNativeMenuItems(value.items, "Menu-bar")
+    native.items = items
 
     replace(JSON.stringify(native))
     configuration.actions = actions

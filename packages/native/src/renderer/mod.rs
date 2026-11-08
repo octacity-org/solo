@@ -548,6 +548,8 @@ pub fn run_main_loop() -> Result<()> {
     // Deep links and files opened with the app, before or after the app
     // Worker starts; see open_urls.rs.
     application.on_open_urls(crate::open_urls::receive);
+    // A Dock click while no window is visible.
+    application.on_reopen(crate::dock::reopen);
     application.run(move |cx| {
         init_key_bindings(cx);
         crate::custom_elements::input::init(cx);
@@ -795,6 +797,7 @@ fn reattach_macos_application(config: MacWindowConfig, cx: &mut gpui::App) -> Re
             .ok();
     }
     crate::application_commands::reset_application_commands(config.callback.clone(), cx)?;
+    crate::dock::reset(cx);
     cx.set_quit_mode(quit_mode_for_options(&config.options));
     let callback = config.callback.clone();
     MAC_APPLICATION.with(|state| -> Result<()> {
