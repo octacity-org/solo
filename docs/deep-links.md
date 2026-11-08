@@ -1,9 +1,11 @@
 # Deep links and opened files
 
-A packaged macOS app can claim a custom URL scheme such as `myapp://`.
-Opening a link in that scheme starts the app, or reaches the copy already
-running, and `onOpenUrls` receives the URL. Files opened with the app
-arrive the same way, as `file://` URLs.
+An app can claim a custom URL scheme such as `myapp://`. Opening a link in
+that scheme starts the app, or reaches the copy already running, and
+`onOpenUrls` receives the URL. Files opened with the app arrive the same way,
+as `file://` URLs. macOS routes them through Launch Services; Linux uses
+launch arguments, a Unix socket and a freedesktop `.desktop` entry (see
+[Linux](#linux)).
 
 ```tsx
 import { onOpenUrls, render } from "@solo/solid"
@@ -67,8 +69,45 @@ system schemes such as `http`, `https`, `file` and `mailto`.
   second copy.
 - `solo dev` starts a new app Worker on every reload, so listeners from the
   previous build are gone and the new build subscribes afresh.
-- macOS only. Elsewhere `onOpenUrls` never fires and `registerUrlScheme`
-  rejects.
+- Windows does not deliver URLs: `onOpenUrls` never fires and
+  `registerUrlScheme` rejects.
+
+## Linux
+
+Nothing on Linux declares a scheme for the whole desktop, so Solo does all
+three steps itself.
+
+**Launch.** URLs and files passed to the executable arrive in `onOpenUrls`,
+queued until the first listener subscribes, so a cold launch by link works.
+A URL argument is used as is. An absolute path to a file becomes a
+`file://` URL. Flags and the JS entry that Bun or Node runs are ignored.
+
+**Single instance.** The first launch listens on
+`$XDG_RUNTIME_DIR/solo-<name>-<hash>.sock` (a private file in the process's
+temporary directory when `XDG_RUNTIME_DIR` is unset). A second launch sends
+its URLs and paths over that socket and exits with status 0, so there is
+never a second window. A socket left by a crashed instance is taken over.
+
+**Registration.**
+
+```ts
+await registerUrlScheme("myapp")
+```
+
+writes `$XDG_DATA_HOME/applications/solo-<name>-<hash>.desktop` with
+`Exec=<this executable> %U` and `MimeType=x-scheme-handler/myapp;`, keeping
+any keys and MIME types already in the file, then runs
+`xdg-mime default` for the scheme. It needs `xdg-mime` (xdg-utils). The
+desktop file's name derives from the executable, so two builds of different
+apps do not collide. Under Bun or Node the `Exec` line repeats the JS entry
+with its absolute path.
+
+A link opened with `xdg-open` (or `gio open`) reaches the running app once
+`xdg-mime query default x-scheme-handler/myapp` names this entry. `xdg-open`
+on a headless session can fall back to a browser because it cannot detect a
+desktop environment; a normal desktop delegates to the desktop's opener.
+The same limits as macOS apply: any app or page can send these URLs, so
+validate them.
 
 ## Treat URLs as untrusted
 
