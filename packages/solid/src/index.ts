@@ -17,6 +17,8 @@ export {
   writeClipboardText,
 } from "./desktop.js"
 export type { TrashResult } from "./desktop.js"
+export { onOpenUrls, registerUrlScheme } from "./open-urls.js"
+export type { OpenUrlsListener } from "./open-urls.js"
 export { showAlert } from "./alert.js"
 export type { AlertLevel, ShowAlertOptions } from "./alert.js"
 export { selectFiles, selectSavePath } from "./file-dialogs.js"

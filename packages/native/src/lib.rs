@@ -17,6 +17,7 @@ mod menu_bar;
 mod markdown;
 mod motion;
 mod native_view;
+mod open_urls;
 mod renderer;
 mod retained_tree;
 mod style;

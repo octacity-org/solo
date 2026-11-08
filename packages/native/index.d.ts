@@ -578,6 +578,11 @@ export interface EventPayload {
    * UTF-8 are converted lossily. Populated for: fileDrop.
    */
   paths?: Array<string>
+  /**
+   * URLs macOS asked the app to open: custom-scheme deep links and
+   * `file://` URLs, unvalidated. Populated for: openUrls (element 0).
+   */
+  urls?: Array<string>
   modifiers?: EventModifiers
 }
 
@@ -611,6 +616,13 @@ export declare function openPath(path: string): void
  * or only images, files or other formats). macOS only.
  */
 export declare function readClipboardText(): string | null
+
+/**
+ * Make this app the default handler for `scheme` (macOS 12+). The app must
+ * run from a bundle with an identifier that Launch Services knows, and
+ * should declare the scheme in its `Info.plist` (`CFBundleURLTypes`).
+ */
+export declare function registerUrlScheme(scheme: string): Promise<void>
 
 /**
  * Worker mode: end the process with `code`. The Worker calls this from its

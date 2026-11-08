@@ -16,6 +16,7 @@ import type { Element as SolidElement } from "solid-js"
 import { automateWhenPiped } from "./automation-host.js"
 import { mount, mountWindowRoot, resetIdCounter } from "./runtime.js"
 import { requireCapability } from "./capability.js"
+import { receiveOpenUrls } from "./open-urls.js"
 
 export interface Root {
   unmount: () => void
@@ -118,6 +119,11 @@ function createNativeRenderer(
       // handlers run before the process ends.
       if (event.elementId === 0 && event.eventType === "applicationQuitRequested") {
         process.exit(0)
+      }
+      // Routed here rather than through an event handler so URLs that
+      // arrive before any onOpenUrls listener are kept, not dropped.
+      if (event.elementId === 0 && event.eventType === "openUrls") {
+        receiveOpenUrls(event.urls)
       }
       handleSoloEvent(event)
       onEvent?.(event)
