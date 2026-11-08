@@ -90,7 +90,7 @@ Each screen has:
 
 | field | meaning |
 |---|---|
-| `id` | the display's UUID, stable across reconnects and restarts; store it to reopen a window on the same screen |
+| `id` | the display's UUID, or `x11-<root index>` on X11 (gpui has no per-screen UUID there); stable across reconnects and restarts, so store it to reopen a window on the same screen |
 | `bounds` | the whole screen in points, starting at (0, 0) |
 | `visibleBounds` | the part windows can use, without the menu bar and Dock, in the same coordinates |
 | `primary` | true for the screen holding the menu bar |
@@ -98,6 +98,9 @@ Each screen has:
 Rectangles are measured from each screen's own top-left corner, as GPUI
 reports them, so they do not show how screens are arranged relative to one
 another.
+
+On Wayland the id is the output's UUID. On X11 it follows the X server's root
+order, which is stable for that server and survives app restarts.
 
 A window opens centered in the visible area of its screen. An `id` that no
 connected screen has makes `render()` or `openWindow()` throw, so check a
@@ -131,6 +134,7 @@ controls its own:
 | `minimizeWindow()` | `minimize()` |
 | `setWindowBackground(background)` | `setBackground(background)` |
 | `getWindowSize()`, `resizeWindow({ width, height })` | `size()`, `resize({ width, height })` |
+| `toggleWindowMaximized()`, `isWindowMaximized()` | `toggleMaximized()`, `maximize()`, `restore()`, `isMaximized()` |
 
 ```ts
 const root = render(() => <App />, { title: "Editor", width: 800, height: 600 })
@@ -149,6 +153,16 @@ root.toggleFullscreen()
   The `fullscreen` window option opens a window fullscreen.
 - `setBackground` takes the values of the `windowBackground` window option
   and applies them to the open window. Any other value throws.
+- On Linux all of these reach GPUI's platform window instead of AppKit:
+  maximize/minimize go to the window manager, fullscreen tiles the window
+  rather than opening a new Space, and `resizeWindow` sets the content area.
+  A Wayland compositor applies maximize, minimize and fullscreen
+  asynchronously, so `isWindowMaximized()` and `isFullscreen()` can lag the
+  request by a frame. A window manager also ignores these requests until the
+  window is mapped, so calls made on the first frame do nothing; call them
+  once the window is on screen. `setBackground` sets the window's background
+  appearance, but GPUI paints the app opaque, so `transparent` and `blurred`
+  look like `opaque` there.
 
 ## Window tabs
 
