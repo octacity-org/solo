@@ -62,5 +62,10 @@ same way as a file opened from Finder. Decode it with
 `fileURLToPath(new URL(url))` from `node:url`, and treat it as untrusted input
 (see [deep-links.md](deep-links.md)).
 
-macOS only: elsewhere `configureDockMenu` and `addRecentDocument` throw, and
-`onApplicationReopen` never fires.
+On Linux there is no Dock. `configureDockMenu` and `onApplicationReopen`
+throw, but `addRecentDocument(path)` appends a bookmark to the freedesktop
+`recently-used.xbel`, so the file appears in GTK file choosers and desktop
+recent lists; it is not shown in a Solo-drawn menu. See
+[linux-packaging.md](linux-packaging.md).
+
+Windows: every one of these throws.
