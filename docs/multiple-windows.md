@@ -148,6 +148,7 @@ root.toggleFullscreen()
 - `setBackground` takes the values of the `windowBackground` window option
   and applies them to the open window. Any other value throws.
 
+## Close requests
 
 By default the close button closes a window. Pass `onCloseRequest` to decide
 instead, for example to confirm unsaved changes. The window stays open and
@@ -188,6 +189,49 @@ stack confirmations.
 
 Without `onCloseRequest`, `requestClose()` simply closes the window.
 
+## Custom titlebars
+
+`titlebarTransparent: true` hides the titlebar and lets the app draw under
+the traffic lights. Mark the app-drawn titlebar with `windowDragRegion`, so it
+behaves like the system one:
+
+```tsx
+render(
+  () => (
+    <View style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      <View style={{ display: "flex", flexDirection: "row", height: 38 }}>
+        <View windowDragRegion style={{ flexGrow: 1, paddingLeft: 80 }}>
+          <Text>Draft</Text>
+        </View>
+        <Button onClick={share}>Share</Button>
+      </View>
+      <Editor />
+    </View>
+  ),
+  { title: "Draft", titlebarTransparent: true, appOwnsTitlebarDrag: true },
+)
+```
+
+- Dragging the region moves the window. The move starts on the first mouse
+  move after the press, so a click without movement still reaches the
+  region's own handlers.
+- A double-click does what the user chose under System Settings → Desktop &
+  Dock → "Double-click a window's title bar to": zoom, fill, minimize or
+  nothing. Zooming needs a resizable window, minimizing a minimizable one.
+- A press on a child is a press on the region, so pressing a control inside
+  it and moving the mouse drags the window. Mark the empty part of the
+  titlebar and put controls beside it, as above, rather than inside it.
+- `appOwnsTitlebarDrag: true` tells AppKit that the app moves the window.
+  Without it AppKit also drags from the hidden titlebar strip at the top of
+  the window, and may hold back clicks there for a moment while it waits for
+  a possible double-click. Use it with `windowDragRegion`; on its own
+  nothing drags the window.
+
+macOS only for now. GPUI also has resize edges and a window menu for
+client-drawn decorations, but on macOS they do nothing, so Solo does not
+expose them.
+
+## Lifetime
 
 - A window's tree is its own Solid root. It is not owned by the component
   that opened it, so it stays open when that component unmounts; close it

@@ -778,6 +778,13 @@ export interface WindowOptions {
   kind?: string
   /** Whether the user can drag the window. Defaults to true. */
   movable?: boolean
+  /**
+   * The app draws its own titlebar (with `titlebarTransparent`) and moves
+   * the window from `windowDragRegion` elements. AppKit then neither drags
+   * from the titlebar strip nor delays clicks there. Defaults to false;
+   * only macOS reads it.
+   */
+  appOwnsTitlebarDrag?: boolean
   /** Whether the user can minimize the window. Defaults to true. */
   minimizable?: boolean
   /** Windows sharing an identifier can join as native tabs (macOS). */

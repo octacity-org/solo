@@ -158,6 +158,7 @@ mod application_lifecycle_tests {
         assert_eq!(defaults.kind, gpui::WindowKind::Normal);
         assert_eq!(defaults.tabbing_identifier, None);
         assert!(!defaults.use_display_p3);
+        assert!(!defaults.app_owns_titlebar_drag);
 
         let options = WindowOptions {
             focus: Some(false),
@@ -167,9 +168,11 @@ mod application_lifecycle_tests {
             minimizable: Some(false),
             tabbing_identifier: Some("documents".into()),
             use_display_p3: Some(true),
+            app_owns_titlebar_drag: Some(true),
             ..WindowOptions::default()
         };
         let gpui_options = to_gpui_window_options(&options, gpui::Bounds::default(), None);
+        assert!(gpui_options.app_owns_titlebar_drag);
         assert!(!gpui_options.focus && !gpui_options.show);
         assert_eq!(gpui_options.kind, gpui::WindowKind::Floating);
         assert!(!gpui_options.is_movable && !gpui_options.is_minimizable);
@@ -2965,6 +2968,11 @@ pub struct WindowOptions {
     pub kind: Option<String>,
     /// Whether the user can drag the window. Defaults to true.
     pub movable: Option<bool>,
+    /// The app draws its own titlebar (with `titlebarTransparent`) and moves
+    /// the window from `windowDragRegion` elements. AppKit then neither drags
+    /// from the titlebar strip nor delays clicks there. Defaults to false;
+    /// only macOS reads it.
+    pub app_owns_titlebar_drag: Option<bool>,
     /// Whether the user can minimize the window. Defaults to true.
     pub minimizable: Option<bool>,
     /// Windows sharing an identifier can join as native tabs (macOS).
@@ -3021,6 +3029,7 @@ impl Default for WindowOptions {
             show: None,
             kind: None,
             movable: None,
+            app_owns_titlebar_drag: None,
             minimizable: None,
             tabbing_identifier: None,
             use_display_p3: None,
@@ -3122,6 +3131,7 @@ fn to_gpui_window_options(
             .and_then(window_kind)
             .unwrap_or(gpui::WindowKind::Normal),
         is_movable: options.movable.unwrap_or(true),
+        app_owns_titlebar_drag: options.app_owns_titlebar_drag.unwrap_or(false),
         is_resizable: options.resizable.unwrap_or(true),
         is_minimizable: options.minimizable.unwrap_or(true),
         window_background,

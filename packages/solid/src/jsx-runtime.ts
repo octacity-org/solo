@@ -49,6 +49,11 @@ export interface SoloIntrinsicProps {
    */
   onRangeChange?: (event: EventPayload) => void
   testId?: string
+  /**
+   * `<div>`: dragging it moves the window, and a double-click zooms or
+   * minimizes it as the user's macOS setting says. For app-drawn titlebars.
+   */
+  windowDragRegion?: boolean
   [key: string]: unknown
 }
 
