@@ -42,6 +42,14 @@ describeNative("native text editors", () => {
     expect(testRoot.getPaintedText()).toContain("hi")
   })
 
+  it("copies and pastes inside an input through GPUI's clipboard", () => {
+    testRoot.render(() => <TextInput />)
+    const input = testRoot.findByType("input")[0]!
+    testRoot.renderer.nativeSimulateKeystrokes(input.id, "h i cmd-a cmd-c right cmd-v")
+
+    expect(testRoot.getAllText()).toEqual(["Value: hihi"])
+  })
+
   it("supports multiline textarea editing and submission", () => {
     function Textarea() {
       const [text, setText] = createSignal("")

@@ -38,11 +38,28 @@ to open and when to ask their users.
 Unicode text, including empty strings and multiline text. It uses the same
 AppKit pasteboard as GPUI's existing copy/paste implementation, but checks the
 write result instead of discarding failures. Existing selection-copy shortcuts
-are unchanged. Clipboard reading and rich clipboard formats are not exposed.
+are unchanged. Rich clipboard formats are not exposed.
 
 A rejected pasteboard write throws; macOS may already have cleared the previous
 clipboard contents when that happens. Do not assume clipboard writes are
 transactional or that other applications cannot replace the contents afterward.
+
+## Reading text
+
+```ts
+import { readClipboardText } from "@solo/solid"
+
+const text = readClipboardText()
+if (text !== null) pasteAsPlainText(text)
+```
+
+`readClipboardText()` returns the clipboard's plain Unicode text, or `null`
+when it holds no text: it is empty, or holds only images, files or other
+formats. An empty string is text, not `null`. It reads the same AppKit
+pasteboard as `writeClipboardText` and as paste inside `<input>` and
+`<textarea>`. The text comes from whatever application copied it, so treat it
+as untrusted input, for example before opening it as a URL. Clipboard-change
+notifications are not exposed.
 
 ## Showing and opening files
 
@@ -91,7 +108,8 @@ while, and it works from the app Worker. Paths are data, never shell input.
 ## Verification
 
 Rust tests cover URL parsing, absolute and existing path checks, a real
-private-pasteboard Unicode round trip without touching the user's clipboard,
+private-pasteboard Unicode round trip and a pasteboard without text, without
+touching the user's clipboard,
 and trashing a real file and folder (removed from the Trash afterwards). Public
 API tests check argument types,
 unchanged text delivery, and error propagation. The packaged regression checks

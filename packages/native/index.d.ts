@@ -607,6 +607,12 @@ export declare function openExternalUrl(url: string): void
 export declare function openPath(path: string): void
 
 /**
+ * The system clipboard's plain text, or `None` when it holds no text (empty,
+ * or only images, files or other formats). macOS only.
+ */
+export declare function readClipboardText(): string | null
+
+/**
  * Worker mode: end the process with `code`. The Worker calls this from its
  * `exit` handler, after its own JS `exit` handlers have run.
  */

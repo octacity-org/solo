@@ -8,7 +8,14 @@ export type { MenuBarConfiguration, MenuBarItem } from "./menu-bar.js"
 export { createContextMenu } from "./context-menu.js"
 export type { ContextMenu, ContextMenuAnchor, ContextMenuItem } from "./context-menu.js"
 export type { ApplicationCommand } from "./commands.js"
-export { moveToTrash, openExternalUrl, openPath, revealPath, writeClipboardText } from "./desktop.js"
+export {
+  moveToTrash,
+  openExternalUrl,
+  openPath,
+  readClipboardText,
+  revealPath,
+  writeClipboardText,
+} from "./desktop.js"
 export type { TrashResult } from "./desktop.js"
 export { showAlert } from "./alert.js"
 export type { AlertLevel, ShowAlertOptions } from "./alert.js"

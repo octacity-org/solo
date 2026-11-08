@@ -7,6 +7,7 @@ export {
   moveToTrash,
   openExternalUrl,
   openPath,
+  readClipboardText,
   requestProcessExit,
   revealPath,
   runMainLoop,

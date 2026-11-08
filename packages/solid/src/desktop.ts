@@ -17,6 +17,14 @@ export function writeClipboardText(text: string): void {
   native.writeClipboardText(text)
 }
 
+/**
+ * The macOS clipboard's plain text, or `null` when it holds no text: it is
+ * empty, or holds only images, files or other formats. Throws off macOS.
+ */
+export function readClipboardText(): string | null {
+  return native.readClipboardText() ?? null
+}
+
 function requireAbsolutePath(path: unknown): asserts path is string {
   if (typeof path !== "string" || !isAbsolute(path)) {
     throw new TypeError(`Expected an absolute path, got ${JSON.stringify(path)}`)

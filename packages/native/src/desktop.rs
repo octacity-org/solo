@@ -90,6 +90,28 @@ pub fn write_clipboard_text(text: String) -> Result<()> {
     }
 }
 
+/// The system clipboard's plain text, or `None` when it holds no text (empty,
+/// or only images, files or other formats). macOS only.
+#[napi]
+pub fn read_clipboard_text() -> Result<Option<String>> {
+    #[cfg(target_os = "macos")]
+    {
+        if crate::renderer::worker_main::must_forward() {
+            return crate::renderer::on_main(read_clipboard_text);
+        }
+        macos::require_main_thread()?;
+        Ok(macos::read_text(
+            &objc2_app_kit::NSPasteboard::generalPasteboard(),
+        ))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err(Error::from_reason(
+            "Clipboard text reading is supported only on macOS",
+        ))
+    }
+}
+
 /// Paths must be absolute, so none is resolved against the working directory.
 fn validate_absolute_path(path: &str) -> Result<()> {
     if path.contains('\0') || !std::path::Path::new(path).is_absolute() {
@@ -266,6 +288,13 @@ mod macos {
             "writing clipboard text",
         )
     }
+
+    pub(super) fn read_text(board: &NSPasteboard) -> Option<String> {
+        // SAFETY: AppKit's process-lifetime plain-text pasteboard type constant.
+        board
+            .stringForType(unsafe { NSPasteboardTypeString })
+            .map(|text| text.to_string())
+    }
 }
 
 #[cfg(test)]
@@ -333,7 +362,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn unicode_clipboard_text_round_trips_on_a_private_pasteboard() {
-        use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
+        use objc2_app_kit::NSPasteboard;
         // This pasteboard is private to the test: never alter the user's clipboard.
         let board = NSPasteboard::pasteboardWithUniqueName();
         for text in [
@@ -343,11 +372,24 @@ mod tests {
             "a\0b",
         ] {
             macos::write_text(&board, text).unwrap();
-            let actual = board
-                .stringForType(unsafe { NSPasteboardTypeString })
-                .unwrap();
-            assert_eq!(actual.to_string(), text);
+            assert_eq!(macos::read_text(&board).as_deref(), Some(text));
         }
+        board.clearContents();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn reading_a_clipboard_without_text_returns_none() {
+        use objc2_foundation::NSString;
+        let board = objc2_app_kit::NSPasteboard::pasteboardWithUniqueName();
+        board.clearContents();
+        assert_eq!(macos::read_text(&board), None);
+
+        // Only a non-text format, as an image or file copy would leave.
+        let custom = NSString::from_str("org.octacity.solo.test-data");
+        board.clearContents();
+        assert!(board.setString_forType(&NSString::from_str("payload"), &custom));
+        assert_eq!(macos::read_text(&board), None);
         board.clearContents();
     }
 
