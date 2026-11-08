@@ -173,7 +173,9 @@ cd examples/solid-counter
 bun run dev                    # runs `solo dev`
 ```
 
-On macOS, `solo dev` rebuilds on save and restarts only the app's Worker.
+On macOS, `solo dev` rebuilds on save and restarts only the app's Worker. On
+Linux it runs the app as a child process and replaces it after each good
+build; a crash waits for the next build, a clean exit ends the session.
 The process, GPUI and the window stay up, and the counter repaints about
 0.4 s after a save. App state starts fresh on each reload.
 
