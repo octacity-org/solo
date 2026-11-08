@@ -32,6 +32,9 @@ interface NativeTestRendererApi {
   setWindowCloseGuard(guarded: boolean, windowId?: number): void
   requestWindowClose(windowId?: number): void
   getWindowSize(windowId?: number): { width: number; height: number }
+  resizeWindow(width: number, height: number, windowId?: number): void
+  setWindowBackground(background: string, windowId?: number): void
+  isWindowFullscreen(windowId?: number): boolean
   getWindowAutomationTrees(): string
   scrollToItem(elementId: number, index: number): void
   scrollTo(elementId: number, x: number, y: number): void

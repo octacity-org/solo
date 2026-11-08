@@ -74,6 +74,25 @@ export declare class SoloRenderer {
    * logical pixels.
    */
   getWindowSize(windowId?: number | undefined | null): WindowSize
+  /**
+   * Enter or leave native fullscreen on the main window, or the window
+   * `window_id`. The transition is animated.
+   */
+  setWindowFullscreen(fullscreen: boolean, windowId?: number | undefined | null): void
+  /** Read whether the window is in native fullscreen. */
+  isWindowFullscreen(windowId?: number | undefined | null): boolean
+  /** Minimize the window into the Dock. */
+  minimizeWindow(windowId?: number | undefined | null): void
+  /**
+   * Change the window's background: `"opaque"`, `"transparent"` or
+   * `"blurred"`, as the `windowBackground` option.
+   */
+  setWindowBackground(background: string, windowId?: number | undefined | null): void
+  /**
+   * Resize the window's content to `width` × `height` logical pixels, the
+   * size `getWindowSize` reports.
+   */
+  resizeWindow(width: number, height: number, windowId?: number | undefined | null): void
   /** Replace application commands atomically. macOS only for now. */
   setApplicationCommands(json: string): void
   /**
@@ -273,6 +292,16 @@ export declare class TestSoloRenderer {
    * windows left by earlier test renderers, whose GPUI app is gone.
    */
   requestWindowClose(windowId?: number | undefined | null): void
+  /** Enter or leave native fullscreen, as the live renderer does. */
+  setWindowFullscreen(fullscreen: boolean, windowId?: number | undefined | null): void
+  isWindowFullscreen(windowId?: number | undefined | null): boolean
+  minimizeWindow(windowId?: number | undefined | null): void
+  setWindowBackground(background: string, windowId?: number | undefined | null): void
+  /**
+   * Resize the window's content to `width` × `height` logical pixels, the
+   * size `getWindowSize` reports.
+   */
+  resizeWindow(width: number, height: number, windowId?: number | undefined | null): void
   /** Content size of the main window, or of the window `window_id`. */
   getWindowSize(windowId?: number | undefined | null): WindowSize
   /** JSON array of the trees of the windows opened with `openWindow`. */

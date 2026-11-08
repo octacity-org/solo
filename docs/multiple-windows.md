@@ -40,10 +40,14 @@ The returned `AppWindow` controls that window:
 | `focus()` | brings the window to the front |
 | `setTitle(title)` | sets the title |
 | `maximize()`, `restore()`, `toggleMaximized()`, `isMaximized()` | maximized state |
+| `enterFullscreen()`, `exitFullscreen()`, `toggleFullscreen()`, `isFullscreen()` | native fullscreen; see [Window state](#window-state) |
+| `minimize()` | minimizes the window into the Dock |
+| `setBackground(background)` | `"opaque"`, `"transparent"` or `"blurred"` |
 | `size()` | the content size in logical pixels, read from the live window |
+| `resize({ width, height })` | sets the content size `size()` reports |
 
 Calls other than `close()` throw after the window has closed. The render root
-reads the main window's size with `getWindowSize()`.
+has the same controls for the main window; see [Window state](#window-state).
 
 ## Window options
 
@@ -113,7 +117,37 @@ const stop = onScreensChanged(() => {
 })
 ```
 
-## Close requests
+## Window state
+
+Fullscreen, minimizing, the background and the size can change while a
+window is open. The render root controls the main window; an `AppWindow`
+controls its own:
+
+| render root | `AppWindow` |
+|---|---|
+| `enterFullscreen()`, `exitFullscreen()`, `toggleFullscreen()`, `isFullscreen()` | the same names |
+| `minimizeWindow()` | `minimize()` |
+| `setWindowBackground(background)` | `setBackground(background)` |
+| `getWindowSize()`, `resizeWindow({ width, height })` | `size()`, `resize({ width, height })` |
+
+```ts
+const root = render(() => <App />, { title: "Editor", width: 800, height: 600 })
+
+root.resizeWindow({ width: 1024, height: 700 })
+root.getWindowSize() // { width: 1024, height: 700 }
+root.setWindowBackground("blurred")
+root.toggleFullscreen()
+```
+
+- Sizes are the window's content in logical pixels, without the titlebar. A
+  resize applies at once, so `getWindowSize()` or `size()` reads it back
+  straight away. Both numbers must be positive.
+- Fullscreen is macOS native fullscreen: the window moves to its own Space
+  in an animation, and `isFullscreen()` reads AppKit's live state. Entering when already fullscreen, or exiting when not, does nothing.
+  The `fullscreen` window option opens a window fullscreen.
+- `setBackground` takes the values of the `windowBackground` window option
+  and applies them to the open window. Any other value throws.
+
 
 By default the close button closes a window. Pass `onCloseRequest` to decide
 instead, for example to confirm unsaved changes. The window stays open and

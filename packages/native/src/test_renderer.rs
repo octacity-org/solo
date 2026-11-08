@@ -112,8 +112,6 @@ fn with_test_state<R>(
     })
 }
 
-/// Like `with_test_state`, on the window that paints `root`: an `openWindow`
-/// window for `Some`, the main window for `None`.
 /// Run `f` against the test app, if a `TestSoloRenderer` exists on this
 /// thread.
 pub(crate) fn with_app<R>(f: impl FnOnce(&gpui::App) -> R) -> Option<R> {
@@ -123,6 +121,8 @@ pub(crate) fn with_app<R>(f: impl FnOnce(&gpui::App) -> R) -> Option<R> {
     })
 }
 
+/// Like `with_test_state`, on the window that paints `root`: an `openWindow`
+/// window for `Some`, the main window for `None`.
 fn with_window<R>(
     root: Option<u64>,
     f: impl FnOnce(
@@ -161,6 +161,24 @@ fn in_view<R>(
         })
         .map_err(|e| Error::from_reason(e.to_string()))
     })
+}
+
+/// Run `f` on the NSWindow that paints `root`, outside the test state:
+/// AppKit calls back into GPUI synchronously. Then settle the app.
+fn with_appkit_window<R>(
+    root: Option<u64>,
+    f: impl FnOnce(&objc2_app_kit::NSWindow) -> Result<R>,
+) -> Result<R> {
+    let window = with_window(root, |cx, window, _view| {
+        cx.update_window(window, |_, window, _| crate::renderer::appkit_window(window))
+            .map_err(|e| Error::from_reason(e.to_string()))?
+    })?;
+    let result = f(&window)?;
+    with_test_state(|cx, _window, _view| {
+        cx.run_until_parked();
+        Ok(())
+    })?;
+    Ok(result)
 }
 
 fn validate_display_count(display_count: usize) -> Result<()> {
@@ -434,6 +452,50 @@ impl TestSoloRenderer {
             return self.close_window(window_id);
         }
         Ok(())
+    }
+
+    /// Enter or leave native fullscreen, as the live renderer does.
+    #[napi]
+    pub fn set_window_fullscreen(&self, fullscreen: bool, window_id: Option<f64>) -> Result<()> {
+        let root = window_id.map(to_element_id).transpose()?;
+        with_appkit_window(root, |window| {
+            crate::renderer::set_appkit_fullscreen(window, fullscreen);
+            Ok(())
+        })
+    }
+
+    #[napi]
+    pub fn is_window_fullscreen(&self, window_id: Option<f64>) -> Result<bool> {
+        let root = window_id.map(to_element_id).transpose()?;
+        in_view(root, |_view, window, _cx| window.is_fullscreen())
+    }
+
+    #[napi]
+    pub fn minimize_window(&self, window_id: Option<f64>) -> Result<()> {
+        let root = window_id.map(to_element_id).transpose()?;
+        with_appkit_window(root, |window| {
+            window.miniaturize(None);
+            Ok(())
+        })
+    }
+
+    #[napi]
+    pub fn set_window_background(&self, background: String, window_id: Option<f64>) -> Result<()> {
+        let root = window_id.map(to_element_id).transpose()?;
+        let appearance = crate::renderer::window_background_appearance(&background)?;
+        in_view(root, move |_view, window, _cx| {
+            window.set_background_appearance(appearance)
+        })
+    }
+
+    /// Resize the window's content to `width` × `height` logical pixels, the
+    /// size `getWindowSize` reports.
+    #[napi]
+    pub fn resize_window(&self, width: f64, height: f64, window_id: Option<f64>) -> Result<()> {
+        let root = window_id.map(to_element_id).transpose()?;
+        with_appkit_window(root, |window| {
+            crate::renderer::resize_appkit_window(window, width, height)
+        })
     }
 
     /// Content size of the main window, or of the window `window_id`.

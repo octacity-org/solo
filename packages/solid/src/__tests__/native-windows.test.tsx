@@ -64,6 +64,27 @@ describeNative("openWindow on the test renderer", () => {
     expect(() => testRoot.renderer.getWindowSize(999_999)).toThrow(/not open/)
   })
 
+  it("resizes windows to the size getWindowSize reports", () => {
+    const { inspector } = mountApp()
+    inspector.resize({ width: 400, height: 260 })
+    expect(inspector.size()).toEqual({ width: 400, height: 260 })
+    testRoot.renderer.resizeWindow(500, 300)
+    expect(testRoot.renderer.getWindowSize()).toEqual({ width: 500, height: 300 })
+    expect(() => inspector.resize({ width: 0, height: 100 })).toThrow(/positive and finite/)
+    expect(() => inspector.resize({ width: Number.NaN, height: 100 })).toThrow(/positive and finite/)
+    // Layout follows the new size.
+    expect(testRoot.getPaintedText()).toContain("Inspector: 0 none")
+  })
+
+  it("changes the background of an open window", () => {
+    const { inspector } = mountApp()
+    for (const background of ["blurred", "transparent", "opaque"] as const) inspector.setBackground(background)
+    testRoot.renderer.setWindowBackground("transparent")
+    expect(() => testRoot.renderer.setWindowBackground("frosted")).toThrow(/must be "opaque", "transparent" or "blurred"/)
+    expect(inspector.isFullscreen()).toBe(false)
+    expect(testRoot.renderer.isWindowFullscreen()).toBe(false)
+  })
+
   it("lists screens and opens a window only on a connected one", () => {
     testRoot.render(() => <Text>Main</Text>)
     const screens = getScreens()

@@ -1041,7 +1041,7 @@ fn update_window_local<R>(
 }
 
 #[cfg(target_os = "macos")]
-fn appkit_window(window: &gpui::Window) -> Result<objc2::rc::Retained<objc2_app_kit::NSWindow>> {
+pub(crate) fn appkit_window(window: &gpui::Window) -> Result<objc2::rc::Retained<objc2_app_kit::NSWindow>> {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
     let handle = HasWindowHandle::window_handle(window)
@@ -1054,6 +1054,72 @@ fn appkit_window(window: &gpui::Window) -> Result<objc2::rc::Retained<objc2_app_
     let view = unsafe { &*handle.ns_view.as_ptr().cast::<objc2_app_kit::NSView>() };
     view.window()
         .ok_or_else(|| Error::from_reason("The macOS window is closed"))
+}
+
+/// Run `f` on the target's NSWindow outside any GPUI update: AppKit calls back
+/// into GPUI synchronously when a window resizes, minimizes or changes
+/// fullscreen, and those callbacks update the app.
+#[cfg(target_os = "macos")]
+fn with_appkit_window<R: Send + 'static>(
+    target: WindowTarget,
+    f: impl FnOnce(&objc2_app_kit::NSWindow) -> Result<R> + Send + 'static,
+) -> Result<R> {
+    let run = move || {
+        let window = update_window_local(target, |_view, window, _cx| appkit_window(window))??;
+        f(&window)
+    };
+    if worker_main::must_forward() {
+        return on_main(run);
+    }
+    run()
+}
+
+/// Enter or leave native fullscreen. The transition is animated; AppKit owns
+/// the frame to restore.
+#[cfg(target_os = "macos")]
+pub(crate) fn set_appkit_fullscreen(window: &objc2_app_kit::NSWindow, fullscreen: bool) {
+    let current = window
+        .styleMask()
+        .contains(objc2_app_kit::NSWindowStyleMask::FullScreen);
+    if current != fullscreen {
+        window.toggleFullScreen(None);
+    }
+}
+
+/// Set the window's content size, in the logical pixels `getWindowSize`
+/// reports. AppKit applies it at once, so the next read sees it.
+#[cfg(target_os = "macos")]
+pub(crate) fn resize_appkit_window(
+    window: &objc2_app_kit::NSWindow,
+    width: f64,
+    height: f64,
+) -> Result<()> {
+    if !(width.is_finite() && width > 0.0 && height.is_finite() && height > 0.0) {
+        return Err(Error::from_reason(format!(
+            "Window size must be positive and finite, got {width}×{height}"
+        )));
+    }
+    window.setContentSize(objc2_core_foundation::CGSize::new(width, height));
+    Ok(())
+}
+
+/// The `windowBackground` names, for windows that are already open.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn window_background_appearance(name: &str) -> Result<gpui::WindowBackgroundAppearance> {
+    parse_window_background(name).ok_or_else(|| {
+        Error::from_reason(format!(
+            "Window background must be \"opaque\", \"transparent\" or \"blurred\", got {name:?}"
+        ))
+    })
+}
+
+fn parse_window_background(name: &str) -> Option<gpui::WindowBackgroundAppearance> {
+    match name {
+        "opaque" => Some(gpui::WindowBackgroundAppearance::Opaque),
+        "transparent" => Some(gpui::WindowBackgroundAppearance::Transparent),
+        "blurred" => Some(gpui::WindowBackgroundAppearance::Blurred),
+        _ => None,
+    }
 }
 
 /// A guarded window's close request; see `SoloView::allow_close`.
@@ -1934,6 +2000,89 @@ impl SoloRenderer {
             Err(Error::from_reason(
                 "Reading the window size is supported only on macOS",
             ))
+        }
+    }
+
+    /// Enter or leave native fullscreen on the main window, or the window
+    /// `window_id`. The transition is animated.
+    #[napi]
+    pub fn set_window_fullscreen(&self, fullscreen: bool, window_id: Option<f64>) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        return with_appkit_window(WindowTarget::from_arg(window_id)?, move |window| {
+            set_appkit_fullscreen(window, fullscreen);
+            Ok(())
+        });
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (fullscreen, window_id);
+            Err(Error::from_reason("Fullscreen windows are supported only on macOS"))
+        }
+    }
+
+    /// Read whether the window is in native fullscreen.
+    #[napi]
+    pub fn is_window_fullscreen(&self, window_id: Option<f64>) -> Result<bool> {
+        #[cfg(target_os = "macos")]
+        return update_window_in(WindowTarget::from_arg(window_id)?, |_view, window, _cx| {
+            window.is_fullscreen()
+        });
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = window_id;
+            Err(Error::from_reason("Fullscreen windows are supported only on macOS"))
+        }
+    }
+
+    /// Minimize the window into the Dock.
+    #[napi]
+    pub fn minimize_window(&self, window_id: Option<f64>) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        return with_appkit_window(WindowTarget::from_arg(window_id)?, |window| {
+            window.miniaturize(None);
+            Ok(())
+        });
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = window_id;
+            Err(Error::from_reason("Minimizing windows is supported only on macOS"))
+        }
+    }
+
+    /// Change the window's background: `"opaque"`, `"transparent"` or
+    /// `"blurred"`, as the `windowBackground` option.
+    #[napi]
+    pub fn set_window_background(&self, background: String, window_id: Option<f64>) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        {
+            let appearance = window_background_appearance(&background)?;
+            return update_window_in(WindowTarget::from_arg(window_id)?, move |_view, window, _cx| {
+                window.set_background_appearance(appearance)
+            });
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (background, window_id);
+            Err(Error::from_reason("Changing the window background is supported only on macOS"))
+        }
+    }
+
+    /// Resize the window's content to `width` × `height` logical pixels, the
+    /// size `getWindowSize` reports.
+    #[napi]
+    pub fn resize_window(&self, width: f64, height: f64, window_id: Option<f64>) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        return with_appkit_window(WindowTarget::from_arg(window_id)?, move |window| {
+            resize_appkit_window(window, width, height)
+        });
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (width, height, window_id);
+            Err(Error::from_reason("Resizing windows is supported only on macOS"))
         }
     }
 
@@ -2941,12 +3090,10 @@ fn to_gpui_window_options(
         (Some(x), Some(y)) => Some(gpui::point(gpui::px(x as f32), gpui::px(y as f32))),
         _ => None,
     };
-    let window_background = match options.window_background.as_deref() {
-        Some("transparent") => gpui::WindowBackgroundAppearance::Transparent,
-        Some("blurred") => gpui::WindowBackgroundAppearance::Blurred,
-        Some("opaque") => gpui::WindowBackgroundAppearance::Opaque,
-        _ if options.transparent.unwrap_or(false) => gpui::WindowBackgroundAppearance::Transparent,
-        _ => gpui::WindowBackgroundAppearance::Opaque,
+    let window_background = match options.window_background.as_deref().and_then(parse_window_background) {
+        Some(appearance) => appearance,
+        None if options.transparent.unwrap_or(false) => gpui::WindowBackgroundAppearance::Transparent,
+        None => gpui::WindowBackgroundAppearance::Opaque,
     };
     let window_min_size = match (options.min_width, options.min_height) {
         (Some(width), Some(height)) => {
