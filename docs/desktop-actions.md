@@ -13,10 +13,10 @@ try {
 ```
 
 Both functions are synchronous, return `void`, and throw catchable errors.
-They are independent of a mounted renderer or Solid owner, so they work in
-button callbacks, application commands, and startup code. Currently they support
-macOS on the main JavaScript thread; other platforms and worker threads receive
-explicit errors. Application code imports no internal Solo packages.
+They are independent of a Solid owner, so they work in button callbacks,
+application commands, and startup code. They support macOS and Linux once a
+Solo app is running; Windows and worker threads receive explicit errors.
+Application code imports no internal Solo packages.
 
 ## Opening a URL
 
@@ -61,6 +61,11 @@ pasteboard as `writeClipboardText` and as paste inside `<input>` and
 as untrusted input, for example before opening it as a URL. Clipboard-change
 notifications are not exposed.
 
+On Linux both clipboard functions use GPUI's platform clipboard (the X11
+selection or the Wayland data device). Reading follows the same rule, except
+that GPUI cannot distinguish an empty text item from a clipboard without text,
+so an empty clipboard also reads as `null` there.
+
 ## Showing and opening files
 
 ```ts
@@ -76,14 +81,19 @@ not exist, throws before anything reaches Finder; the message includes the
 operating system's reason, such as `No such file or directory`. The path is
 data, never shell input.
 
-`revealPath` uses `NSWorkspace selectFile:inFileViewerRootedAtPath:`.
-`openPath` uses `NSWorkspace openURL:` with a file URL, so it behaves like a
+On macOS, `revealPath` uses `NSWorkspace selectFile:inFileViewerRootedAtPath:`
+and `openPath` uses `NSWorkspace openURL:` with a file URL, so it behaves like a
 double-click in Finder: an application bundle launches, a folder opens in
-Finder, and a `.command` or `.tool` script runs in Terminal. Applications
-decide which paths to open. Choosing a specific application ("Open With…") is
-not supported.
+Finder, and a `.command` or `.tool` script runs in Terminal.
 
-On Linux and Windows both throw after the path checks.
+On Linux, `revealPath` asks the desktop's file manager to show the item
+(`org.freedesktop.FileManager1` or the desktop portal), and `openPath` uses the
+same default-application dispatch as a double-click. Without a desktop session
+or portal the request is delivered best-effort through `xdg-open`, which may
+fail silently; the calls still validate the path before dispatch.
+
+Applications decide which paths to open. Choosing a specific application
+("Open With…") is not supported. On Windows both throw after the path checks.
 
 ## Moving to the Trash
 
@@ -104,6 +114,13 @@ other than macOS.
 Unlike the actions above it is asynchronous: it runs `NSFileManager`
 `trashItemAtURL` on a background thread, because a large folder can take a
 while, and it works from the app Worker. Paths are data, never shell input.
+
+On Linux, each path goes through GLib's freedesktop Trash implementation
+(`gio trash`), which writes the standard `.trashinfo` entry so the desktop's
+Trash can restore the item. `gio` is available with GLib on supported desktops;
+if it is missing, the result for that path is `ok: false` with an explanatory
+error. Files on system-internal mounts (for example `/tmp` on some systems)
+cannot be trashed by GLib and report the same kind of per-path error.
 
 ## Verification
 

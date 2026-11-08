@@ -1321,7 +1321,7 @@ fn request_appkit_display(window: &gpui::Window) {
 /// Work for the `solo-ui` thread. Closures carry everything else, so a new
 /// window operation needs no variant of its own.
 #[cfg(ui_thread)]
-enum UiCommand {
+pub(crate) enum UiCommand {
     /// Repaint after a mutation batch; kept cheap because it is the hot one.
     Invalidate,
     /// Run against the root view.
@@ -1329,6 +1329,64 @@ enum UiCommand {
     /// Run against the window without leasing the root view, as input
     /// dispatch needs: it can synchronously render that view.
     Window(Box<dyn FnOnce(gpui::AnyView, &mut gpui::Window, &mut gpui::App) + Send>),
+    /// Run against the app, for calls that need no particular window.
+    App(Box<dyn FnOnce(&mut gpui::App) + Send>),
+}
+
+#[cfg(ui_thread)]
+thread_local! {
+    /// The platform the UI thread runs. Desktop actions and screens read it
+    /// from that thread; it is not `Send`, so it is never stored elsewhere.
+    static UI_PLATFORM: RefCell<Option<Rc<dyn gpui::Platform>>> = const { RefCell::new(None) };
+}
+
+#[cfg(ui_thread)]
+static UI_COMMANDS: std::sync::Mutex<Option<mpsc::UnboundedSender<UiCommand>>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(ui_thread)]
+pub(crate) fn install_ui_platform(platform: Rc<dyn gpui::Platform>) {
+    UI_PLATFORM.with(|slot| *slot.borrow_mut() = Some(platform));
+}
+
+#[cfg(ui_thread)]
+pub(crate) fn install_ui_commands(sender: mpsc::UnboundedSender<UiCommand>) {
+    *UI_COMMANDS.lock().unwrap() = Some(sender);
+}
+
+/// Queue work on the `solo-ui` thread. The sender outlives any one renderer,
+/// so desktop helpers do not need a `SoloRenderer` instance.
+#[cfg(ui_thread)]
+pub(crate) fn post_ui_command(command: UiCommand) -> Result<()> {
+    UI_COMMANDS
+        .lock()
+        .unwrap()
+        .as_ref()
+        .ok_or_else(|| Error::from_reason("GPUI application is not initialized"))?
+        .unbounded_send(command)
+        .map_err(|_| Error::from_reason("The GPUI UI thread is not running"))
+}
+
+/// Run `f` against the platform on the `solo-ui` thread and wait for its
+/// result.
+#[cfg(ui_thread)]
+pub(crate) fn with_ui_platform<R: Send + 'static>(
+    query: &'static str,
+    f: impl FnOnce(&dyn gpui::Platform) -> R + Send + 'static,
+) -> Result<R> {
+    let (response, receiver) = sync_channel(1);
+    post_ui_command(UiCommand::App(Box::new(move |_cx| {
+        let result: std::result::Result<R, String> = UI_PLATFORM.with(|platform| {
+            let platform = platform.borrow();
+            let platform = platform
+                .as_deref()
+                .ok_or_else(|| "GPUI platform is not installed".to_string())?;
+            Ok(f(platform))
+        });
+        response.send(result).ok();
+    })))?;
+    wait_ui(receiver, Some(query))?
+        .map_err(Error::from_reason)
 }
 
 #[cfg(ui_thread)]
@@ -1342,6 +1400,10 @@ async fn run_ui_commands(
             UiCommand::Invalidate => window.update(cx, |_view, window, cx| refresh_view(window, cx)),
             UiCommand::View(update) => window.update(cx, update),
             UiCommand::Window(update) => cx.update_window(window.into(), update),
+            UiCommand::App(update) => {
+                cx.update(update);
+                Ok(())
+            }
         };
         if let Err(error) = result {
             log::error!("Failed to handle GPUI UI command: {error:#}");
@@ -1740,6 +1802,7 @@ impl SoloRenderer {
         let selection = self.selection.clone();
         let callback = self.event_callback_for_view();
         let (command_sender, command_receiver) = mpsc::unbounded();
+        install_ui_commands(command_sender.clone());
         let (startup_sender, startup_receiver) = sync_channel(1);
         let exit_startup_sender = startup_sender.clone();
 
@@ -1747,7 +1810,9 @@ impl SoloRenderer {
             .name("solo-ui".to_string())
             .spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    gpui_platform::application().run(move |cx| {
+                    let platform = gpui_platform::current_platform(false);
+                    install_ui_platform(platform.clone());
+                    gpui::Application::with_platform(platform).run(move |cx| {
                         init_key_bindings(cx);
                         crate::custom_elements::input::init(cx);
                         let bounds = centered_window_bounds(&window_options, None, cx);
