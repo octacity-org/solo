@@ -29,6 +29,8 @@ interface NativeTestRendererApi {
   simulateFileDrop(paths: string[], x: number, y: number, elementId?: number): void
   openWindow(rootId: number, options?: WindowOptions): void
   closeWindow(windowId?: number): void
+  setWindowCloseGuard(guarded: boolean, windowId?: number): void
+  requestWindowClose(windowId?: number): void
   getWindowSize(windowId?: number): { width: number; height: number }
   getWindowAutomationTrees(): string
   scrollToItem(elementId: number, index: number): void

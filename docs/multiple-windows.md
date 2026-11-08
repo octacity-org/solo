@@ -27,7 +27,7 @@ render(() => <Button onClick={showInspector}>Inspect</Button>, { title: "Editor"
 Every window belongs to one renderer, so signals, stores and context-free
 modules are shared: a signal write repaints each window that reads it, in the
 same batch. `openWindow` takes the window options of `render()` (`title`,
-`width`, `height`, …) except `menuBar`, plus `onClose`.
+`width`, `height`, …) except `menuBar`, plus `onClose` and `onCloseRequest`.
 
 The returned `AppWindow` controls that window:
 
@@ -36,6 +36,7 @@ The returned `AppWindow` controls that window:
 | `id` | the window's root element ID |
 | `closed` | true once the window closed, by the user or through `close()` |
 | `close()` | closes the native window and disposes its tree; a no-op once closed |
+| `requestClose()` | asks to close, as the close button does; see [Close requests](#close-requests) |
 | `focus()` | brings the window to the front |
 | `setTitle(title)` | sets the title |
 | `maximize()`, `restore()`, `toggleMaximized()`, `isMaximized()` | maximized state |
@@ -112,7 +113,47 @@ const stop = onScreensChanged(() => {
 })
 ```
 
-## Lifetime
+## Close requests
+
+By default the close button closes a window. Pass `onCloseRequest` to decide
+instead, for example to confirm unsaved changes. The window stays open and
+the handler runs; close the window yourself to let it go:
+
+```tsx
+import { openWindow, render, showAlert } from "@solo/solid"
+
+const editor = openWindow(() => <Editor />, {
+  title: "Draft",
+  onCloseRequest: async () => {
+    if (!dirty()) return editor.close()
+    const choice = await showAlert({
+      message: "Discard your changes?",
+      buttons: ["Discard", "Cancel"],
+      window: editor,
+    })
+    if (choice === 0) editor.close()
+  },
+})
+
+const root = render(() => <App />, {
+  onCloseRequest: () => { if (!dirty()) root.closeWindow() },
+})
+```
+
+While a promise returned by `onCloseRequest` is pending, further requests
+for that window are ignored, so repeated clicks on the close button do not
+stack confirmations.
+
+| path | with `onCloseRequest` |
+|---|---|
+| the window's close button | calls the handler; the window stays open |
+| `requestClose()`, `root.requestCloseWindow()` | the same path as the close button (AppKit's `performClose:`) |
+| `close()`, `root.closeWindow()` | closes without asking |
+| Cmd+W | not bound by Solo; bind it with `registerApplicationCommand` and call `requestClose()` |
+| Quit (Cmd+Q), `quitApplication()` | not covered: quitting does not ask each window |
+
+Without `onCloseRequest`, `requestClose()` simply closes the window.
+
 
 - A window's tree is its own Solid root. It is not owned by the component
   that opened it, so it stays open when that component unmounts; close it

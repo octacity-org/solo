@@ -3,7 +3,7 @@
 
 import { createSignal } from "solid-js"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { handleSoloEvent } from "@solo/core"
+import { handleSoloEvent, registerEventHandler } from "@solo/core"
 import type { EventPayload } from "@solo/native"
 import { createSolidNativeTestRoot, hasNativeTestRenderer } from "../testing.js"
 import type { SolidNativeTestRoot } from "../testing.js"
@@ -129,6 +129,48 @@ describeNative("openWindow on the test renderer", () => {
     expect(inspector.closed).toBe(true)
     expect(closed).toEqual(["inspector"])
     expect(testRoot.getElement(inspectorDiv.id)).toBeUndefined()
+  })
+
+  it("keeps a guarded window open and reports its close request", () => {
+    testRoot.render(() => <Text>Main</Text>)
+    const requests: string[] = []
+    const inspector = openWindow(() => <Text>Guarded</Text>, {
+      width: 320,
+      height: 200,
+      onCloseRequest: () => void requests.push("inspector"),
+    })
+
+    // The close guard decides, as for the close button; native emits the request.
+    inspector.requestClose()
+    testRoot.getPaintedText()
+    expect(requests).toEqual(["inspector"])
+    expect(inspector.closed).toBe(false)
+    expect(inspector.size()).toEqual({ width: 320, height: 200 })
+
+    inspector.close()
+    expect(inspector.closed).toBe(true)
+  })
+
+  it("closes an unguarded window on requestClose", () => {
+    testRoot.render(() => <Text>Main</Text>)
+    const inspector = openWindow(() => <Text>Plain</Text>)
+    inspector.requestClose()
+    for (const event of testRoot.renderer.drainEvents()) handleSoloEvent(event)
+    expect(inspector.closed).toBe(true)
+  })
+
+  it("guards the main window, reporting on element 0", () => {
+    testRoot.render(() => <Text>Main</Text>)
+    const requests: number[] = []
+    registerEventHandler(0, "windowCloseRequested", () => requests.push(0))
+    testRoot.renderer.setWindowCloseGuard(true)
+    testRoot.renderer.requestWindowClose()
+    testRoot.getPaintedText()
+    expect(requests).toEqual([0])
+    expect(testRoot.getPaintedText()).toContain("Main")
+    // Unguarded, the test renderer cannot close its main window.
+    testRoot.renderer.setWindowCloseGuard(false)
+    expect(() => testRoot.renderer.requestWindowClose()).toThrow()
   })
 
   it("closes its windows on remount and unmount", () => {

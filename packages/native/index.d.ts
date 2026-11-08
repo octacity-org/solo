@@ -49,6 +49,18 @@ export declare class SoloRenderer {
    */
   closeWindow(windowId?: number | undefined | null): void
   /**
+   * Opt the main window, or the window `window_id`, in or out of close
+   * requests: while guarded, its close button leaves it open and emits
+   * `windowCloseRequested`. `closeWindow` always closes.
+   */
+  setWindowCloseGuard(guarded: boolean, windowId?: number | undefined | null): void
+  /**
+   * Ask to close the main window, or the window `window_id`, as its close
+   * button does: a guarded window stays open and emits
+   * `windowCloseRequested`; any other closes.
+   */
+  requestWindowClose(windowId?: number | undefined | null): void
+  /**
    * Enter or leave the standard macOS zoomed state. AppKit owns the saved
    * normal frame, so restoring uses exactly the platform's previous frame.
    */
@@ -251,6 +263,16 @@ export declare class TestSoloRenderer {
    * root, as the live renderer does. The main window cannot be closed.
    */
   closeWindow(windowId?: number | undefined | null): void
+  /** Opt a window in or out of close requests, as the live renderer does. */
+  setWindowCloseGuard(guarded: boolean, windowId?: number | undefined | null): void
+  /**
+   * Ask to close a window as its close button does: a guarded window stays
+   * open and emits `windowCloseRequested`; any other closes like
+   * `closeWindow`. This makes the close guard's decision directly rather
+   * than through AppKit's `performClose:`, which would also call back into
+   * windows left by earlier test renderers, whose GPUI app is gone.
+   */
+  requestWindowClose(windowId?: number | undefined | null): void
   /** Content size of the main window, or of the window `window_id`. */
   getWindowSize(windowId?: number | undefined | null): WindowSize
   /** JSON array of the trees of the windows opened with `openWindow`. */

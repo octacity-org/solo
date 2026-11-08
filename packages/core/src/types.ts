@@ -314,6 +314,10 @@ export interface NativeRenderer {
   openWindow?(rootId: number, options?: WindowOptions): void
   showWindow?(windowId?: number): void
   closeWindow?(windowId?: number): void
+  /** Guarded, the close button emits `windowCloseRequested` instead of closing. */
+  setWindowCloseGuard?(guarded: boolean, windowId?: number): void
+  /** Close as the close button does, through the close guard. */
+  requestWindowClose?(windowId?: number): void
   setWindowMaximized?(maximized: boolean, windowId?: number): void
   isWindowMaximized?(windowId?: number): boolean
   quitApplication?(): void

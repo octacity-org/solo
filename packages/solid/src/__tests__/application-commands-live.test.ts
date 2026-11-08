@@ -291,12 +291,23 @@ describe.skipIf(process.platform !== "darwin")("packaged multiple windows", () =
         expect(await text("inspector-count")).toBe(`Inspector: ${before + 1}`)
         await app.getByTestId("increment").click()
         await expect.poll(() => text("inspector-count")).toBe(`Inspector: ${before + 2}`)
+        // A guarded close request goes through AppKit's performClose:, as
+        // the close button does, and leaves the window open.
+        let marker = stderr.length
+        await app.getByTestId("inspector-request-close").click()
+        await expect.poll(() => stderr.slice(marker), { timeout: 5_000 }).toContain("windows:inspector-close-requested")
+        expect(stderr.slice(marker)).not.toContain("windows:inspector-closed")
+        expect(await text("inspector-count")).toBe(`Inspector: ${before + 2}`)
         // Closing disposes the window's tree; the main window keeps running.
-        const marker = stderr.length
+        marker = stderr.length
         await app.getByTestId("inspector-close").click()
         await expect.poll(() => stderr.slice(marker), { timeout: 5_000 }).toContain("windows:inspector-closed")
         expect(await app.getByTestId("inspector-count").count()).toBe(0)
       }
+      const marker = stderr.length
+      await app.getByTestId("request-close").click()
+      await expect.poll(() => stderr.slice(marker), { timeout: 5_000 }).toContain("windows:main-close-requested")
+      expect(await app.getByTestId("count").count()).toBe(1)
       await app.getByTestId("quit").click()
       await expect(exit).resolves.toEqual({ code: 0, signal: null })
     } catch (error) {

@@ -415,6 +415,27 @@ impl TestSoloRenderer {
         Ok(())
     }
 
+    /// Opt a window in or out of close requests, as the live renderer does.
+    #[napi]
+    pub fn set_window_close_guard(&self, guarded: bool, window_id: Option<f64>) -> Result<()> {
+        let root = window_id.map(to_element_id).transpose()?;
+        in_view(root, move |view, _window, _cx| view.close_guarded = guarded)
+    }
+
+    /// Ask to close a window as its close button does: a guarded window stays
+    /// open and emits `windowCloseRequested`; any other closes like
+    /// `closeWindow`. This makes the close guard's decision directly rather
+    /// than through AppKit's `performClose:`, which would also call back into
+    /// windows left by earlier test renderers, whose GPUI app is gone.
+    #[napi]
+    pub fn request_window_close(&self, window_id: Option<f64>) -> Result<()> {
+        let root = window_id.map(to_element_id).transpose()?;
+        if in_view(root, |view, _window, _cx| view.allow_close())? {
+            return self.close_window(window_id);
+        }
+        Ok(())
+    }
+
     /// Content size of the main window, or of the window `window_id`.
     #[napi]
     pub fn get_window_size(&self, window_id: Option<f64>) -> Result<WindowSize> {
