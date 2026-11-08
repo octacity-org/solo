@@ -114,7 +114,7 @@ fn with_test_state<R>(
 
 /// Run `f` against the test app, if a `TestSoloRenderer` exists on this
 /// thread.
-pub(crate) fn with_app<R>(f: impl FnOnce(&gpui::App) -> R) -> Option<R> {
+pub(crate) fn with_app<R>(f: impl FnOnce(&mut gpui::App) -> R) -> Option<R> {
     TEST_STATE.with(|cell| {
         let mut borrow = cell.borrow_mut();
         borrow.as_mut().map(|state| state.cx.update(|app| f(app)))

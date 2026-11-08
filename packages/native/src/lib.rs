@@ -1,6 +1,7 @@
 #![deny(clippy::all)]
 
 mod alerts;
+mod application;
 mod automation;
 mod application_commands;
 mod custom_elements;

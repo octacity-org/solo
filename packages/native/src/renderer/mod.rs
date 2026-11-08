@@ -564,6 +564,7 @@ pub fn run_main_loop() -> Result<()> {
         crate::custom_elements::input::init(cx);
         MAIN_APP.with(|app| *app.borrow_mut() = Some(cx.to_async()));
         crate::screens::observe(cx);
+        crate::application::observe(cx);
         match crate::macos_shutdown::install() {
             Ok(guard) => MAIN_SHUTDOWN.with(|slot| *slot.borrow_mut() = Some(guard)),
             Err(error) => log::error!("Failed to install the shutdown delegate: {error}"),

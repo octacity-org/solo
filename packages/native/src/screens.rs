@@ -116,7 +116,7 @@ pub fn get_screens() -> Result<Vec<Screen>> {
         }
         // `TestSoloRenderer` runs GPUI on this thread.
         #[cfg(feature = "test-support")]
-        if let Some(screens) = crate::test_renderer::with_app(list) {
+        if let Some(screens) = crate::test_renderer::with_app(|cx| list(cx)) {
             return Ok(screens);
         }
         Err(Error::from_reason("getScreens needs a running Solo app"))

@@ -661,8 +661,28 @@ export interface EventPayload {
   modifiers?: EventModifiers
 }
 
+/** The keyboard layout currently selected (macOS). */
+export declare function getKeyboardLayout(): KeyboardLayout
+
 /** The connected screens (macOS). Ids are stable display UUIDs. */
 export declare function getScreens(): Array<Screen>
+
+/** `"nominal"`, `"fair"`, `"serious"` or `"critical"` (macOS). */
+export declare function getThermalState(): string
+
+/** Hide the application, as its Hide menu command does (macOS). */
+export declare function hideApplication(): void
+
+/** Hide every other application, as Hide Others does (macOS). */
+export declare function hideOtherApplications(): void
+
+/** The keyboard layout (input source) currently selected. */
+export interface KeyboardLayout {
+  /** Unique identifier, such as `com.apple.keylayout.US`. */
+  id: string
+  /** Name to show, such as `U.S.`. */
+  name: string
+}
 
 export interface MenuBarOptions {
   /** Absolute path to a template image displayed in the macOS menu bar. */
@@ -708,6 +728,13 @@ export declare function registerUrlScheme(scheme: string): Promise<void>
  */
 export declare function requestProcessExit(code: number): void
 
+/**
+ * Quit, then open the app bundle again once this process has exited
+ * (macOS). Only a packaged `.app` can restart: run any other way, the
+ * executable is `bun` itself, which would reopen without the app.
+ */
+export declare function restartApplication(): void
+
 /** Show a file or folder selected in a Finder window. macOS only. */
 export declare function revealPath(path: string): void
 
@@ -745,6 +772,15 @@ export interface ScreenRect {
  * checked}`, `{type:"separator"}` or `{type:"status",label}`.
  */
 export declare function setDockMenu(itemsJson: string): void
+
+/**
+ * Whether the system shows scroll bars only while scrolling: System
+ * Settings → Appearance → "Show scroll bars" (macOS).
+ */
+export declare function shouldAutoHideScrollbars(): boolean
+
+/** Show the applications hidden by Hide Others, as Show All does (macOS). */
+export declare function showAllApplications(): void
 
 /** The outcome of moving one path to the Trash. */
 export interface TrashResult {

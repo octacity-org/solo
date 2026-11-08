@@ -18,6 +18,7 @@ import { mount, mountWindowRoot, resetIdCounter } from "./runtime.js"
 import { requireCapability } from "./capability.js"
 import { receiveApplicationReopen, receiveDockMenuAction } from "./dock.js"
 import { receiveScreensChanged } from "./screens.js"
+import { receiveKeyboardLayoutChange, receiveThermalStateChange } from "./application.js"
 import { receiveOpenUrls } from "./open-urls.js"
 
 export interface Root {
@@ -248,6 +249,8 @@ function createNativeRenderer(
         else if (event.eventType === "applicationReopen") receiveApplicationReopen()
         else if (event.eventType === "dockMenuAction") receiveDockMenuAction(event.value)
         else if (event.eventType === "screensChanged") receiveScreensChanged()
+        else if (event.eventType === "thermalStateChange") receiveThermalStateChange(event.value)
+        else if (event.eventType === "keyboardLayoutChange") receiveKeyboardLayoutChange(event.value)
       }
       handleSoloEvent(event)
       onEvent?.(event)
