@@ -149,6 +149,7 @@ renders as plain text.
 |---|---|---|
 | More windows sharing app state | `openWindow()` | [multiple-windows.md](docs/multiple-windows.md) |
 | Screens, and opening a window on one | `getScreens()`, `onScreensChanged()`, the `screen` window option | [multiple-windows.md](docs/multiple-windows.md#screens) |
+| Fullscreen, minimize, background and size of an open window | `toggleFullscreen()`, `minimize()`, `setBackground()`, `resize()` | [multiple-windows.md](docs/multiple-windows.md#window-state) |
 | Confirm before a window closes | `onCloseRequest`, `requestClose()` | [multiple-windows.md](docs/multiple-windows.md#close-requests) |
 | Context menus | `createContextMenu()` | [context-menus.md](docs/context-menus.md) |
 | Application commands | `registerApplicationCommand()` | [application-commands.md](docs/application-commands.md) |

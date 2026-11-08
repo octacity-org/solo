@@ -66,6 +66,65 @@ describe("application lifecycle", () => {
     ])
     root.unmount()
   })
+
+  it("routes window-state calls to the main window and to openWindow windows", () => {
+    class StateRenderer extends WindowsRenderer {
+      fullscreen = new Set<number | undefined>()
+      setWindowFullscreen(fullscreen: boolean, windowId?: number): void {
+        this.calls.push(["fullscreen", fullscreen, windowId])
+        if (fullscreen) this.fullscreen.add(windowId)
+        else this.fullscreen.delete(windowId)
+      }
+      isWindowFullscreen(windowId?: number): boolean {
+        return this.fullscreen.has(windowId)
+      }
+      minimizeWindow(windowId?: number): void {
+        this.calls.push(["minimize", windowId])
+      }
+      setWindowBackground(background: string, windowId?: number): void {
+        this.calls.push(["background", background, windowId])
+      }
+      resizeWindow(width: number, height: number, windowId?: number): void {
+        this.calls.push(["resize", width, height, windowId])
+      }
+    }
+    const renderer = new StateRenderer()
+    const root = render(() => <Text>main</Text>, { renderer })
+    root.enterFullscreen()
+    expect(root.isFullscreen()).toBe(true)
+    root.toggleFullscreen()
+    root.minimizeWindow()
+    root.setWindowBackground("blurred")
+    root.resizeWindow({ width: 640, height: 480 })
+    expect(renderer.calls).toEqual([
+      ["fullscreen", true, undefined],
+      ["fullscreen", false, undefined],
+      ["minimize", undefined],
+      ["background", "blurred", undefined],
+      ["resize", 640, 480, undefined],
+    ])
+
+    renderer.calls = []
+    const window = openWindow(() => <Text>inspector</Text>)
+    window.toggleFullscreen()
+    expect(window.isFullscreen()).toBe(true)
+    window.exitFullscreen()
+    window.minimize()
+    window.setBackground("transparent")
+    window.resize({ width: 300, height: 200 })
+    expect(renderer.calls.slice(1)).toEqual([
+      ["fullscreen", true, window.id],
+      ["fullscreen", false, window.id],
+      ["minimize", window.id],
+      ["background", "transparent", window.id],
+      ["resize", 300, 200, window.id],
+    ])
+
+    window.close()
+    expect(() => window.resize({ width: 1, height: 1 })).toThrow("closed window")
+    expect(() => window.isFullscreen()).toThrow("closed window")
+    root.unmount()
+  })
 })
 
 /** Records window calls; `windows` holds the roots native would paint. */

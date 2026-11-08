@@ -1,7 +1,7 @@
 // Solo — Solid bindings for Solo.
 
 export { openWindow, render } from "./root.js"
-export type { AppWindow, CloseRequestHandler, OpenWindowOptions, Root, RenderOptions } from "./root.js"
+export type { AppWindow, CloseRequestHandler, OpenWindowOptions, Root, RenderOptions, WindowBackground } from "./root.js"
 export { registerApplicationCommand } from "./commands.js"
 export { configureMenuBar } from "./menu-bar.js"
 export type { MenuBarConfiguration, MenuBarItem } from "./menu-bar.js"

@@ -320,6 +320,13 @@ export interface NativeRenderer {
   requestWindowClose?(windowId?: number): void
   setWindowMaximized?(maximized: boolean, windowId?: number): void
   isWindowMaximized?(windowId?: number): boolean
+  setWindowFullscreen?(fullscreen: boolean, windowId?: number): void
+  isWindowFullscreen?(windowId?: number): boolean
+  minimizeWindow?(windowId?: number): void
+  /** `"opaque"`, `"transparent"` or `"blurred"`. */
+  setWindowBackground?(background: string, windowId?: number): void
+  /** Content size in logical pixels, as `getWindowSize` reports it. */
+  resizeWindow?(width: number, height: number, windowId?: number): void
   quitApplication?(): void
   /** Content size in logical pixels. */
   getWindowSize?(windowId?: number): { width: number; height: number }

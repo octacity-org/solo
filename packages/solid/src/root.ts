@@ -39,8 +39,18 @@ export interface Root {
   toggleWindowMaximized: () => void
   /** Read the current native zoomed/maximized state. */
   isWindowMaximized: () => boolean
+  /** Enter native fullscreen. The transition is animated. */
+  enterFullscreen: () => void
+  exitFullscreen: () => void
+  toggleFullscreen: () => void
+  isFullscreen: () => boolean
+  /** Minimize the window into the Dock. */
+  minimizeWindow: () => void
+  setWindowBackground: (background: WindowBackground) => void
   /** The window's content size in logical pixels. */
   getWindowSize: () => { width: number; height: number }
+  /** Resize the content to a size in logical pixels, as getWindowSize reports it. */
+  resizeWindow: (size: { width: number; height: number }) => void
   /** Explicitly terminate the native application. */
   quitApplication: () => void
 }
@@ -65,9 +75,22 @@ export interface AppWindow {
   restore: () => void
   toggleMaximized: () => void
   isMaximized: () => boolean
+  /** Enter native fullscreen. The transition is animated. */
+  enterFullscreen: () => void
+  exitFullscreen: () => void
+  toggleFullscreen: () => void
+  isFullscreen: () => boolean
+  /** Minimize the window into the Dock. */
+  minimize: () => void
+  setBackground: (background: WindowBackground) => void
   /** The window's content size in logical pixels. */
   size: () => { width: number; height: number }
+  /** Resize the content to a size in logical pixels, as size() reports it. */
+  resize: (size: { width: number; height: number }) => void
 }
+
+/** A window's background, as the `windowBackground` option takes it. */
+export type WindowBackground = "opaque" | "transparent" | "blurred"
 
 /**
  * Decides whether a window closes (macOS). The window's close button and
@@ -139,6 +162,25 @@ function setMainCloseGuard(slot: RenderSlot, host: NativeRenderer, handler?: Clo
     host.setWindowCloseGuard?.(false)
   }
   slot.closeGuarded = Boolean(handler)
+}
+
+/** Window-state calls shared by the render root and AppWindow. */
+function windowState(host: NativeRenderer, windowId?: number) {
+  const fullscreen = (): boolean =>
+    requireCapability(host, "isWindowFullscreen", "expose fullscreen window state")(windowId)
+  const setFullscreen = (value: boolean): void =>
+    requireCapability(host, "setWindowFullscreen", "support fullscreen windows")(value, windowId)
+  return {
+    enterFullscreen: () => setFullscreen(true),
+    exitFullscreen: () => setFullscreen(false),
+    toggleFullscreen: () => setFullscreen(!fullscreen()),
+    isFullscreen: fullscreen,
+    minimize: () => requireCapability(host, "minimizeWindow", "support minimizing windows")(windowId),
+    setBackground: (background: WindowBackground) =>
+      requireCapability(host, "setWindowBackground", "support window backgrounds")(background, windowId),
+    resize: ({ width, height }: { width: number; height: number }) =>
+      requireCapability(host, "resizeWindow", "support resizing windows")(width, height, windowId),
+  }
 }
 
 function openWindows(): Map<number, () => void> {
@@ -215,6 +257,7 @@ export function render(code: () => SolidElement, options: RenderOptions = {}): R
 
   let disposeTree: () => void = mount(code, host)
   setMainCloseGuard(slot, host, options.onCloseRequest)
+  const state = windowState(host)
   slot.root = {
     unmount: () => {
       closeAllWindows()
@@ -239,7 +282,14 @@ export function render(code: () => SolidElement, options: RenderOptions = {}): R
     },
     isWindowMaximized: () =>
       requireCapability(host, "isWindowMaximized", "expose maximized window state")(),
+    enterFullscreen: state.enterFullscreen,
+    exitFullscreen: state.exitFullscreen,
+    toggleFullscreen: state.toggleFullscreen,
+    isFullscreen: state.isFullscreen,
+    minimizeWindow: state.minimize,
+    setWindowBackground: state.setBackground,
     getWindowSize: () => requireCapability(host, "getWindowSize", "expose the window size")(),
+    resizeWindow: state.resize,
     quitApplication: () =>
       requireCapability(host, "quitApplication", "support quitting applications")(),
   }
@@ -312,6 +362,13 @@ export function openWindow(code: () => SolidElement, options: OpenWindowOptions 
     assertOpen(value ? "maximize" : "restore")
     requireCapability(host, "setWindowMaximized", "support maximizing windows")(value, rootId)
   }
+  const state = windowState(host, rootId)
+  /** `call`, once the window is known to be open. */
+  const whileOpen = <A extends unknown[], R>(action: string, call: (...args: A) => R) =>
+    (...args: A): R => {
+      assertOpen(action)
+      return call(...args)
+    }
 
   return {
     id: rootId,
@@ -335,9 +392,16 @@ export function openWindow(code: () => SolidElement, options: OpenWindowOptions 
     restore: () => setMaximized(false),
     toggleMaximized: () => setMaximized(!maximized()),
     isMaximized: maximized,
+    enterFullscreen: whileOpen("change", state.enterFullscreen),
+    exitFullscreen: whileOpen("change", state.exitFullscreen),
+    toggleFullscreen: whileOpen("change", state.toggleFullscreen),
+    isFullscreen: whileOpen("read", state.isFullscreen),
+    minimize: whileOpen("minimize", state.minimize),
+    setBackground: whileOpen("change", state.setBackground),
     size: () => {
       assertOpen("measure")
       return requireCapability(host, "getWindowSize", "expose the window size")(rootId)
     },
+    resize: whileOpen("resize", state.resize),
   }
 }

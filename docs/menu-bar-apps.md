@@ -73,7 +73,9 @@ application.getWindowSize() // content size in logical pixels
 
 These methods use `NSWindow`'s native zoom operation, so restoring returns to
 the frame macOS saved before maximizing. A change made with the green window
-button is visible through `isWindowMaximized()` as well.
+button is visible through `isWindowMaximized()` as well. Fullscreen,
+minimizing, the background and resizing are in
+[multiple-windows.md](multiple-windows.md#window-state).
 
 ## State across reopening
 
