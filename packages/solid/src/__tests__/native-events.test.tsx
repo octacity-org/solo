@@ -7,6 +7,7 @@ import type { EventPayload } from "@solo/native"
 import { createSolidNativeTestRoot, hasNativeTestRenderer } from "../testing.js"
 import type { SolidNativeTestRoot } from "../testing.js"
 import { Text } from "../components.js"
+import { isCI, readPng } from "./test-utils.js"
 
 const describeNative = hasNativeTestRenderer ? describe : describe.skip
 
@@ -113,6 +114,63 @@ describeNative("events", () => {
 
       testRoot.renderer.nativeSimulateMouseMove!(500, 500)
       expect(testRoot.getAllText()).toEqual(["not hovered"])
+    })
+  })
+
+  describe("file drop", () => {
+    const files = ["/tmp/solo-drop/a.png", "/tmp/solo-drop/b folder"]
+
+    it("delivers dropped paths to the innermost onFileDrop target", () => {
+      const outer = vi.fn()
+      const inner = vi.fn()
+      testRoot.render(() => (
+        <div style={{ width: 300, height: 200 }} onFileDrop={outer}>
+          <div style={{ width: 100, height: 50 }} onFileDrop={inner} />
+        </div>
+      ))
+
+      testRoot.renderer.nativeSimulateFileDrop(files, 10, 10)
+      expect(outer).not.toHaveBeenCalled()
+      expect(inner).toHaveBeenCalledTimes(1)
+      const event = inner.mock.calls[0]![0] as EventPayload
+      expect(event.eventType).toBe("fileDrop")
+      expect(event.paths).toEqual(files)
+      expect([event.x, event.y]).toEqual([10, 10])
+
+      testRoot.renderer.nativeSimulateFileDrop(files, 10, 150)
+      expect(inner).toHaveBeenCalledTimes(1)
+      expect(outer).toHaveBeenCalledTimes(1)
+      expect((outer.mock.calls[0]![0] as EventPayload).paths).toEqual(files)
+    })
+
+    // GPUI applies drag-over styles at paint time, not layout, so the test
+    // samples a colour: a black box that paints red while files hover it.
+    it("applies fileDragOver only while files hover the element", () => {
+      testRoot.render(() => (
+        <div style={{ width: "100%", height: "100%", backgroundColor: "#000000" }}>
+          <div
+            style={{ width: 100, height: 40, backgroundColor: "#000000", fileDragOver: { backgroundColor: "#ff0000" } }}
+            onFileDrop={() => {}}
+          />
+        </div>
+      ))
+      const highlighted = (name: string) => {
+        const path = `/tmp/solo-file-drag-${name}.png`
+        if (fs.existsSync(path)) fs.unlinkSync(path)
+        testRoot.renderer.captureScreenshot(path)
+        const png = readPng(path)
+        const scale = png.width / testRoot.renderer.getWindowSize().width
+        const [r, g, b] = png.rgb(50 * scale, 20 * scale)
+        return r > 200 && g < 60 && b < 60
+      }
+
+      expect(highlighted("idle")).toBe(false)
+      // Metal on CI VMs does not repaint between captures (see expectScreenshotsDiffer).
+      if (isCI) return
+      testRoot.renderer.nativeSimulateFileDragOver(files, 10, 10)
+      expect(highlighted("over")).toBe(true)
+      testRoot.renderer.nativeSimulateFileDrop(files, 10, 10)
+      expect(highlighted("dropped")).toBe(false)
     })
   })
 

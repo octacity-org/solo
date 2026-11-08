@@ -327,6 +327,45 @@ pub fn dispatch_mouse_move(
     );
 }
 
+// ── File drop ───────────────────────────────────────────────────────
+
+/// Drag files from outside the app over `(x, y)`, as the platform reports a
+/// Finder drag entering or moving within the window. The drag stays active
+/// until [`dispatch_file_drop`].
+#[cfg(feature = "automation")]
+pub fn dispatch_file_drag_over(
+    window: &mut Window,
+    cx: &mut App,
+    paths: Vec<String>,
+    x: f64,
+    y: f64,
+) {
+    window.dispatch_event(
+        gpui::FileDropEvent::Entered {
+            position: point(px(x as f32), px(y as f32)),
+            paths: gpui::ExternalPaths(paths.into_iter().map(Into::into).collect()),
+        }
+        .to_platform_input(),
+        cx,
+    );
+}
+
+/// Drop files from outside the app at `(x, y)`: the full platform sequence
+/// of enter, submit, exit and session end.
+#[cfg(feature = "automation")]
+pub fn dispatch_file_drop(window: &mut Window, cx: &mut App, paths: Vec<String>, x: f64, y: f64) {
+    dispatch_file_drag_over(window, cx, paths, x, y);
+    for event in [
+        gpui::FileDropEvent::Submit {
+            position: point(px(x as f32), px(y as f32)),
+        },
+        gpui::FileDropEvent::Exited,
+        gpui::FileDropEvent::Ended,
+    ] {
+        window.dispatch_event(event.to_platform_input(), cx);
+    }
+}
+
 // ── Keyboard ────────────────────────────────────────────────────────
 
 /// Parse one keystroke, e.g. `"a"`, `"enter"`, `"cmd-shift-p"`.

@@ -2279,6 +2279,34 @@ impl SoloRenderer {
         })
     }
 
+    /// Drag files from outside the app over `(x, y)` without dropping them.
+    #[napi]
+    pub fn simulate_file_drag_over(
+        &self,
+        paths: Vec<String>,
+        x: f64,
+        y: f64,
+        element_id: Option<f64>,
+    ) -> Result<()> {
+        self.input_in_window(self.window_of_arg(element_id)?, move |window, cx| {
+            crate::automation::dispatch_file_drag_over(window, cx, paths, x, y);
+        })
+    }
+
+    /// Drop files from outside the app at `(x, y)`, as a Finder drop would.
+    #[napi]
+    pub fn simulate_file_drop(
+        &self,
+        paths: Vec<String>,
+        x: f64,
+        y: f64,
+        element_id: Option<f64>,
+    ) -> Result<()> {
+        self.input_in_window(self.window_of_arg(element_id)?, move |window, cx| {
+            crate::automation::dispatch_file_drop(window, cx, paths, x, y);
+        })
+    }
+
     /// Type a space-separated sequence of keystrokes, e.g. `"a enter cmd-s"`.
     ///
     /// Text is inserted through GPUI's input pipeline, so it lands in whatever

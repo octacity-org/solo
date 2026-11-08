@@ -239,6 +239,9 @@ pub struct StyleDesc {
     // Uses Box to avoid infinite-size struct (StyleDesc contains StyleDesc).
     pub hover: Option<Box<StyleDesc>>,
     pub active: Option<Box<StyleDesc>>,
+    /// Applied while files dragged in from outside the app hover over the
+    /// element, e.g. from Finder. Pairs with the `fileDrop` event.
+    pub file_drag_over: Option<Box<StyleDesc>>,
 }
 
 /// Parse a color string (hex, rgb, etc.) to GPUI Hsla

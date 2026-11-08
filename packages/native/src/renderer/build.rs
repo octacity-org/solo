@@ -198,6 +198,12 @@ pub(crate) fn build_div(
         if let Some(ref active_style) = style.active {
             el = el.active(|refinement| apply_styles(refinement, active_style));
         }
+        // Files dragged in from outside the app arrive as a GPUI drag of
+        // `ExternalPaths`; GPUI applies this while one hovers the element.
+        if let Some(ref drag_style) = style.file_drag_over {
+            let refinement = apply_styles(gpui::StyleRefinement::default(), drag_style);
+            el = el.drag_over::<gpui::ExternalPaths>(move |_, _, _, _| refinement.clone());
+        }
 
         if crate::style::should_occlude(style) {
             // BlockMouse (occlude) stops the hit test. The parent scroller
@@ -501,6 +507,27 @@ pub(crate) fn build_div(
                         p.key = Some(key_event.keystroke.key.clone());
                         p.key_char = key_event.keystroke.key_char.clone();
                         p.modifiers = Some(key_event.keystroke.modifiers.into());
+                    });
+                });
+            }
+
+            // ── File drop ────────────────────────────────────────
+            // GPUI turns a platform file drag (Finder) into a drag of
+            // `ExternalPaths`; the innermost element with this listener
+            // under the pointer takes the drop.
+            "fileDrop" => {
+                el = el.on_drop(move |external: &gpui::ExternalPaths, window, _cx| {
+                    emit_event_full(&callback, id, "fileDrop", |p| {
+                        let (x, y) = point_to_xy(window.mouse_position());
+                        p.x = Some(x);
+                        p.y = Some(y);
+                        p.paths = Some(
+                            external
+                                .paths()
+                                .iter()
+                                .map(|path| path.to_string_lossy().into_owned())
+                                .collect(),
+                        );
                     });
                 });
             }
