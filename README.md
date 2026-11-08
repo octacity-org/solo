@@ -148,6 +148,7 @@ renders as plain text.
 | Feature | API | Guide |
 |---|---|---|
 | More windows sharing app state | `openWindow()` | [multiple-windows.md](docs/multiple-windows.md) |
+| Screens, and opening a window on one | `getScreens()`, `onScreensChanged()`, the `screen` window option | [multiple-windows.md](docs/multiple-windows.md#screens) |
 | Context menus | `createContextMenu()` | [context-menus.md](docs/context-menus.md) |
 | Application commands | `registerApplicationCommand()` | [application-commands.md](docs/application-commands.md) |
 | Menu-bar apps that outlive their windows | `render(..., { menuBar })`, `configureMenuBar()` | [menu-bar-apps.md](docs/menu-bar-apps.md) |

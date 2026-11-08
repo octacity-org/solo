@@ -19,6 +19,8 @@ export {
   writeClipboardText,
 } from "./desktop.js"
 export type { TrashResult } from "./desktop.js"
+export { getScreens, onScreensChanged } from "./screens.js"
+export type { Screen, ScreenRect } from "./screens.js"
 export { onOpenUrls, registerUrlScheme } from "./open-urls.js"
 export type { OpenUrlsListener } from "./open-urls.js"
 export { showAlert } from "./alert.js"

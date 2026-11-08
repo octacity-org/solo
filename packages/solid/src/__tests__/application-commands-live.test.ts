@@ -277,6 +277,9 @@ describe.skipIf(process.platform !== "darwin")("packaged multiple windows", () =
       })
       const text = (id: string) => app.getByTestId(id).textContent()
       const painted = (id: string) => async () => (await app.getByTestId(id).bounds()).height
+      // Both windows opened on the primary screen, listed before render().
+      await expect.poll(painted("screens"), { timeout: 5_000 }).toBeGreaterThan(0)
+      expect(await text("screens")).toMatch(/^Screens: [1-9]\d*, primary: yes$/)
       for (let round = 0; round < 2; round += 1) {
         await expect.poll(painted("open"), { timeout: 5_000 }).toBeGreaterThan(0)
         await app.getByTestId("open").click()

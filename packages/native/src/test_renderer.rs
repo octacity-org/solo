@@ -114,6 +114,15 @@ fn with_test_state<R>(
 
 /// Like `with_test_state`, on the window that paints `root`: an `openWindow`
 /// window for `Some`, the main window for `None`.
+/// Run `f` against the test app, if a `TestSoloRenderer` exists on this
+/// thread.
+pub(crate) fn with_app<R>(f: impl FnOnce(&gpui::App) -> R) -> Option<R> {
+    TEST_STATE.with(|cell| {
+        let mut borrow = cell.borrow_mut();
+        borrow.as_mut().map(|state| state.cx.update(|app| f(app)))
+    })
+}
+
 fn with_window<R>(
     root: Option<u64>,
     f: impl FnOnce(
@@ -321,6 +330,8 @@ impl TestSoloRenderer {
             .add_window_root(root)
             .map_err(Error::from_reason)?;
         let opened = with_test_state(|cx, _window, view| {
+            // Offscreen windows have no screen, but an unknown one still fails.
+            cx.update(|app| crate::screens::display_for(options.screen.as_deref(), app))?;
             // One automation clock for the whole app.
             let clock = cx.update(|app| view.read(app).clock.clone());
             let size = gpui::size(

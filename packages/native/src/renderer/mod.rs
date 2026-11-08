@@ -153,7 +153,7 @@ mod application_lifecycle_tests {
 
     #[test]
     fn window_options_reach_gpui() {
-        let defaults = to_gpui_window_options(&WindowOptions::default(), gpui::Bounds::default());
+        let defaults = to_gpui_window_options(&WindowOptions::default(), gpui::Bounds::default(), None);
         assert!(defaults.focus && defaults.show && defaults.is_movable && defaults.is_minimizable);
         assert_eq!(defaults.kind, gpui::WindowKind::Normal);
         assert_eq!(defaults.tabbing_identifier, None);
@@ -169,16 +169,22 @@ mod application_lifecycle_tests {
             use_display_p3: Some(true),
             ..WindowOptions::default()
         };
-        let gpui_options = to_gpui_window_options(&options, gpui::Bounds::default());
+        let gpui_options = to_gpui_window_options(&options, gpui::Bounds::default(), None);
         assert!(!gpui_options.focus && !gpui_options.show);
         assert_eq!(gpui_options.kind, gpui::WindowKind::Floating);
         assert!(!gpui_options.is_movable && !gpui_options.is_minimizable);
         assert_eq!(gpui_options.tabbing_identifier.as_deref(), Some("documents"));
         assert!(gpui_options.use_display_p3);
+        assert_eq!(defaults.display_id, None);
+        let display = Some(gpui::DisplayId::new(7));
+        assert_eq!(
+            to_gpui_window_options(&options, gpui::Bounds::default(), display).display_id,
+            display
+        );
 
         let popup = WindowOptions { kind: Some("popup".into()), ..WindowOptions::default() };
         assert_eq!(
-            to_gpui_window_options(&popup, gpui::Bounds::default()).kind,
+            to_gpui_window_options(&popup, gpui::Bounds::default(), None).kind,
             gpui::WindowKind::PopUp
         );
     }
@@ -554,6 +560,7 @@ pub fn run_main_loop() -> Result<()> {
         init_key_bindings(cx);
         crate::custom_elements::input::init(cx);
         MAIN_APP.with(|app| *app.borrow_mut() = Some(cx.to_async()));
+        crate::screens::observe(cx);
         match crate::macos_shutdown::install() {
             Ok(guard) => MAIN_SHUTDOWN.with(|slot| *slot.borrow_mut() = Some(guard)),
             Err(error) => log::error!("Failed to install the shutdown delegate: {error}"),
@@ -677,20 +684,15 @@ fn open_secondary_window(root: u64, options: WindowOptions) -> Result<()> {
     let config = window_config()
         .ok_or_else(|| Error::from_reason("GPUI application is not initialized"))?;
     app_update(|cx| -> Result<()> {
-        let width = options.width.unwrap_or(800.0);
-        let height = options.height.unwrap_or(600.0);
         let title = options.title.clone().unwrap_or_else(|| "Solo".to_string());
-        let bounds = gpui::Bounds::centered(
-            None,
-            gpui::size(gpui::px(width as f32), gpui::px(height as f32)),
-            cx,
-        );
+        let display = crate::screens::display_for(options.screen.as_deref(), cx)?;
+        let bounds = centered_window_bounds(&options, display, cx);
         // One automation clock for the whole app.
         let clock = GPUI_WINDOW
             .with(|window| *window.borrow())
             .and_then(|window| window.read_with(cx, |view, _| view.clock.clone()).ok());
         let window = cx
-            .open_window(to_gpui_window_options(&options, bounds), |_window, cx| {
+            .open_window(to_gpui_window_options(&options, bounds, display), |_window, cx| {
                 cx.new(|_| {
                     SoloView::new(config.tree, config.callback, title, config.selection)
                         .for_window_root(root, clock)
@@ -728,25 +730,26 @@ fn open_macos_window(cx: &mut gpui::App) -> Result<gpui::WindowHandle<SoloView>>
     let config = MAC_APPLICATION
         .with(|state| state.borrow().as_ref().map(|state| state.window.clone()))
         .ok_or_else(|| Error::from_reason("GPUI application lifecycle is not initialized"))?;
-    let width = config.options.width.unwrap_or(800.0);
-    let height = config.options.height.unwrap_or(600.0);
     let title = config
         .options
         .title
         .clone()
         .unwrap_or_else(|| "Solo".to_string());
-    let bounds = gpui::Bounds::centered(
-        None,
-        gpui::size(gpui::px(width as f32), gpui::px(height as f32)),
-        cx,
-    );
+    // `init` validated the screen. A window reopened after that screen was
+    // disconnected opens on the main screen.
+    let display = config
+        .options
+        .screen
+        .as_deref()
+        .and_then(|screen| crate::screens::find(screen, cx));
+    let bounds = centered_window_bounds(&config.options, display, cx);
     let window_options = config.options.clone();
     let tree = config.tree;
     let callback = config.callback;
     let selection = config.selection;
     let window = cx
         .open_window(
-            to_gpui_window_options(&window_options, bounds),
+            to_gpui_window_options(&window_options, bounds, display),
             |_window, cx| {
                 cx.new(|_| SoloView::new(tree, callback, title, selection))
             },
@@ -1548,6 +1551,7 @@ impl SoloRenderer {
             }
             let quit_mode = quit_mode_for_options(&config.options);
             let activate = activates_on_open(&config.options);
+            let screen = config.options.screen.clone();
             MAC_APPLICATION.with(|state| {
                 *state.borrow_mut() = Some(MacApplicationState {
                     window: config,
@@ -1559,6 +1563,7 @@ impl SoloRenderer {
                 });
             });
             let launched = app_update(|cx| -> Result<()> {
+                crate::screens::display_for(screen.as_deref(), cx)?;
                 cx.set_quit_mode(quit_mode);
                 open_macos_window(cx)?;
                 if activate {
@@ -1590,8 +1595,6 @@ impl SoloRenderer {
             return Err(Error::from_reason("Renderer is already initialized"));
         }
 
-        let width = options.width.unwrap_or(800.0);
-        let height = options.height.unwrap_or(600.0);
         let title = options.title.clone().unwrap_or_else(|| "Solo".to_string());
         let window_options = options.clone();
         let tree = self.tree.clone();
@@ -1608,13 +1611,9 @@ impl SoloRenderer {
                     gpui_platform::application().run(move |cx| {
                         init_key_bindings(cx);
                         crate::custom_elements::input::init(cx);
-                        let bounds = gpui::Bounds::centered(
-                            None,
-                            gpui::size(gpui::px(width as f32), gpui::px(height as f32)),
-                            cx,
-                        );
+                        let bounds = centered_window_bounds(&window_options, None, cx);
                         let window = match cx.open_window(
-                            to_gpui_window_options(&window_options, bounds),
+                            to_gpui_window_options(&window_options, bounds, None),
                             |_window, cx| {
                                 cx.new(|_| SoloView::new(tree, callback, title, selection))
                             },
@@ -2746,6 +2745,9 @@ pub struct WindowOptions {
     pub tabbing_identifier: Option<String>,
     /// Render in the Display P3 color space (macOS). Defaults to false.
     pub use_display_p3: Option<bool>,
+    /// Open on this screen, an `id` from `getScreens()` (macOS). Defaults to
+    /// the main screen. Opening fails when no connected screen has the id.
+    pub screen: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -2796,6 +2798,7 @@ impl Default for WindowOptions {
             minimizable: None,
             tabbing_identifier: None,
             use_display_p3: None,
+            screen: None,
         }
     }
 }
@@ -2812,7 +2815,27 @@ pub(crate) fn validate_window_options(options: &WindowOptions) -> Result<()> {
     if let Some(menu_bar) = options.menu_bar.as_ref() {
         validate_menu_bar_options(menu_bar)?;
     }
+    if cfg!(not(target_os = "macos")) && options.screen.is_some() {
+        return Err(Error::from_reason(
+            "The screen window option is supported only on macOS",
+        ));
+    }
     Ok(())
+}
+
+/// Bounds centered in the visible area of `display`, or of the main screen.
+fn centered_window_bounds(
+    options: &WindowOptions,
+    display: Option<gpui::DisplayId>,
+    cx: &gpui::App,
+) -> gpui::Bounds<gpui::Pixels> {
+    let width = options.width.unwrap_or(800.0);
+    let height = options.height.unwrap_or(600.0);
+    gpui::Bounds::centered(
+        display,
+        gpui::size(gpui::px(width as f32), gpui::px(height as f32)),
+        cx,
+    )
 }
 
 fn window_kind(kind: &str) -> Option<gpui::WindowKind> {
@@ -2833,6 +2856,7 @@ fn activates_on_open(options: &WindowOptions) -> bool {
 fn to_gpui_window_options(
     options: &WindowOptions,
     bounds: gpui::Bounds<gpui::Pixels>,
+    display_id: Option<gpui::DisplayId>,
 ) -> gpui::WindowOptions {
     let title = options.title.clone().unwrap_or_else(|| "Solo".to_string());
     let titlebar_transparent = options.titlebar_transparent.unwrap_or(false);
@@ -2880,6 +2904,7 @@ fn to_gpui_window_options(
         window_min_size,
         tabbing_identifier: options.tabbing_identifier.clone(),
         use_display_p3: options.use_display_p3.unwrap_or(false),
+        display_id,
         ..Default::default()
     }
 }

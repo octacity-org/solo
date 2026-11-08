@@ -58,10 +58,59 @@ titlebar options, `render()` and `openWindow()` accept:
 | `minimizable` | `true` | enable the minimize button |
 | `tabbingIdentifier` | none | windows sharing an identifier can merge into native tabs |
 | `useDisplayP3` | `false` | render in the Display P3 color space |
+| `screen` | the main screen | open on this screen, an `id` from `getScreens()` |
 
 With `focus: false` or `show: false` Solo neither activates the application
 nor brings the window forward, so the window opens without taking focus from
 the frontmost app. `showWindow()` and `focus()` still activate.
+
+## Screens
+
+`getScreens()` lists the connected screens. It works before `render()`, so
+the main window can choose its screen too:
+
+```tsx
+import { getScreens, render } from "@solo/solid"
+
+const saved = loadSavedScreenId() // your app's storage
+const screens = getScreens()
+const screen = screens.find((s) => s.id === saved) ?? screens.find((s) => s.primary)
+
+render(() => <App />, { title: "Editor", screen: screen?.id })
+```
+
+Each screen has:
+
+| field | meaning |
+|---|---|
+| `id` | the display's UUID, stable across reconnects and restarts; store it to reopen a window on the same screen |
+| `bounds` | the whole screen in points, starting at (0, 0) |
+| `visibleBounds` | the part windows can use, without the menu bar and Dock, in the same coordinates |
+| `primary` | true for the screen holding the menu bar |
+
+Rectangles are measured from each screen's own top-left corner, as GPUI
+reports them, so they do not show how screens are arranged relative to one
+another.
+
+A window opens centered in the visible area of its screen. An `id` that no
+connected screen has makes `render()` or `openWindow()` throw, so check a
+stored id against `getScreens()` first, as above. A main window reopened later
+(a menu-bar app's Open, after its screen was disconnected) falls back to the
+main screen.
+
+`onScreensChanged(listener)` calls `listener` when a screen is connected or
+disconnected, or changes size, and returns a function that stops listening.
+One change can call it more than once, and it carries no details: read
+`getScreens()` again.
+
+```ts
+import { getScreens, onScreensChanged } from "@solo/solid"
+
+const stop = onScreensChanged(() => {
+  const ids = new Set(getScreens().map((screen) => screen.id))
+  if (!ids.has(savedScreenId)) savedScreenId = undefined
+})
+```
 
 ## Lifetime
 
@@ -76,7 +125,8 @@ the frontmost app. `showWindow()` and `focus()` still activate.
 ## Limits
 
 - macOS only. On Linux and Windows `openWindow` throws.
-- New windows open centered on the screen.
+- New windows open centered on their screen; there is no option for an
+  exact position yet.
 - File dialogs, the debug overlay, screenshots and clock control in the
   automation protocol use the main window.
 
