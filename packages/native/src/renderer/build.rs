@@ -163,6 +163,65 @@ pub(crate) fn build_element(
     built
 }
 
+thread_local! {
+    /// The drag region the left button went down on, until the pointer moves.
+    static PRESSED_DRAG_REGION: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+/// An app-drawn titlebar, as Zed's own: dragging moves the window, and a
+/// double-click zooms or minimizes as the user's macOS setting says. The move
+/// starts on the first mouse move after the press, from AppKit's current
+/// event, so a plain click still reaches the element's own handlers.
+fn window_drag_region(el: gpui::Stateful<gpui::Div>, id: u64) -> gpui::Stateful<gpui::Div> {
+    use gpui::prelude::*;
+
+    el.window_control_area(gpui::WindowControlArea::Drag)
+        .on_mouse_down(gpui::MouseButton::Left, move |_event, _window, _cx| {
+            PRESSED_DRAG_REGION.set(Some(id));
+        })
+        .on_mouse_up(gpui::MouseButton::Left, |_event, _window, _cx| {
+            PRESSED_DRAG_REGION.set(None);
+        })
+        .on_mouse_down_out(|_event, _window, _cx| PRESSED_DRAG_REGION.set(None))
+        .on_mouse_move(move |_event, window, _cx| {
+            if PRESSED_DRAG_REGION.get() == Some(id) {
+                PRESSED_DRAG_REGION.set(None);
+                if left_mouse_is_current_event() {
+                    window.start_window_move();
+                }
+            }
+        })
+        .on_click(|event, window, _cx| {
+            if event.click_count() == 2 {
+                window.titlebar_double_click();
+            }
+        })
+}
+
+/// AppKit drags the window from its current event. Injected test and
+/// automation input never sets one, so there is no press to drag from.
+#[cfg(target_os = "macos")]
+fn left_mouse_is_current_event() -> bool {
+    use objc2_app_kit::{NSApplication, NSEventType};
+
+    let Some(mtm) = objc2::MainThreadMarker::new() else {
+        return false;
+    };
+    NSApplication::sharedApplication(mtm)
+        .currentEvent()
+        .is_some_and(|event| {
+            matches!(
+                event.r#type(),
+                NSEventType::LeftMouseDown | NSEventType::LeftMouseDragged
+            )
+        })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn left_mouse_is_current_event() -> bool {
+    true
+}
+
 pub(crate) fn build_div(
     element: &crate::retained_tree::RetainedElement,
     style: Option<&StyleDesc>,
@@ -330,6 +389,14 @@ pub(crate) fn build_div(
         .and_then(|index| isize::try_from(index).ok())
     {
         el = el.tab_index(tab_index).tab_stop(tab_index >= 0);
+    }
+    if element
+        .custom_props
+        .get("windowDragRegion")
+        .and_then(|value| value.as_bool())
+        == Some(true)
+    {
+        el = window_drag_region(el, element.id);
     }
 
     // Wire up events.

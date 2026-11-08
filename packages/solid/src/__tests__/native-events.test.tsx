@@ -599,6 +599,36 @@ describeNative("events", () => {
     })
   })
 
+  describe("window drag regions", () => {
+    it("keeps the region's own mouse handlers working through a press and drag", () => {
+      const received: string[] = []
+
+      testRoot.render(() => (
+        <div
+          windowDragRegion
+          style={{ width: 300, height: 40 }}
+          onMouseDown={() => received.push("down")}
+          onMouseMove={(e: EventPayload) => {
+            if (e.pressedButton === 0) received.push("drag")
+          }}
+          onMouseUp={() => received.push("up")}
+          onClick={() => received.push("click")}
+        />
+      ))
+
+      // Injected input has no AppKit event to move the window from, so the
+      // region skips the move and the handlers still see the whole drag.
+      testRoot.renderer.nativeSimulateMouseDown!(10, 10)
+      testRoot.renderer.nativeSimulateMouseMove!(30, 12, 0)
+      testRoot.renderer.nativeSimulateMouseUp!(30, 12)
+      testRoot.renderer.nativeSimulateClick(10, 10)
+
+      // GPUI reports a click when the button comes up inside the element,
+      // so the injected drag ends in one too.
+      expect(received).toEqual(["down", "drag", "click", "up", "down", "click", "up"])
+    })
+  })
+
   describe("mouseMove events", () => {
     it("should handle onMouseMove and receive exact position", () => {
       const receivedEvents: EventPayload[] = []

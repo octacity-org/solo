@@ -21,6 +21,11 @@ export interface ViewProps {
   onMouseLeave?: (event: EventPayload) => void
   /** Stable locator id for automation and tests. */
   testId?: string
+  /**
+   * Dragging this view moves the window, and a double-click zooms or
+   * minimizes it as the user's macOS setting says. For app-drawn titlebars.
+   */
+  windowDragRegion?: boolean
 }
 
 /** A flex container. Maps to the native "div" element. */

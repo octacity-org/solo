@@ -151,6 +151,7 @@ renders as plain text.
 | Screens, and opening a window on one | `getScreens()`, `onScreensChanged()`, the `screen` window option | [multiple-windows.md](docs/multiple-windows.md#screens) |
 | Fullscreen, minimize, background and size of an open window | `toggleFullscreen()`, `minimize()`, `setBackground()`, `resize()` | [multiple-windows.md](docs/multiple-windows.md#window-state) |
 | Confirm before a window closes | `onCloseRequest`, `requestClose()` | [multiple-windows.md](docs/multiple-windows.md#close-requests) |
+| App-drawn titlebars that drag and double-click like the system one | `windowDragRegion`, `appOwnsTitlebarDrag` | [multiple-windows.md](docs/multiple-windows.md#custom-titlebars) |
 | Context menus | `createContextMenu()` | [context-menus.md](docs/context-menus.md) |
 | Application commands | `registerApplicationCommand()` | [application-commands.md](docs/application-commands.md) |
 | Menu-bar apps that outlive their windows | `render(..., { menuBar })`, `configureMenuBar()` | [menu-bar-apps.md](docs/menu-bar-apps.md) |
