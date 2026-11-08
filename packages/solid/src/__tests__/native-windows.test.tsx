@@ -8,6 +8,7 @@ import type { EventPayload } from "@solo/native"
 import { createSolidNativeTestRoot, hasNativeTestRenderer } from "../testing.js"
 import type { SolidNativeTestRoot } from "../testing.js"
 import { Text } from "../components.js"
+import { getScreens } from "../screens.js"
 import { openWindow } from "../root.js"
 import { flushMutations } from "../runtime.js"
 
@@ -61,6 +62,37 @@ describeNative("openWindow on the test renderer", () => {
     expect(main.height).toBeGreaterThan(0)
     expect(main.height).toBeLessThanOrEqual(800)
     expect(() => testRoot.renderer.getWindowSize(999_999)).toThrow(/not open/)
+  })
+
+  it("lists screens and opens a window only on a connected one", () => {
+    testRoot.render(() => <Text>Main</Text>)
+    const screens = getScreens()
+    expect(screens.length).toBeGreaterThan(0)
+    expect(screens.filter((screen) => screen.primary)).toHaveLength(1)
+    for (const { id, bounds, visibleBounds } of screens) {
+      expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+      expect(bounds).toMatchObject({ x: 0, y: 0 })
+      expect(bounds.width).toBeGreaterThan(0)
+      expect(bounds.height).toBeGreaterThan(0)
+      expect(visibleBounds.width).toBeGreaterThan(0)
+      expect(visibleBounds.x + visibleBounds.width).toBeLessThanOrEqual(bounds.width)
+      expect(visibleBounds.y + visibleBounds.height).toBeLessThanOrEqual(bounds.height)
+    }
+
+    // Ids match without regard to case.
+    const window = openWindow(() => <Text>On screen</Text>, {
+      screen: screens[0].id.toUpperCase(),
+      width: 300,
+      height: 200,
+    })
+    expect(window.size()).toEqual({ width: 300, height: 200 })
+    window.close()
+
+    const missing = "00000000-0000-0000-0000-000000000000"
+    expect(() => openWindow(() => <Text>Nowhere</Text>, { screen: missing })).toThrow(
+      /No connected screen has id/,
+    )
+    expect(testRoot.getAllText()).toEqual(["Main"])
   })
 
   it("shares state with the main window and receives its own input", () => {

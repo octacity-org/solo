@@ -593,6 +593,9 @@ export interface EventPayload {
   modifiers?: EventModifiers
 }
 
+/** The connected screens (macOS). Ids are stable display UUIDs. */
+export declare function getScreens(): Array<Screen>
+
 export interface MenuBarOptions {
   /** Absolute path to a template image displayed in the macOS menu bar. */
   iconPath: string
@@ -645,6 +648,28 @@ export declare function revealPath(path: string): void
  * Never returns while the application runs.
  */
 export declare function runMainLoop(): void
+
+export interface Screen {
+  /**
+   * Stable identifier (the display UUID). Pass it as the `screen` window
+   * option, or store it to restore a window on the same screen.
+   */
+  id: string
+  /** The whole screen, starting at (0, 0). */
+  bounds: ScreenRect
+  /** The area windows can use: the screen without the menu bar and Dock. */
+  visibleBounds: ScreenRect
+  /** The screen holding the menu bar. */
+  primary: boolean
+}
+
+/** A rectangle in logical points. */
+export interface ScreenRect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
 
 /**
  * Replace the app-defined items of the Dock icon's menu (macOS). `items_json`
@@ -708,6 +733,11 @@ export interface WindowOptions {
   tabbingIdentifier?: string
   /** Render in the Display P3 color space (macOS). Defaults to false. */
   useDisplayP3?: boolean
+  /**
+   * Open on this screen, an `id` from `getScreens()` (macOS). Defaults to
+   * the main screen. Opening fails when no connected screen has the id.
+   */
+  screen?: string
 }
 
 export interface WindowSize {

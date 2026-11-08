@@ -17,6 +17,7 @@ import { automateWhenPiped } from "./automation-host.js"
 import { mount, mountWindowRoot, resetIdCounter } from "./runtime.js"
 import { requireCapability } from "./capability.js"
 import { receiveApplicationReopen, receiveDockMenuAction } from "./dock.js"
+import { receiveScreensChanged } from "./screens.js"
 import { receiveOpenUrls } from "./open-urls.js"
 
 export interface Root {
@@ -127,6 +128,7 @@ function createNativeRenderer(
         if (event.eventType === "openUrls") receiveOpenUrls(event.urls)
         else if (event.eventType === "applicationReopen") receiveApplicationReopen()
         else if (event.eventType === "dockMenuAction") receiveDockMenuAction(event.value)
+        else if (event.eventType === "screensChanged") receiveScreensChanged()
       }
       handleSoloEvent(event)
       onEvent?.(event)

@@ -21,6 +21,7 @@ mod native_view;
 mod open_urls;
 mod renderer;
 mod retained_tree;
+mod screens;
 mod style;
 mod system_appearance;
 mod syntax;

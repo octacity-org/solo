@@ -5,6 +5,7 @@ export {
   SoloRenderer,
   addRecentDocument,
   enableWorkerMainThread,
+  getScreens,
   moveToTrash,
   openExternalUrl,
   openPath,

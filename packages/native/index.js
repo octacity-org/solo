@@ -581,6 +581,7 @@ module.exports.TestSoloRenderer = nativeBinding.TestSoloRenderer
 module.exports.addRecentDocument = nativeBinding.addRecentDocument
 module.exports.enableAppReload = nativeBinding.enableAppReload
 module.exports.enableWorkerMainThread = nativeBinding.enableWorkerMainThread
+module.exports.getScreens = nativeBinding.getScreens
 module.exports.moveToTrash = nativeBinding.moveToTrash
 module.exports.openExternalUrl = nativeBinding.openExternalUrl
 module.exports.openPath = nativeBinding.openPath

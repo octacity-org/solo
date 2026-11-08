@@ -55,6 +55,7 @@ const NATIVE_EXPORTS = [
   "SoloRenderer",
   "addRecentDocument",
   "enableWorkerMainThread",
+  "getScreens",
   "moveToTrash",
   "openExternalUrl",
   "openPath",
