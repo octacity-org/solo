@@ -99,6 +99,27 @@ describeNative("openWindow on the test renderer", () => {
     expect(testRoot.renderer.getWindowTabbingIdentifier()).toBe("documents")
   })
 
+  it("marks each window's document edited and shows its path", () => {
+    const { inspector } = mountApp()
+    const renderer = testRoot.renderer
+    expect(renderer.isWindowDocumentEdited(inspector.id)).toBe(false)
+    expect(renderer.getWindowDocumentPath(inspector.id)).toBeNull()
+
+    inspector.setDocumentEdited(true)
+    inspector.setDocumentPath("/Users/me/notes.txt")
+    expect(renderer.isWindowDocumentEdited(inspector.id)).toBe(true)
+    expect(renderer.getWindowDocumentPath(inspector.id)).toBe("/Users/me/notes.txt")
+    // The main window keeps its own state.
+    expect(renderer.isWindowDocumentEdited()).toBe(false)
+    expect(renderer.getWindowDocumentPath()).toBeNull()
+
+    expect(() => renderer.setWindowDocumentPath("notes.txt", inspector.id)).toThrow(/absolute/)
+    inspector.setDocumentEdited(false)
+    inspector.setDocumentPath(null)
+    expect(renderer.isWindowDocumentEdited(inspector.id)).toBe(false)
+    expect(renderer.getWindowDocumentPath(inspector.id)).toBeNull()
+  })
+
   it("reads the application's thermal state, keyboard layout and scroll-bar preference", () => {
     testRoot.render(() => <Text>Main</Text>)
     expect(["nominal", "fair", "serious", "critical"]).toContain(getThermalState())

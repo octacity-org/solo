@@ -523,6 +523,31 @@ impl TestSoloRenderer {
         })
     }
 
+    #[napi]
+    pub fn set_window_document_edited(&self, edited: bool, window_id: Option<f64>) -> Result<()> {
+        let root = window_id.map(to_element_id).transpose()?;
+        in_view(root, move |_view, window, _cx| window.set_window_edited(edited))
+    }
+
+    #[napi]
+    pub fn set_window_document_path(&self, path: Option<String>, window_id: Option<f64>) -> Result<()> {
+        let path = crate::renderer::document_path(path)?;
+        let root = window_id.map(to_element_id).transpose()?;
+        in_view(root, move |_view, window, _cx| window.set_document_path(path.as_deref()))
+    }
+
+    #[napi]
+    pub fn is_window_document_edited(&self, window_id: Option<f64>) -> Result<bool> {
+        let root = window_id.map(to_element_id).transpose()?;
+        with_appkit_window(root, |window| Ok(window.isDocumentEdited()))
+    }
+
+    #[napi]
+    pub fn get_window_document_path(&self, window_id: Option<f64>) -> Result<Option<String>> {
+        let root = window_id.map(to_element_id).transpose()?;
+        with_appkit_window(root, |window| Ok(crate::renderer::represented_filename(window)))
+    }
+
     /// Content size of the main window, or of the window `window_id`.
     #[napi]
     pub fn get_window_size(&self, window_id: Option<f64>) -> Result<WindowSize> {

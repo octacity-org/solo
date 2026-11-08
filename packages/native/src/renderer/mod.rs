@@ -119,6 +119,18 @@ mod application_lifecycle_tests {
     use super::*;
 
     #[test]
+    fn document_paths_must_be_absolute() {
+        assert_eq!(document_path(None).unwrap(), None);
+        assert_eq!(
+            document_path(Some("/Users/me/notes.txt".into())).unwrap(),
+            Some(std::path::PathBuf::from("/Users/me/notes.txt"))
+        );
+        let error = document_path(Some("notes.txt".into())).unwrap_err();
+        assert!(error.reason.contains("absolute"), "{}", error.reason);
+        assert!(document_path(Some(String::new())).is_err());
+    }
+
+    #[test]
     fn menu_bar_apps_require_explicit_quit() {
         let ordinary = WindowOptions::default();
         assert_eq!(quit_mode_for_options(&ordinary), gpui::QuitMode::LastWindowClosed);
@@ -1058,6 +1070,25 @@ pub(crate) fn appkit_window(window: &gpui::Window) -> Result<objc2::rc::Retained
     let view = unsafe { &*handle.ns_view.as_ptr().cast::<objc2_app_kit::NSView>() };
     view.window()
         .ok_or_else(|| Error::from_reason("The macOS window is closed"))
+}
+
+/// A document path for `set_window_document_path`: absolute, or `None`.
+pub(crate) fn document_path(path: Option<String>) -> Result<Option<std::path::PathBuf>> {
+    match path {
+        None => Ok(None),
+        Some(path) if std::path::Path::new(&path).is_absolute() => Ok(Some(path.into())),
+        Some(path) => Err(Error::from_reason(format!(
+            "Expected an absolute document path, got {path:?}"
+        ))),
+    }
+}
+
+/// The window's `representedFilename`; AppKit reports an empty string when
+/// none is set.
+#[cfg(target_os = "macos")]
+pub(crate) fn represented_filename(window: &objc2_app_kit::NSWindow) -> Option<String> {
+    let path = window.representedFilename().to_string();
+    (!path.is_empty()).then_some(path)
 }
 
 /// Run `f` on the target's NSWindow outside any GPUI update: AppKit calls back
@@ -2141,6 +2172,69 @@ impl SoloRenderer {
         {
             let _ = window_id;
             Err(Error::from_reason("Window tabs are supported only on macOS"))
+        }
+    }
+
+    /// Mark the window's document as having unsaved changes (the dot in the
+    /// close button) or as saved.
+    #[napi]
+    pub fn set_window_document_edited(&self, edited: bool, window_id: Option<f64>) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        return update_window_in(WindowTarget::from_arg(window_id)?, move |_view, window, _cx| {
+            window.set_window_edited(edited)
+        });
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (edited, window_id);
+            Err(Error::from_reason("Document windows are supported only on macOS"))
+        }
+    }
+
+    /// Show the file the window edits in its title bar, with its icon and
+    /// path menu, or clear it with `None`. The path must be absolute.
+    #[napi]
+    pub fn set_window_document_path(&self, path: Option<String>, window_id: Option<f64>) -> Result<()> {
+        let path = document_path(path)?;
+        #[cfg(target_os = "macos")]
+        return update_window_in(WindowTarget::from_arg(window_id)?, move |_view, window, _cx| {
+            window.set_document_path(path.as_deref())
+        });
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (path, window_id);
+            Err(Error::from_reason("Document windows are supported only on macOS"))
+        }
+    }
+
+    /// Whether AppKit marks the window's document as edited.
+    #[napi]
+    pub fn is_window_document_edited(&self, window_id: Option<f64>) -> Result<bool> {
+        #[cfg(target_os = "macos")]
+        return with_appkit_window(WindowTarget::from_arg(window_id)?, |window| {
+            Ok(window.isDocumentEdited())
+        });
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = window_id;
+            Err(Error::from_reason("Document windows are supported only on macOS"))
+        }
+    }
+
+    /// The document path AppKit shows for the window, `None` when unset.
+    #[napi]
+    pub fn get_window_document_path(&self, window_id: Option<f64>) -> Result<Option<String>> {
+        #[cfg(target_os = "macos")]
+        return with_appkit_window(WindowTarget::from_arg(window_id)?, |window| {
+            Ok(represented_filename(window))
+        });
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = window_id;
+            Err(Error::from_reason("Document windows are supported only on macOS"))
         }
     }
 

@@ -333,6 +333,14 @@ export interface NativeRenderer {
   getWindowTabbingIdentifier?(windowId?: number): string
   /** Show or hide the native tab overview. */
   toggleWindowTabOverview?(windowId?: number): void
+  /** Mark the window's document as edited (unsaved changes) or saved. */
+  setWindowDocumentEdited?(edited: boolean, windowId?: number): void
+  /** Show an absolute document path in the title bar, or clear it with null. */
+  setWindowDocumentPath?(path: string | null, windowId?: number): void
+  /** Whether AppKit marks the window's document as edited. */
+  isWindowDocumentEdited?(windowId?: number): boolean
+  /** The document path the title bar shows, null when unset. */
+  getWindowDocumentPath?(windowId?: number): string | null
   quitApplication?(): void
   /** Content size in logical pixels. */
   getWindowSize?(windowId?: number): { width: number; height: number }
