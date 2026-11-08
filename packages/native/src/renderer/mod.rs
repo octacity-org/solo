@@ -468,6 +468,12 @@ pub(crate) fn app_event_callback() -> Option<EventCallback> {
     })
 }
 
+/// The app renderer's event callback on the `solo-ui` thread, set by `init`.
+#[cfg(ui_thread)]
+pub(crate) fn app_event_callback() -> Option<EventCallback> {
+    UI_EVENT_CALLBACK.lock().unwrap().clone()
+}
+
 /// Select worker mode for this process. The generated bootstrap calls this
 /// before it starts the app Worker, so the Worker's calls always forward.
 #[cfg(target_os = "macos")]
@@ -1344,6 +1350,11 @@ thread_local! {
 static UI_COMMANDS: std::sync::Mutex<Option<mpsc::UnboundedSender<UiCommand>>> =
     std::sync::Mutex::new(None);
 
+/// The app's event callback on the `solo-ui` thread. Element-0 events (keyboard
+/// layout) need it without a particular renderer instance.
+#[cfg(ui_thread)]
+static UI_EVENT_CALLBACK: std::sync::Mutex<Option<EventCallback>> = std::sync::Mutex::new(None);
+
 #[cfg(ui_thread)]
 pub(crate) fn install_ui_platform(platform: Rc<dyn gpui::Platform>) {
     UI_PLATFORM.with(|slot| *slot.borrow_mut() = Some(platform));
@@ -1387,6 +1398,20 @@ pub(crate) fn with_ui_platform<R: Send + 'static>(
     })))?;
     wait_ui(receiver, Some(query))?
         .map_err(Error::from_reason)
+}
+
+/// Run `f` against the app on the `solo-ui` thread and wait for its result.
+/// Free napi helpers use it for controls that need `App`, not a window.
+#[cfg(ui_thread)]
+pub(crate) fn with_ui_app<R: Send + 'static>(
+    query: &'static str,
+    f: impl FnOnce(&mut gpui::App) -> R + Send + 'static,
+) -> Result<R> {
+    let (response, receiver) = sync_channel(1);
+    post_ui_command(UiCommand::App(Box::new(move |cx| {
+        response.send(f(cx)).ok();
+    })))?;
+    wait_ui(receiver, Some(query))
 }
 
 #[cfg(ui_thread)]
@@ -1829,6 +1854,7 @@ impl SoloRenderer {
         let tree = self.tree.clone();
         let selection = self.selection.clone();
         let callback = self.event_callback_for_view();
+        *UI_EVENT_CALLBACK.lock().unwrap() = callback.clone();
         let (command_sender, command_receiver) = mpsc::unbounded();
         install_ui_commands(command_sender.clone());
         let (startup_sender, startup_receiver) = sync_channel(1);
@@ -1843,6 +1869,8 @@ impl SoloRenderer {
                     gpui::Application::with_platform(platform).run(move |cx| {
                         init_key_bindings(cx);
                         crate::custom_elements::input::init(cx);
+                        // Element-0 keyboard-layout events; see application.rs.
+                        crate::application::observe(cx);
                         // Linux's PlatformWindow has no native prompts, and
                         // gpui's fallback ignores Enter/Escape.
                         cx.set_prompt_builder(crate::prompt::renderer);
@@ -2493,20 +2521,26 @@ impl SoloRenderer {
         }
     }
 
-    /// Replace or remove the macOS system-appearance observer and return the
-    /// current normalized appearance. The token is echoed in change events so
-    /// the Solid layer can discard notifications queued for an old owner.
+    /// Replace or remove the system-appearance observer and return the current
+    /// normalized appearance. The token is echoed in change events so the Solid
+    /// layer can discard notifications queued for an old owner.
     #[napi]
     pub fn set_system_appearance_subscription(&self, token: Option<String>) -> Result<String> {
         #[cfg(target_os = "macos")]
         {
             set_macos_system_appearance_subscription(token)
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(ui_thread)]
+        {
+            self.query_window(WindowTarget::Main, Some("system appearance"), {
+                move |view, window, cx| view.set_system_appearance_subscription(token, window, cx)
+            })?
+        }
+        #[cfg(not(any(target_os = "macos", ui_thread)))]
         {
             let _ = token;
             Err(Error::from_reason(
-                "System appearance is supported only on macOS",
+                "System appearance is not supported on this operating system",
             ))
         }
     }

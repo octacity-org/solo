@@ -23,7 +23,7 @@ function isAppearance(value: unknown): value is SystemAppearance {
 }
 
 /**
- * Read and follow macOS light/dark appearance inside a mounted Solid owner.
+ * Read and follow the system's light/dark appearance inside a mounted Solid owner.
  * The observer is shared and removed after its last owner disposes. This only
  * reports system state; it never changes the application's theme preference.
  */

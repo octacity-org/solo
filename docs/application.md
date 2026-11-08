@@ -1,4 +1,4 @@
-# Application controls (macOS)
+# Application controls
 
 `@solo/solid` exposes app-wide controls and system state that are not tied to
 one window.
@@ -24,15 +24,15 @@ function Status() {
 }
 ```
 
-| function | behavior |
-|---|---|
-| `hideApplication()` | hides the app, as its Hide menu command (Cmd+H) does |
-| `hideOtherApplications()` | hides every other app, as Hide Others does |
-| `showAllApplications()` | shows the apps that Hide Others hid, as Show All does |
-| `createThermalState()` | accessor for `"nominal"`, `"fair"`, `"serious"` or `"critical"` |
-| `createKeyboardLayout()` | accessor for the selected input source, `{ id, name }`, such as `{ id: "com.apple.keylayout.US", name: "U.S." }` |
-| `shouldAutoHideScrollbars()` | true when System Settings → Appearance → "Show scroll bars" hides them until scrolling |
-| `restartApplication()` | quits, then opens the app again; see [Restart](#restart) |
+| function | behavior | platforms |
+|---|---|---|
+| `hideApplication()` | hides the app, as its Hide menu command (Cmd+H) does | macOS |
+| `hideOtherApplications()` | hides every other app, as Hide Others does | macOS |
+| `showAllApplications()` | shows the apps that Hide Others hid, as Show All does | macOS |
+| `createThermalState()` | accessor for `"nominal"`, `"fair"`, `"serious"` or `"critical"` | macOS |
+| `createKeyboardLayout()` | accessor for the selected input source, `{ id, name }`, such as `{ id: "com.apple.keylayout.US", name: "U.S." }` | macOS, Linux |
+| `shouldAutoHideScrollbars()` | true when the desktop hides scroll bars until scrolling | macOS, Linux |
+| `restartApplication()` | quits, then opens the app again; see [Restart](#restart) | macOS, Linux |
 
 ## Thermal state and keyboard layout
 
@@ -61,8 +61,27 @@ Only a packaged `.app` can restart. Run any other way (`solo dev`, or
 `bun app.js`), the executable is `bun` itself, so there is nothing to reopen:
 `restartApplication()` throws and the app keeps running.
 
+On Linux the same rule is applied to the running executable: a compiled
+`bun build --compile` binary restarts into a new PID of itself, while an app
+started with `bun` or `node` throws instead of reopening the runtime.
+
+## Platforms
+
+macOS has a native feed for every control above. On Linux:
+
+- `createKeyboardLayout()` follows the X11/Wayland keyboard map.
+- `shouldAutoHideScrollbars()` reports the desktop's scroll-bar preference.
+- `restartApplication()` works only in a compiled app binary, as described
+  above.
+- `createThermalState()` throws: GPUI always reports `Nominal` on Linux, and a
+  value that never changes would look like a reading.
+- `hideApplication()`, `hideOtherApplications()` and `showAllApplications()`
+  throw: GPUI only logs them on Linux, and silently doing nothing is worse
+  than a clear error.
+
+Windows builds carry the same calls but are untested.
+
 ## Limits
 
-- macOS only. On Linux and Windows every function throws.
 - Changing the keyboard layout or thermal state is up to the user and the
   system; Solo only reports them.
