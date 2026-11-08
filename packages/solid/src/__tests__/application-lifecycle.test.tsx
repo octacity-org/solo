@@ -166,6 +166,62 @@ describe("openWindow", () => {
     root.unmount()
   })
 
+  it("routes close requests to onCloseRequest instead of closing", async () => {
+    class GuardRenderer extends WindowsRenderer {
+      setWindowCloseGuard(guarded: boolean, windowId?: number): void {
+        this.calls.push(["guard", guarded, windowId])
+      }
+      requestWindowClose(windowId?: number): void {
+        this.calls.push(["request", windowId])
+      }
+    }
+    const renderer = new GuardRenderer()
+    let mainRequests = 0
+    const root = render(() => <Text>main</Text>, { renderer, onCloseRequest: () => void mainRequests++ })
+    expect(renderer.calls).toEqual([["guard", true, undefined]])
+
+    let confirm!: () => void
+    const requests: number[] = []
+    const window = openWindow(() => <Text>inspector</Text>, {
+      onCloseRequest: () => {
+        requests.push(window.id)
+        return new Promise<void>((resolve) => (confirm = resolve))
+      },
+    })
+    expect(renderer.calls.at(-1)).toEqual(["guard", true, window.id])
+
+    window.requestClose()
+    root.requestCloseWindow()
+    expect(renderer.calls.slice(-2)).toEqual([["request", window.id], ["request", undefined]])
+
+    // Native answers a guarded request with windowCloseRequested.
+    handleSoloEvent({ elementId: 0, eventType: "windowCloseRequested" } as never)
+    expect(mainRequests).toBe(1)
+    handleSoloEvent({ elementId: window.id, eventType: "windowCloseRequested" } as never)
+    // Ignored while the first request's promise is pending.
+    handleSoloEvent({ elementId: window.id, eventType: "windowCloseRequested" } as never)
+    expect(requests).toEqual([window.id])
+    expect(window.closed).toBe(false)
+    confirm()
+    await Promise.resolve()
+    await Promise.resolve()
+    handleSoloEvent({ elementId: window.id, eventType: "windowCloseRequested" } as never)
+    expect(requests).toEqual([window.id, window.id])
+
+    // close() skips the guard.
+    window.close()
+    expect(window.closed).toBe(true)
+    expect(() => window.requestClose()).toThrow("closed window")
+
+    // Remounting without a handler lifts the main window's guard.
+    const plain = render(() => <Text>plain</Text>, { renderer })
+    expect(renderer.calls.at(-1)).toEqual(["guard", false, undefined])
+    handleSoloEvent({ elementId: 0, eventType: "windowCloseRequested" } as never)
+    expect(mainRequests).toBe(1)
+    plain.unmount()
+    expect(renderer.calls.at(-1)).toEqual(["guard", false, undefined])
+  })
+
   it("requires a running app", () => {
     Reflect.deleteProperty(globalThis, "__soloSolidRenderHost")
     expect(() => openWindow(() => <Text>x</Text>)).toThrow("Call render() before openWindow()")

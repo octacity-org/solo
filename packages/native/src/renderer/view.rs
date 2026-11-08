@@ -88,6 +88,10 @@ pub(crate) struct SoloView {
     /// The element this view paints, for a window opened with `openWindow`.
     /// None paints `tree.root_id`, the main window.
     root: Option<u64>,
+    /// The app handles close requests: the close button and `performClose:`
+    /// leave the window open and emit `windowCloseRequested` instead.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) close_guarded: bool,
 }
 
 impl SoloView {
@@ -114,6 +118,7 @@ impl SoloView {
             system_appearance_subscription: None,
             quit_hook: None,
             root: None,
+            close_guarded: false,
         }
     }
 
@@ -129,6 +134,23 @@ impl SoloView {
             self.clock = clock;
         }
         self
+    }
+
+    /// Whether a close request may close the window now. A guarded window
+    /// stays open and emits `windowCloseRequested` on its root element, or on
+    /// element 0 for the main window.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn allow_close(&self) -> bool {
+        if !self.close_guarded {
+            return true;
+        }
+        super::emit_event_full(
+            &self.event_callback,
+            self.root.unwrap_or(0),
+            super::WINDOW_CLOSE_REQUESTED_EVENT,
+            |_| {},
+        );
+        false
     }
 
     fn root_id(&self, tree: &RetainedTree) -> Option<u64> {

@@ -26,6 +26,11 @@ export interface Root {
   showWindow: () => void
   /** Close the current window without necessarily quitting a background app. */
   closeWindow: () => void
+  /**
+   * Ask to close the main window as its close button does: with
+   * `onCloseRequest`, the app decides; otherwise it closes.
+   */
+  requestCloseWindow: () => void
   /** Enter the platform's standard zoomed/maximized window state. */
   maximizeWindow: () => void
   /** Restore the window frame saved by the platform's zoom operation. */
@@ -48,6 +53,11 @@ export interface AppWindow {
   readonly closed: boolean
   /** Close the window and dispose its tree. A no-op once closed. */
   close: () => void
+  /**
+   * Ask to close the window as its close button does: with
+   * `onCloseRequest`, the app decides; otherwise it closes.
+   */
+  requestClose: () => void
   /** Bring the window to the front. */
   focus: () => void
   setTitle: (title: string) => void
@@ -59,13 +69,25 @@ export interface AppWindow {
   size: () => { width: number; height: number }
 }
 
+/**
+ * Decides whether a window closes (macOS). The window's close button and
+ * `requestClose()` call it instead of closing; close the window yourself, or
+ * return to keep it open. While a returned promise is pending, further
+ * requests are ignored.
+ */
+export type CloseRequestHandler = () => void | Promise<void>
+
 export interface OpenWindowOptions extends Omit<WindowOptions, "menuBar"> {
   /** Called once after the window closes, however it closed. */
   onClose?: () => void
+  /** Confirm or cancel closing; close with `close()`. */
+  onCloseRequest?: CloseRequestHandler
 }
 
 export interface RenderOptions extends WindowOptions {
   onEvent?: (event: EventPayload) => void
+  /** Confirm or cancel closing the main window; close with `closeWindow()`. */
+  onCloseRequest?: CloseRequestHandler
   /** Inject a renderer (tests). Defaults to a real SoloRenderer window. */
   renderer?: NativeRenderer
 }
@@ -75,6 +97,8 @@ const RENDER_HOST_KEY = "__soloSolidRenderHost"
 type RenderSlot = {
   renderer?: NativeRenderer
   root?: Root
+  /** The main window has a native close guard. */
+  closeGuarded?: boolean
   /** Open windows from openWindow: their close functions, by root element ID. */
   windows?: Map<number, () => void>
 }
@@ -85,6 +109,36 @@ function renderSlot(): RenderSlot {
   const created: RenderSlot = {}
   Reflect.set(globalThis, RENDER_HOST_KEY, created)
   return created
+}
+
+/** The native event a guarded window's close request arrives as. */
+const CLOSE_REQUESTED = "windowCloseRequested"
+
+/** Call `handler` per close request, ignoring requests while its promise is pending. */
+function closeRequestListener(handler: CloseRequestHandler): () => void {
+  let pending = false
+  return () => {
+    if (pending) return
+    const result = handler()
+    if (result instanceof Promise) {
+      pending = true
+      // A rejection still surfaces as unhandled.
+      void result.finally(() => {
+        pending = false
+      })
+    }
+  }
+}
+
+/** Main-window close requests carry no element; native sends them on element 0. */
+function setMainCloseGuard(slot: RenderSlot, host: NativeRenderer, handler?: CloseRequestHandler): void {
+  if (handler) {
+    requireCapability(host, "setWindowCloseGuard", "support close requests")(true)
+    registerEventHandler(0, CLOSE_REQUESTED, closeRequestListener(handler))
+  } else if (slot.closeGuarded) {
+    host.setWindowCloseGuard?.(false)
+  }
+  slot.closeGuarded = Boolean(handler)
 }
 
 function openWindows(): Map<number, () => void> {
@@ -143,6 +197,7 @@ export function render(code: () => SolidElement, options: RenderOptions = {}): R
   const slot = renderSlot()
   if (options.renderer) {
     // Injected renderer (tests): always take the fresh one.
+    if (slot.renderer !== options.renderer) slot.closeGuarded = false
     slot.renderer = options.renderer
   } else if (!slot.renderer) {
     const renderer = createNativeRenderer(options.onEvent)
@@ -159,15 +214,20 @@ export function render(code: () => SolidElement, options: RenderOptions = {}): R
   clearEventHandlers()
 
   let disposeTree: () => void = mount(code, host)
+  setMainCloseGuard(slot, host, options.onCloseRequest)
   slot.root = {
     unmount: () => {
       closeAllWindows()
+      setMainCloseGuard(slot, host)
+      unregisterEventHandler(0, CLOSE_REQUESTED)
       disposeTree()
       disposeTree = () => {}
       slot.root = undefined
     },
     showWindow: () => requireCapability(host, "showWindow", "support showing windows")(),
     closeWindow: () => requireCapability(host, "closeWindow", "support closing windows")(),
+    requestCloseWindow: () =>
+      requireCapability(host, "requestWindowClose", "support close requests")(),
     maximizeWindow: () =>
       requireCapability(host, "setWindowMaximized", "support maximizing windows")(true),
     restoreWindow: () =>
@@ -196,11 +256,21 @@ export function openWindow(code: () => SolidElement, options: OpenWindowOptions 
   const host = renderSlot().renderer
   if (!host) throw new Error("Call render() before openWindow()")
   const open = requireCapability(host, "openWindow", "support multiple windows")
-  const { onClose, ...windowOptions } = options
+  const { onClose, onCloseRequest, ...windowOptions } = options
+  const guard = onCloseRequest
+    ? requireCapability(host, "setWindowCloseGuard", "support close requests")
+    : undefined
   const { rootId, dispose } = mountWindowRoot(code)
   try {
     open(rootId, windowOptions)
   } catch (error) {
+    dispose()
+    throw error
+  }
+  try {
+    guard?.(true, rootId)
+  } catch (error) {
+    host.closeWindow?.(rootId)
     dispose()
     throw error
   }
@@ -213,11 +283,13 @@ export function openWindow(code: () => SolidElement, options: OpenWindowOptions 
     closed = true
     windows.delete(rootId)
     unregisterEventHandler(rootId, "windowClosed")
+    unregisterEventHandler(rootId, CLOSE_REQUESTED)
     dispose()
     onClose?.()
   }
   // Native closed the window (the user, or close() below); its root carries the event.
   registerEventHandler(rootId, "windowClosed", finish)
+  if (onCloseRequest) registerEventHandler(rootId, CLOSE_REQUESTED, closeRequestListener(onCloseRequest))
   const close = (): void => {
     if (closed) return
     // Closing first keeps the native window from painting a torn-down tree.
@@ -247,6 +319,10 @@ export function openWindow(code: () => SolidElement, options: OpenWindowOptions 
       return closed
     },
     close,
+    requestClose: () => {
+      assertOpen("close")
+      requireCapability(host, "requestWindowClose", "support close requests")(rootId)
+    },
     focus: () => {
       assertOpen("focus")
       host.showWindow?.(rootId)

@@ -692,7 +692,8 @@ fn open_secondary_window(root: u64, options: WindowOptions) -> Result<()> {
             .with(|window| *window.borrow())
             .and_then(|window| window.read_with(cx, |view, _| view.clock.clone()).ok());
         let window = cx
-            .open_window(to_gpui_window_options(&options, bounds, display), |_window, cx| {
+            .open_window(to_gpui_window_options(&options, bounds, display), |window, cx| {
+                install_close_guard(window, cx);
                 cx.new(|_| {
                     SoloView::new(config.tree, config.callback, title, config.selection)
                         .for_window_root(root, clock)
@@ -750,7 +751,8 @@ fn open_macos_window(cx: &mut gpui::App) -> Result<gpui::WindowHandle<SoloView>>
     let window = cx
         .open_window(
             to_gpui_window_options(&window_options, bounds, display),
-            |_window, cx| {
+            |window, cx| {
+                install_close_guard(window, cx);
                 cx.new(|_| SoloView::new(tree, callback, title, selection))
             },
         )
@@ -901,6 +903,12 @@ fn close_macos_window(target: WindowTarget) -> Result<()> {
 }
 
 #[cfg(target_os = "macos")]
+fn request_macos_window_close(target: WindowTarget) -> Result<()> {
+    let window = update_window_local(target, |_view, window, _cx| appkit_window(window))??;
+    perform_close(&window)
+}
+
+#[cfg(target_os = "macos")]
 pub(crate) fn quit_macos_application() -> Result<()> {
     if worker_main::must_forward() {
         return on_main(quit_macos_application);
@@ -1046,6 +1054,36 @@ fn appkit_window(window: &gpui::Window) -> Result<objc2::rc::Retained<objc2_app_
     let view = unsafe { &*handle.ns_view.as_ptr().cast::<objc2_app_kit::NSView>() };
     view.window()
         .ok_or_else(|| Error::from_reason("The macOS window is closed"))
+}
+
+/// A guarded window's close request; see `SoloView::allow_close`.
+#[cfg(target_os = "macos")]
+pub(crate) const WINDOW_CLOSE_REQUESTED_EVENT: &str = "windowCloseRequested";
+
+/// Let the window's `SoloView` answer AppKit's `windowShouldClose:`, asked by
+/// the titlebar close button and by `performClose:`. Installed when the window
+/// is built, so it also covers a root view replaced by a dev reload.
+#[cfg(target_os = "macos")]
+fn install_close_guard(window: &gpui::Window, cx: &gpui::App) {
+    window.on_window_should_close(cx, |window, cx| match window.root::<SoloView>() {
+        Some(Some(view)) => view.read(cx).allow_close(),
+        _ => true,
+    });
+}
+
+/// Close `window` the way its titlebar close button does, through
+/// `windowShouldClose:`. Call outside any GPUI update: AppKit asks the
+/// should-close callback synchronously, and it updates the app.
+#[cfg(target_os = "macos")]
+fn perform_close(window: &objc2_app_kit::NSWindow) -> Result<()> {
+    if !window
+        .styleMask()
+        .contains(objc2_app_kit::NSWindowStyleMask::Closable)
+    {
+        return Err(Error::from_reason("This window has no close button"));
+    }
+    window.performClose(None);
+    Ok(())
 }
 
 fn should_toggle_window_zoom(current: bool, requested: bool) -> bool {
@@ -1791,6 +1829,45 @@ impl SoloRenderer {
             ))
         }
     }
+
+    /// Opt the main window, or the window `window_id`, in or out of close
+    /// requests: while guarded, its close button leaves it open and emits
+    /// `windowCloseRequested`. `closeWindow` always closes.
+    #[napi]
+    pub fn set_window_close_guard(&self, guarded: bool, window_id: Option<f64>) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        return update_window_in(WindowTarget::from_arg(window_id)?, move |view, _window, _cx| {
+            view.close_guarded = guarded;
+        });
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (guarded, window_id);
+            Err(Error::from_reason("Close requests are supported only on macOS"))
+        }
+    }
+
+    /// Ask to close the main window, or the window `window_id`, as its close
+    /// button does: a guarded window stays open and emits
+    /// `windowCloseRequested`; any other closes.
+    #[napi]
+    pub fn request_window_close(&self, window_id: Option<f64>) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        {
+            let target = WindowTarget::from_arg(window_id)?;
+            if worker_main::must_forward() {
+                return on_main(move || request_macos_window_close(target));
+            }
+            return request_macos_window_close(target);
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = window_id;
+            Err(Error::from_reason("Close requests are supported only on macOS"))
+        }
+    }
+
     /// Enter or leave the standard macOS zoomed state. AppKit owns the saved
     /// normal frame, so restoring uses exactly the platform's previous frame.
     #[napi]
