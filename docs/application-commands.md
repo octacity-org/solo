@@ -2,8 +2,7 @@
 
 Register application commands through `@solo/solid`, inside a Solid component.
 Commands belong to that component's owner and are removed when it unmounts.
-Native application commands currently support macOS. Registration on other
-platforms throws a clear unsupported-platform error.
+They work on macOS and Linux. Windows builds reject registration.
 
 ```tsx
 import { createSignal } from "solid-js"
@@ -36,6 +35,8 @@ just as for a button callback.
 - `id` must be unique among registered commands. Duplicate registration throws;
   it never replaces someone else's handler. An ID can be reused after disposal.
 - `label` is the native menu label. `menu` is an optional top-level menu name.
+  Linux has no global menu bar, so `menu` only groups commands for macOS; the
+  shortcut remains the way to reach a command there.
 - `shortcut` is optional. This is an application command, not a system-wide
   hotkey that runs while another application is active.
 - `enabled` defaults to `true`; pass a boolean accessor to update it reactively.
@@ -78,6 +79,9 @@ both emit the same application-command event to the Solid callback.
 - Enabled commands take precedence over an element's raw `onKeyDown` handler
   in GPUI controls. Disabled/disposed commands no longer consume that shortcut.
   Ordinary typing, editing bindings, and Tab navigation remain native.
+- On Linux, shortcuts run through GPUI's key bindings and the same focus
+  rules as above. A command whose only reach is a `menu` item cannot be
+  invoked there, because nothing draws the menu.
 - WKWebView is an AppKit child view, not part of GPUI's keyboard dispatch tree.
   Give an **unscoped Command-modified** command a `menu` to make its shortcut
   available through the macOS menu key-equivalent path while web content has
@@ -85,6 +89,13 @@ both emit the same application-command event to the Solid callback.
   no such guarantee in web content. Scoped and non-Command shortcuts have no
   native menu accelerator, so they cannot steal web typing or composition.
   Solo does not intercept web-page key events.
+
+## Platforms
+
+macOS installs the commands as menu items and key bindings; a menu click and a
+shortcut emit the same event. Linux installs the commands and their shortcuts
+as GPUI key bindings only, so `enabled` and focus scoping behave the same and
+`configureMenuBar` stays macOS-only. Windows rejects registration.
 
 ## Verification
 

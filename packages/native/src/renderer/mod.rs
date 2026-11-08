@@ -2362,29 +2362,50 @@ impl SoloRenderer {
         }
     }
 
-    /// Replace application commands atomically. macOS only for now.
+    /// Replace application commands atomically. Linux has no global menu bar,
+    /// so the commands are reachable through their shortcuts there; the menu
+    /// names still validate, which keeps one app definition portable.
     #[napi]
     pub fn set_application_commands(&self, json: String) -> Result<()> {
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", ui_thread))]
         {
             let commands = crate::application_commands::parse_application_commands(&json)?;
-            return update_window(move |view, window, cx| {
-                // init transfers callback ownership into SoloView and clears
-                // the constructor slot. Reuse the live view's callback.
-                crate::application_commands::replace_application_commands(
-                    commands,
-                    view.event_callback.clone(),
-                    cx,
+            #[cfg(target_os = "macos")]
+            {
+                return update_window(move |view, window, cx| {
+                    // init transfers callback ownership into SoloView and clears
+                    // the constructor slot. Reuse the live view's callback.
+                    crate::application_commands::replace_application_commands(
+                        commands,
+                        view.event_callback.clone(),
+                        cx,
+                    )?;
+                    window.refresh();
+                    Ok(())
+                })?;
+            }
+            #[cfg(ui_thread)]
+            {
+                return self.query_window(
+                    WindowTarget::Main,
+                    Some("application commands"),
+                    move |view, window, cx| {
+                        crate::application_commands::replace_application_commands(
+                            commands,
+                            view.event_callback.clone(),
+                            cx,
+                        )?;
+                        window.refresh();
+                        Ok(())
+                    },
                 )?;
-                window.refresh();
-                Ok(())
-            })?;
+            }
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", ui_thread)))]
         {
             let _ = json;
             Err(Error::from_reason(
-                "Application commands are supported only on macOS",
+                "Application commands are not supported on this operating system",
             ))
         }
     }
