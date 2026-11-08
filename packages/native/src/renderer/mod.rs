@@ -2089,6 +2089,60 @@ impl SoloRenderer {
         }
     }
 
+    /// Set the identifier that lets windows sharing it merge into native
+    /// tabs, or clear it with `None`. AppKit then switches automatic window
+    /// tabbing on (set) or off (clear) for the whole process, as opening a
+    /// window does.
+    #[napi]
+    pub fn set_window_tabbing_identifier(
+        &self,
+        identifier: Option<String>,
+        window_id: Option<f64>,
+    ) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        return update_window_in(WindowTarget::from_arg(window_id)?, move |_view, window, _cx| {
+            window.set_tabbing_identifier(identifier)
+        });
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (identifier, window_id);
+            Err(Error::from_reason("Window tabs are supported only on macOS"))
+        }
+    }
+
+    /// The window's tabbing identifier as AppKit reports it. A window without
+    /// one reports AppKit's default.
+    #[napi]
+    pub fn get_window_tabbing_identifier(&self, window_id: Option<f64>) -> Result<String> {
+        #[cfg(target_os = "macos")]
+        return with_appkit_window(WindowTarget::from_arg(window_id)?, |window| {
+            Ok(window.tabbingIdentifier().to_string())
+        });
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = window_id;
+            Err(Error::from_reason("Window tabs are supported only on macOS"))
+        }
+    }
+
+    /// Show or hide the tab overview (Show All Tabs) for the window's tabs.
+    #[napi]
+    pub fn toggle_window_tab_overview(&self, window_id: Option<f64>) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        return with_appkit_window(WindowTarget::from_arg(window_id)?, |window| {
+            window.toggleTabOverview(None);
+            Ok(())
+        });
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = window_id;
+            Err(Error::from_reason("Window tabs are supported only on macOS"))
+        }
+    }
+
     /// Replace application commands atomically. macOS only for now.
     #[napi]
     pub fn set_application_commands(&self, json: String) -> Result<()> {

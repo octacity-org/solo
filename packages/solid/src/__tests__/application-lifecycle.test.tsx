@@ -87,6 +87,12 @@ describe("application lifecycle", () => {
       resizeWindow(width: number, height: number, windowId?: number): void {
         this.calls.push(["resize", width, height, windowId])
       }
+      setWindowTabbingIdentifier(identifier: string | null, windowId?: number): void {
+        this.calls.push(["tabbing", identifier, windowId])
+      }
+      toggleWindowTabOverview(windowId?: number): void {
+        this.calls.push(["tab overview", windowId])
+      }
     }
     const renderer = new StateRenderer()
     const root = render(() => <Text>main</Text>, { renderer })
@@ -96,12 +102,18 @@ describe("application lifecycle", () => {
     root.minimizeWindow()
     root.setWindowBackground("blurred")
     root.resizeWindow({ width: 640, height: 480 })
+    root.setTabbingIdentifier("documents")
+    root.setTabbingIdentifier(undefined)
+    root.toggleTabOverview()
     expect(renderer.calls).toEqual([
       ["fullscreen", true, undefined],
       ["fullscreen", false, undefined],
       ["minimize", undefined],
       ["background", "blurred", undefined],
       ["resize", 640, 480, undefined],
+      ["tabbing", "documents", undefined],
+      ["tabbing", null, undefined],
+      ["tab overview", undefined],
     ])
 
     renderer.calls = []
@@ -112,17 +124,22 @@ describe("application lifecycle", () => {
     window.minimize()
     window.setBackground("transparent")
     window.resize({ width: 300, height: 200 })
+    window.setTabbingIdentifier("documents")
+    window.toggleTabOverview()
     expect(renderer.calls.slice(1)).toEqual([
       ["fullscreen", true, window.id],
       ["fullscreen", false, window.id],
       ["minimize", window.id],
       ["background", "transparent", window.id],
       ["resize", 300, 200, window.id],
+      ["tabbing", "documents", window.id],
+      ["tab overview", window.id],
     ])
 
     window.close()
     expect(() => window.resize({ width: 1, height: 1 })).toThrow("closed window")
     expect(() => window.isFullscreen()).toThrow("closed window")
+    expect(() => window.toggleTabOverview()).toThrow("closed window")
     root.unmount()
   })
 })
