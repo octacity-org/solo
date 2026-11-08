@@ -153,6 +153,7 @@ renders as plain text.
 | Menu-bar apps that outlive their windows | `render(..., { menuBar })`, `configureMenuBar()` | [menu-bar-apps.md](docs/menu-bar-apps.md) |
 | Alerts | `showAlert()` | [alerts.md](docs/alerts.md) |
 | Open, folder and save dialogs | `selectFiles()`, `selectSavePath()` | [file-dialogs.md](docs/file-dialogs.md) |
+| Files dropped from Finder | `onFileDrop`, `fileDragOver` style | [file-drop.md](docs/file-drop.md) |
 | URLs, clipboard, Finder, Trash | `openExternalUrl()`, `writeClipboardText()`, `openPath()`, `revealPath()`, `moveToTrash()` | [desktop-actions.md](docs/desktop-actions.md) |
 | Light and dark mode | `createSystemAppearance()` | [system-appearance.md](docs/system-appearance.md) |
 

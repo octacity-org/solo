@@ -111,6 +111,12 @@ pub struct EventPayload {
     /// is out of range. Populated for: rangeChange, when a row has focus.
     pub focused_index: Option<f64>,
 
+    // ── File drop ────────────────────────────────────────────────────
+    /// Absolute paths of the files and folders dropped from outside the app,
+    /// in the order the platform reports them. Paths that are not valid
+    /// UTF-8 are converted lossily. Populated for: fileDrop.
+    pub paths: Option<Vec<String>>,
+
     // ── Modifiers ────────────────────────────────────────────────────
     pub modifiers: Option<EventModifiers>,
 }
@@ -144,6 +150,7 @@ impl Default for EventPayload {
             range_start: None,
             range_end: None,
             focused_index: None,
+            paths: None,
             modifiers: None,
         }
     }

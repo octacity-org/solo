@@ -138,6 +138,10 @@ export declare class SoloRenderer {
   simulateMouseUp(x: number, y: number, button?: number | undefined | null, elementId?: number | undefined | null): void
   simulateMouseMove(x: number, y: number, pressedButton?: number | undefined | null, elementId?: number | undefined | null): void
   simulateScrollWheel(x: number, y: number, deltaX: number, deltaY: number, elementId?: number | undefined | null): void
+  /** Drag files from outside the app over `(x, y)` without dropping them. */
+  simulateFileDragOver(paths: Array<string>, x: number, y: number, elementId?: number | undefined | null): void
+  /** Drop files from outside the app at `(x, y)`, as a Finder drop would. */
+  simulateFileDrop(paths: Array<string>, x: number, y: number, elementId?: number | undefined | null): void
   /**
    * Type a space-separated sequence of keystrokes, e.g. `"a enter cmd-s"`.
    *
@@ -324,6 +328,16 @@ export declare class TestSoloRenderer {
    * Used to simulate drag events.
    */
   simulateMouseMove(x: number, y: number, pressedButton?: number | undefined | null, elementId?: number | undefined | null): void
+  /**
+   * Drag files from outside the app (e.g. Finder) over window coordinates
+   * `(x, y)` without dropping them, so `fileDragOver` styles apply.
+   */
+  simulateFileDragOver(paths: Array<string>, x: number, y: number, elementId?: number | undefined | null): void
+  /**
+   * Drop files from outside the app (e.g. Finder) at window coordinates
+   * `(x, y)`. The element under that point with `onFileDrop` receives them.
+   */
+  simulateFileDrop(paths: Array<string>, x: number, y: number, elementId?: number | undefined | null): void
   /**
    * Focus an element by its numeric ID.
    * The element must have a FocusHandle (created by sync_focus_handles when
@@ -558,6 +572,12 @@ export interface EventPayload {
    * is out of range. Populated for: rangeChange, when a row has focus.
    */
   focusedIndex?: number
+  /**
+   * Absolute paths of the files and folders dropped from outside the app,
+   * in the order the platform reports them. Paths that are not valid
+   * UTF-8 are converted lossily. Populated for: fileDrop.
+   */
+  paths?: Array<string>
   modifiers?: EventModifiers
 }
 

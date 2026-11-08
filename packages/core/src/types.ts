@@ -40,6 +40,9 @@ export interface MotionProps {
   transition?: MotionTransition
 }
 
+/** Style keys whose value is itself a style, applied natively on a state. */
+type PseudoStyleKey = "hover" | "active" | "fileDragOver"
+
 export interface StyleDesc {
   display?: string
   visibility?: string
@@ -136,9 +139,11 @@ export interface StyleDesc {
   selectionColor?: string
 
   // Pseudo-selector styles — applied by GPUI natively (no JS round-trip).
-  // Nesting is one level deep: hover/active cannot contain hover/active.
-  hover?: Omit<StyleDesc, "hover" | "active">
-  active?: Omit<StyleDesc, "hover" | "active">
+  // Nesting is one level deep: they cannot contain each other.
+  hover?: Omit<StyleDesc, PseudoStyleKey>
+  active?: Omit<StyleDesc, PseudoStyleKey>
+  /** Applied while files dragged in from outside the app (Finder) hover the element. */
+  fileDragOver?: Omit<StyleDesc, PseudoStyleKey>
 }
 
 // ── Theme ────────────────────────────────────────────────────────────

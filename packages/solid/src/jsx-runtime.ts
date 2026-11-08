@@ -24,6 +24,12 @@ export interface SoloIntrinsicProps {
   onMouseLeave?: (event: EventPayload) => void
   onMouseMove?: (event: EventPayload) => void
   onMouseDownOutside?: (event: EventPayload) => void
+  /**
+   * Files or folders were dropped on this element from outside the app,
+   * e.g. from Finder. `paths` holds their absolute paths; `x`/`y` the drop
+   * point. Highlight the target with the `fileDragOver` style.
+   */
+  onFileDrop?: (event: EventPayload) => void
   onKeyDown?: (event: EventPayload) => void
   onKeyUp?: (event: EventPayload) => void
   onFocus?: (event: EventPayload) => void

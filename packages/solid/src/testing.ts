@@ -25,6 +25,8 @@ interface NativeTestRendererApi {
   simulateMouseUp(x: number, y: number, button?: number, elementId?: number): void
   simulateMouseMove(x: number, y: number, pressedButton?: number, elementId?: number): void
   simulateScrollWheel(x: number, y: number, deltaX: number, deltaY: number, elementId?: number): void
+  simulateFileDragOver(paths: string[], x: number, y: number, elementId?: number): void
+  simulateFileDrop(paths: string[], x: number, y: number, elementId?: number): void
   openWindow(rootId: number, options?: WindowOptions): void
   closeWindow(windowId?: number): void
   getWindowSize(windowId?: number): { width: number; height: number }
@@ -68,6 +70,8 @@ interface SolidNativeTestRendererApi extends NativeTestRendererApi {
   nativeSimulateMouseUp(x: number, y: number, button?: number, elementId?: number): void
   nativeSimulateMouseMove(x: number, y: number, pressedButton?: number, elementId?: number): void
   nativeSimulateScrollWheel(x: number, y: number, deltaX: number, deltaY: number, elementId?: number): void
+  nativeSimulateFileDragOver(paths: string[], x: number, y: number, elementId?: number): void
+  nativeSimulateFileDrop(paths: string[], x: number, y: number, elementId?: number): void
 }
 
 interface NativeTestRendererConstructor {
@@ -114,6 +118,10 @@ export interface SolidNativeTestRoot {
   nativeSimulateMouseDown(x: number, y: number, button?: number, elementId?: number): void
   nativeSimulateMouseUp(x: number, y: number, button?: number, elementId?: number): void
   nativeSimulateMouseMove(x: number, y: number, pressedButton?: number, elementId?: number): void
+  /** Hold files dragged in from outside the app (Finder) over `(x, y)`. */
+  nativeSimulateFileDragOver(paths: string[], x: number, y: number, elementId?: number): void
+  /** Drop files from outside the app (Finder) at `(x, y)`. */
+  nativeSimulateFileDrop(paths: string[], x: number, y: number, elementId?: number): void
   focusElement(elementId: number): void
   nativeSimulateScrollWheel(x: number, y: number, deltaX: number, deltaY: number, elementId?: number): void
   scrollToItem(elementId: number, index: number): void
@@ -274,6 +282,20 @@ export function createSolidNativeTestRoot(): SolidNativeTestRoot {
       native.flush()
     },
 
+    nativeSimulateFileDragOver(paths, x, y, elementId) {
+      native.flush()
+      native.simulateFileDragOver(paths, x, y, elementId)
+      dispatchNativeEvents()
+      native.flush()
+    },
+
+    nativeSimulateFileDrop(paths, x, y, elementId) {
+      native.flush()
+      native.simulateFileDrop(paths, x, y, elementId)
+      dispatchNativeEvents()
+      native.flush()
+    },
+
     focusElement(elementId) {
       native.flush()
       native.focusElement(elementId)
@@ -347,6 +369,8 @@ export function createSolidNativeTestRoot(): SolidNativeTestRoot {
         case "nativeSimulateMouseUp": return root.nativeSimulateMouseUp
         case "nativeSimulateMouseMove": return root.nativeSimulateMouseMove
         case "nativeSimulateScrollWheel": return root.nativeSimulateScrollWheel
+        case "nativeSimulateFileDragOver": return root.nativeSimulateFileDragOver
+        case "nativeSimulateFileDrop": return root.nativeSimulateFileDrop
         default: {
           const value = Reflect.get(target, property, receiver) as unknown
           return typeof value === "function" ? value.bind(target) : value

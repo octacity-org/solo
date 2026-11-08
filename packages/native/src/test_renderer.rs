@@ -857,6 +857,46 @@ impl TestSoloRenderer {
         })
     }
 
+    /// Drag files from outside the app (e.g. Finder) over window coordinates
+    /// `(x, y)` without dropping them, so `fileDragOver` styles apply.
+    #[napi]
+    pub fn simulate_file_drag_over(
+        &self,
+        paths: Vec<String>,
+        x: f64,
+        y: f64,
+        element_id: Option<f64>,
+    ) -> Result<()> {
+        with_window(self.window_root_of(element_id)?, |cx, window, _view| {
+            cx.update_window(window, |_, window, cx| {
+                crate::automation::dispatch_file_drag_over(window, cx, paths, x, y);
+            })
+            .map_err(|error| Error::from_reason(error.to_string()))?;
+            cx.run_until_parked();
+            Ok(())
+        })
+    }
+
+    /// Drop files from outside the app (e.g. Finder) at window coordinates
+    /// `(x, y)`. The element under that point with `onFileDrop` receives them.
+    #[napi]
+    pub fn simulate_file_drop(
+        &self,
+        paths: Vec<String>,
+        x: f64,
+        y: f64,
+        element_id: Option<f64>,
+    ) -> Result<()> {
+        with_window(self.window_root_of(element_id)?, |cx, window, _view| {
+            cx.update_window(window, |_, window, cx| {
+                crate::automation::dispatch_file_drop(window, cx, paths, x, y);
+            })
+            .map_err(|error| Error::from_reason(error.to_string()))?;
+            cx.run_until_parked();
+            Ok(())
+        })
+    }
+
     /// Focus an element by its numeric ID.
     /// The element must have a FocusHandle (created by sync_focus_handles when
     /// the element has keyDown, keyUp, focus, or blur listeners).

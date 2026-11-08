@@ -26,6 +26,8 @@ export const EVENT_PROPS = [
   ["onMouseLeave", "mouseLeave"],
   ["onMouseMove", "mouseMove"],
   ["onMouseDownOutside", "mouseDownOutside"],
+  // Files dragged in from outside the app (Finder)
+  ["onFileDrop", "fileDrop"],
   // Keyboard events (require focus — tabIndex or autoFocus)
   ["onKeyDown", "keyDown"],
   ["onKeyUp", "keyUp"],
