@@ -46,6 +46,7 @@ The returned `AppWindow` controls that window:
 | `size()` | the content size in logical pixels, read from the live window |
 | `resize({ width, height })` | sets the content size `size()` reports |
 | `setTabbingIdentifier(identifier)`, `toggleTabOverview()` | native window tabs; see [Window tabs](#window-tabs) |
+| `setDocumentEdited(edited)`, `setDocumentPath(path)` | unsaved-changes dot and title-bar file icon; see [Document windows](#document-windows) |
 
 Calls other than `close()` throw after the window has closed. The render root
 has the same controls for the main window; see [Window state](#window-state).
@@ -184,6 +185,32 @@ second.setTabbingIdentifier(undefined) // clear it
 - Events for tabs (moved to a new window, all windows merged) are not
   exposed.
 
+## Document windows
+
+A window that edits a file can show it the macOS way:
+
+```ts
+const editor = openWindow(() => <Editor />, { title: "notes.txt" })
+
+editor.setDocumentPath("/Users/me/notes.txt") // file icon and path menu in the title bar
+editor.setDocumentEdited(true)  // dot in the close button: unsaved changes
+editor.setDocumentEdited(false) // saved
+editor.setDocumentPath(null)    // clear the file
+```
+
+The render root has the same two methods for the main window.
+
+- `setDocumentEdited(true)` puts a dot in the close button, as in other
+  macOS editors. It only shows the state: closing still follows
+  `onCloseRequest`, so pair it with a [close request](#close-requests) that
+  asks before discarding changes.
+- `setDocumentPath(path)` shows the file's icon beside the title. Cmd-clicking
+  the title opens a menu of the folders that contain it. The path must be
+  absolute, or it throws; `null` clears it. The title stays whatever `title`
+  says.
+- A custom `trafficLightX`/`trafficLightY` position is kept when either
+  changes.
+
 ## Close requests
 
 By default the close button closes a window. Pass `onCloseRequest` to decide
@@ -279,7 +306,8 @@ expose them.
 
 ## Limits
 
-- macOS only. On Linux and Windows `openWindow` throws.
+- macOS only. On Linux and Windows `openWindow` throws, and so do the
+  render root's `setDocumentEdited` and `setDocumentPath`.
 - New windows open centered on their screen; there is no option for an
   exact position yet.
 - File dialogs, the debug overlay, screenshots and clock control in the

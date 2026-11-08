@@ -93,6 +93,12 @@ describe("application lifecycle", () => {
       toggleWindowTabOverview(windowId?: number): void {
         this.calls.push(["tab overview", windowId])
       }
+      setWindowDocumentEdited(edited: boolean, windowId?: number): void {
+        this.calls.push(["edited", edited, windowId])
+      }
+      setWindowDocumentPath(path: string | null, windowId?: number): void {
+        this.calls.push(["document", path, windowId])
+      }
     }
     const renderer = new StateRenderer()
     const root = render(() => <Text>main</Text>, { renderer })
@@ -105,6 +111,12 @@ describe("application lifecycle", () => {
     root.setTabbingIdentifier("documents")
     root.setTabbingIdentifier(undefined)
     root.toggleTabOverview()
+    root.setDocumentEdited(true)
+    root.setDocumentPath("/Users/me/notes.txt")
+    root.setDocumentPath(null)
+    expect(() => root.setDocumentPath("notes.txt")).toThrow(TypeError)
+    expect(() => root.setDocumentPath(undefined as never)).toThrow(TypeError)
+    expect(() => root.setDocumentEdited("yes" as never)).toThrow(TypeError)
     expect(renderer.calls).toEqual([
       ["fullscreen", true, undefined],
       ["fullscreen", false, undefined],
@@ -114,6 +126,9 @@ describe("application lifecycle", () => {
       ["tabbing", "documents", undefined],
       ["tabbing", null, undefined],
       ["tab overview", undefined],
+      ["edited", true, undefined],
+      ["document", "/Users/me/notes.txt", undefined],
+      ["document", null, undefined],
     ])
 
     renderer.calls = []
@@ -126,6 +141,8 @@ describe("application lifecycle", () => {
     window.resize({ width: 300, height: 200 })
     window.setTabbingIdentifier("documents")
     window.toggleTabOverview()
+    window.setDocumentEdited(false)
+    window.setDocumentPath("/tmp/draft.md")
     expect(renderer.calls.slice(1)).toEqual([
       ["fullscreen", true, window.id],
       ["fullscreen", false, window.id],
@@ -134,12 +151,15 @@ describe("application lifecycle", () => {
       ["resize", 300, 200, window.id],
       ["tabbing", "documents", window.id],
       ["tab overview", window.id],
+      ["edited", false, window.id],
+      ["document", "/tmp/draft.md", window.id],
     ])
 
     window.close()
     expect(() => window.resize({ width: 1, height: 1 })).toThrow("closed window")
     expect(() => window.isFullscreen()).toThrow("closed window")
     expect(() => window.toggleTabOverview()).toThrow("closed window")
+    expect(() => window.setDocumentEdited(true)).toThrow("closed window")
     root.unmount()
   })
 })

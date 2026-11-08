@@ -3,6 +3,7 @@
 /// Creates the napi SoloRenderer, opens the window, wires native events into
 /// Solid's handler registry, and batches mutations.
 
+import { isAbsolute } from "node:path"
 import { SoloRenderer } from "@solo/native"
 import type { EventPayload, WindowOptions } from "@solo/native"
 import {
@@ -60,6 +61,16 @@ export interface Root {
   setTabbingIdentifier: (identifier: string | undefined) => void
   /** Show or hide the native tab overview (Show All Tabs). */
   toggleTabOverview: () => void
+  /**
+   * Mark the window's document as having unsaved changes, shown as a dot in
+   * the close button, or as saved.
+   */
+  setDocumentEdited: (edited: boolean) => void
+  /**
+   * Show the file the window edits in the title bar, with its icon and path
+   * menu. The path must be absolute; null clears it.
+   */
+  setDocumentPath: (path: string | null) => void
   /** Explicitly terminate the native application. */
   quitApplication: () => void
 }
@@ -104,6 +115,16 @@ export interface AppWindow {
   setTabbingIdentifier: (identifier: string | undefined) => void
   /** Show or hide the native tab overview (Show All Tabs). */
   toggleTabOverview: () => void
+  /**
+   * Mark the window's document as having unsaved changes, shown as a dot in
+   * the close button, or as saved.
+   */
+  setDocumentEdited: (edited: boolean) => void
+  /**
+   * Show the file the window edits in the title bar, with its icon and path
+   * menu. The path must be absolute; null clears it.
+   */
+  setDocumentPath: (path: string | null) => void
 }
 
 /** A window's background, as the `windowBackground` option takes it. */
@@ -204,6 +225,16 @@ function windowState(host: NativeRenderer, windowId?: number) {
       ),
     toggleTabOverview: () =>
       requireCapability(host, "toggleWindowTabOverview", "support window tabs")(windowId),
+    setDocumentEdited: (edited: boolean) => {
+      if (typeof edited !== "boolean") throw new TypeError(`Expected a boolean, got ${JSON.stringify(edited)}`)
+      requireCapability(host, "setWindowDocumentEdited", "support document windows")(edited, windowId)
+    },
+    setDocumentPath: (path: string | null) => {
+      if (path !== null && (typeof path !== "string" || !isAbsolute(path))) {
+        throw new TypeError(`Expected an absolute path or null, got ${JSON.stringify(path)}`)
+      }
+      requireCapability(host, "setWindowDocumentPath", "support document windows")(path, windowId)
+    },
   }
 }
 
@@ -318,6 +349,8 @@ export function render(code: () => SolidElement, options: RenderOptions = {}): R
     resizeWindow: state.resize,
     setTabbingIdentifier: state.setTabbingIdentifier,
     toggleTabOverview: state.toggleTabOverview,
+    setDocumentEdited: state.setDocumentEdited,
+    setDocumentPath: state.setDocumentPath,
     quitApplication: () =>
       requireCapability(host, "quitApplication", "support quitting applications")(),
   }
@@ -433,5 +466,7 @@ export function openWindow(code: () => SolidElement, options: OpenWindowOptions 
     resize: whileOpen("resize", state.resize),
     setTabbingIdentifier: whileOpen("change", state.setTabbingIdentifier),
     toggleTabOverview: whileOpen("show the tabs of", state.toggleTabOverview),
+    setDocumentEdited: whileOpen("change", state.setDocumentEdited),
+    setDocumentPath: whileOpen("change", state.setDocumentPath),
   }
 }

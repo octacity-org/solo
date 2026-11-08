@@ -107,6 +107,20 @@ export declare class SoloRenderer {
   getWindowTabbingIdentifier(windowId?: number | undefined | null): string
   /** Show or hide the tab overview (Show All Tabs) for the window's tabs. */
   toggleWindowTabOverview(windowId?: number | undefined | null): void
+  /**
+   * Mark the window's document as having unsaved changes (the dot in the
+   * close button) or as saved.
+   */
+  setWindowDocumentEdited(edited: boolean, windowId?: number | undefined | null): void
+  /**
+   * Show the file the window edits in its title bar, with its icon and
+   * path menu, or clear it with `None`. The path must be absolute.
+   */
+  setWindowDocumentPath(path?: string | undefined | null, windowId?: number | undefined | null): void
+  /** Whether AppKit marks the window's document as edited. */
+  isWindowDocumentEdited(windowId?: number | undefined | null): boolean
+  /** The document path AppKit shows for the window, `None` when unset. */
+  getWindowDocumentPath(windowId?: number | undefined | null): string | null
   /** Replace application commands atomically. macOS only for now. */
   setApplicationCommands(json: string): void
   /**
@@ -319,6 +333,10 @@ export declare class TestSoloRenderer {
   setWindowTabbingIdentifier(identifier?: string | undefined | null, windowId?: number | undefined | null): void
   getWindowTabbingIdentifier(windowId?: number | undefined | null): string
   toggleWindowTabOverview(windowId?: number | undefined | null): void
+  setWindowDocumentEdited(edited: boolean, windowId?: number | undefined | null): void
+  setWindowDocumentPath(path?: string | undefined | null, windowId?: number | undefined | null): void
+  isWindowDocumentEdited(windowId?: number | undefined | null): boolean
+  getWindowDocumentPath(windowId?: number | undefined | null): string | null
   /** Content size of the main window, or of the window `window_id`. */
   getWindowSize(windowId?: number | undefined | null): WindowSize
   /** JSON array of the trees of the windows opened with `openWindow`. */
