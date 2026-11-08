@@ -9,8 +9,8 @@ import { solidUniversal } from "../../vite.js"
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..")
 const fixture = process.argv[2] ?? "application-commands"
-if (!["application-commands", "application-shortcuts", "desktop", "system-appearance", "file-dialogs", "background-lifecycle", "context-menus", "multi-window", "automation-frames"].includes(fixture)) throw new Error("Unknown app fixture")
-const name = fixture === "context-menus" ? "Menus" : fixture === "desktop" ? "Desktop" : fixture === "system-appearance" ? "Appearance" : fixture === "file-dialogs" ? "Dialogs" : fixture === "background-lifecycle" ? "Background" : fixture === "multi-window" ? "Windows" : fixture === "automation-frames" ? "Frames" : "Commands"
+if (!["application-commands", "application-shortcuts", "desktop", "system-appearance", "file-dialogs", "background-lifecycle", "context-menus", "multi-window", "automation-frames", "deep-links"].includes(fixture)) throw new Error("Unknown app fixture")
+const name = fixture === "context-menus" ? "Menus" : fixture === "desktop" ? "Desktop" : fixture === "system-appearance" ? "Appearance" : fixture === "file-dialogs" ? "Dialogs" : fixture === "background-lifecycle" ? "Background" : fixture === "multi-window" ? "Windows" : fixture === "automation-frames" ? "Frames" : fixture === "deep-links" ? "DeepLinks" : "Commands"
 // CI runs Solid tests before its package build. Build the public package here
 // so this fixture verifies the same exports that a consuming app bundles.
 execFileSync("bun", ["run", "build"], { cwd: root, stdio: "inherit" })
@@ -48,7 +48,11 @@ writeFileSync(join(bundle, "Contents", "Info.plist"), `<?xml version="1.0" encod
 <key>CFBundleName</key><string>Solo ${name}</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleVersion</key><string>1</string>
-<key>NSHighResolutionCapable</key><true/>
+<key>NSHighResolutionCapable</key><true/>${fixture === "deep-links" ? `
+<key>CFBundleURLTypes</key><array><dict>
+<key>CFBundleURLName</key><string>dev.solo.deeplinks-test</string>
+<key>CFBundleURLSchemes</key><array><string>solo-deeplink-test</string></array>
+</dict></array>` : ""}
 </dict></plist>`)
 execFileSync("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", bundle], { stdio: "inherit" })
 console.log(`commands-executable:${executable}`)

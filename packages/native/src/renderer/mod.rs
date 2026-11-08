@@ -431,11 +431,20 @@ pub(crate) fn on_main_async(f: impl FnOnce() + Send + 'static) -> Result<()> {
 
 /// `App` access on the main thread, inside the running main loop.
 #[cfg(target_os = "macos")]
-fn app_update<R>(f: impl FnOnce(&mut gpui::App) -> R) -> Result<R> {
+pub(crate) fn app_update<R>(f: impl FnOnce(&mut gpui::App) -> R) -> Result<R> {
     let app = MAIN_APP
         .with(|app| app.borrow().clone())
         .ok_or_else(|| Error::from_reason("GPUI application is not initialized"))?;
     Ok(app.update(f))
+}
+
+/// The app renderer's event callback once `init` has run (main thread).
+/// Element-0 application events go here.
+#[cfg(target_os = "macos")]
+pub(crate) fn app_event_callback() -> Option<EventCallback> {
+    MAC_APPLICATION.with(|state| {
+        state.borrow().as_ref().and_then(|state| state.window.callback.clone())
+    })
 }
 
 /// Select worker mode for this process. The generated bootstrap calls this
@@ -535,7 +544,11 @@ pub fn run_main_loop() -> Result<()> {
     // the AccessKit adapter when a window closes makes AppKit's Touch Bar
     // bookkeeping throw (zed-industries/zed#64819), crashing every
     // openWindow close.
-    gpui::Application::new_inaccessible(platform).run(move |cx| {
+    let application = gpui::Application::new_inaccessible(platform);
+    // Deep links and files opened with the app, before or after the app
+    // Worker starts; see open_urls.rs.
+    application.on_open_urls(crate::open_urls::receive);
+    application.run(move |cx| {
         init_key_bindings(cx);
         crate::custom_elements::input::init(cx);
         MAIN_APP.with(|app| *app.borrow_mut() = Some(cx.to_async()));
@@ -1557,6 +1570,10 @@ impl SoloRenderer {
             }
             launched
         })?;
+        // URLs that launched the app, or arrived while a `solo dev` reload
+        // swapped Workers. Queued behind init, so the JS side has finished
+        // `init` before they arrive.
+        on_main_async(crate::open_urls::deliver_pending)?;
         *self.initialized.lock().unwrap() = true;
         Ok(())
     }

@@ -117,6 +117,11 @@ pub struct EventPayload {
     /// UTF-8 are converted lossily. Populated for: fileDrop.
     pub paths: Option<Vec<String>>,
 
+    // ── Open URLs ────────────────────────────────────────────────────
+    /// URLs macOS asked the app to open: custom-scheme deep links and
+    /// `file://` URLs, unvalidated. Populated for: openUrls (element 0).
+    pub urls: Option<Vec<String>>,
+
     // ── Modifiers ────────────────────────────────────────────────────
     pub modifiers: Option<EventModifiers>,
 }
@@ -151,6 +156,7 @@ impl Default for EventPayload {
             range_end: None,
             focused_index: None,
             paths: None,
+            urls: None,
             modifiers: None,
         }
     }

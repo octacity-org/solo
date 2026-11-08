@@ -58,6 +58,7 @@ const NATIVE_EXPORTS = [
   "openExternalUrl",
   "openPath",
   "readClipboardText",
+  "registerUrlScheme",
   "requestProcessExit",
   "revealPath",
   "runMainLoop",
