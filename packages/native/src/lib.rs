@@ -6,6 +6,7 @@ mod application_commands;
 mod custom_elements;
 mod desktop;
 mod diff;
+mod dock;
 mod element_tree;
 mod file_dialogs;
 #[cfg(target_os = "macos")]

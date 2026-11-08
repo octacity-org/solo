@@ -3,6 +3,7 @@
 // @solo/solid's own dependencies instead of leaking it into application code.
 export {
   SoloRenderer,
+  addRecentDocument,
   enableWorkerMainThread,
   moveToTrash,
   openExternalUrl,
@@ -12,5 +13,6 @@ export {
   requestProcessExit,
   revealPath,
   runMainLoop,
+  setDockMenu,
   writeClipboardText,
 } from "@solo/native"

@@ -16,6 +16,7 @@ import type { Element as SolidElement } from "solid-js"
 import { automateWhenPiped } from "./automation-host.js"
 import { mount, mountWindowRoot, resetIdCounter } from "./runtime.js"
 import { requireCapability } from "./capability.js"
+import { receiveApplicationReopen, receiveDockMenuAction } from "./dock.js"
 import { receiveOpenUrls } from "./open-urls.js"
 
 export interface Root {
@@ -120,10 +121,12 @@ function createNativeRenderer(
       if (event.elementId === 0 && event.eventType === "applicationQuitRequested") {
         process.exit(0)
       }
-      // Routed here rather than through an event handler so URLs that
-      // arrive before any onOpenUrls listener are kept, not dropped.
-      if (event.elementId === 0 && event.eventType === "openUrls") {
-        receiveOpenUrls(event.urls)
+      // App-level events go straight to their modules: render() clears the
+      // element event registry, and URLs must be kept until a listener exists.
+      if (event.elementId === 0) {
+        if (event.eventType === "openUrls") receiveOpenUrls(event.urls)
+        else if (event.eventType === "applicationReopen") receiveApplicationReopen()
+        else if (event.eventType === "dockMenuAction") receiveDockMenuAction(event.value)
       }
       handleSoloEvent(event)
       onEvent?.(event)

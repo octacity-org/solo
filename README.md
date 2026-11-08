@@ -155,6 +155,7 @@ renders as plain text.
 | Open, folder and save dialogs | `selectFiles()`, `selectSavePath()` | [file-dialogs.md](docs/file-dialogs.md) |
 | Files dropped from Finder | `onFileDrop`, `fileDragOver` style | [file-drop.md](docs/file-drop.md) |
 | Deep links and opened files | `onOpenUrls()`, `registerUrlScheme()` | [deep-links.md](docs/deep-links.md) |
+| Dock reopen, menu and recent documents | `onApplicationReopen()`, `configureDockMenu()`, `addRecentDocument()` | [dock.md](docs/dock.md) |
 | URLs, clipboard, Finder, Trash | `openExternalUrl()`, `readClipboardText()`, `writeClipboardText()`, `openPath()`, `revealPath()`, `moveToTrash()` | [desktop-actions.md](docs/desktop-actions.md) |
 | Light and dark mode | `createSystemAppearance()` | [system-appearance.md](docs/system-appearance.md) |
 

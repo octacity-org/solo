@@ -9,8 +9,8 @@ import { solidUniversal } from "../../vite.js"
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..")
 const fixture = process.argv[2] ?? "application-commands"
-if (!["application-commands", "application-shortcuts", "desktop", "system-appearance", "file-dialogs", "background-lifecycle", "context-menus", "multi-window", "automation-frames", "deep-links"].includes(fixture)) throw new Error("Unknown app fixture")
-const name = fixture === "context-menus" ? "Menus" : fixture === "desktop" ? "Desktop" : fixture === "system-appearance" ? "Appearance" : fixture === "file-dialogs" ? "Dialogs" : fixture === "background-lifecycle" ? "Background" : fixture === "multi-window" ? "Windows" : fixture === "automation-frames" ? "Frames" : fixture === "deep-links" ? "DeepLinks" : "Commands"
+if (!["application-commands", "application-shortcuts", "desktop", "system-appearance", "file-dialogs", "background-lifecycle", "context-menus", "multi-window", "automation-frames", "deep-links", "dock"].includes(fixture)) throw new Error("Unknown app fixture")
+const name = fixture === "context-menus" ? "Menus" : fixture === "desktop" ? "Desktop" : fixture === "system-appearance" ? "Appearance" : fixture === "file-dialogs" ? "Dialogs" : fixture === "background-lifecycle" ? "Background" : fixture === "multi-window" ? "Windows" : fixture === "automation-frames" ? "Frames" : fixture === "deep-links" ? "DeepLinks" : fixture === "dock" ? "Dock" : "Commands"
 // CI runs Solid tests before its package build. Build the public package here
 // so this fixture verifies the same exports that a consuming app bundles.
 execFileSync("bun", ["run", "build"], { cwd: root, stdio: "inherit" })
@@ -25,7 +25,7 @@ if (fixture === "context-menus") {
   copyFileSync(resolve(root, "../native", helper), join(resources, helper))
   chmodSync(join(resources, helper), 0o755)
 }
-if (fixture === "background-lifecycle") {
+if (fixture === "background-lifecycle" || fixture === "dock") {
   const resources = join(bundle, "Contents", "Resources")
   mkdirSync(resources, { recursive: true })
   writeFileSync(join(resources, "menu.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64"))
@@ -52,6 +52,11 @@ writeFileSync(join(bundle, "Contents", "Info.plist"), `<?xml version="1.0" encod
 <key>CFBundleURLTypes</key><array><dict>
 <key>CFBundleURLName</key><string>dev.solo.deeplinks-test</string>
 <key>CFBundleURLSchemes</key><array><string>solo-deeplink-test</string></array>
+</dict></array>` : ""}${fixture === "dock" ? `
+<key>CFBundleDocumentTypes</key><array><dict>
+<key>CFBundleTypeName</key><string>Text</string>
+<key>CFBundleTypeRole</key><string>Viewer</string>
+<key>LSItemContentTypes</key><array><string>public.plain-text</string></array>
 </dict></array>` : ""}
 </dict></plist>`)
 execFileSync("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", bundle], { stdio: "inherit" })

@@ -287,6 +287,10 @@ fn native_key_repeat() -> bool {
 /// AppKit auto-validation overrides MenuItem.disabled. GPUI's default only
 /// checks the action type, so commands sharing InvokeCommand need an ID check.
 pub(crate) fn is_menu_action_available(action: &dyn gpui::Action, cx: &mut gpui::App) -> bool {
+    #[cfg(target_os = "macos")]
+    if let Some(available) = crate::dock::is_dock_action_available(action, cx) {
+        return available;
+    }
     if let Some(action) = action.as_any().downcast_ref::<InvokeCommand>() {
         return cx.try_global::<CommandState>().is_some_and(|state| {
             state

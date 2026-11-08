@@ -445,6 +445,13 @@ export declare class TestSoloRenderer {
 }
 
 /**
+ * Add an existing file to the app's recent documents (macOS), shown in the
+ * Dock menu and in `File > Open Recent`. Choosing one sends the app a
+ * `file://` URL through the open-URLs event.
+ */
+export declare function addRecentDocument(path: string): void
+
+/**
  * Dev mode (`solo dev`): a later `init` from a new app Worker replaces the
  * running app's renderer in the same window instead of failing.
  */
@@ -638,6 +645,13 @@ export declare function revealPath(path: string): void
  * Never returns while the application runs.
  */
 export declare function runMainLoop(): void
+
+/**
+ * Replace the app-defined items of the Dock icon's menu (macOS). `items_json`
+ * is a JSON array of menu-bar items: `{type:"action",token,label,enabled,
+ * checked}`, `{type:"separator"}` or `{type:"status",label}`.
+ */
+export declare function setDockMenu(itemsJson: string): void
 
 /** The outcome of moving one path to the Trash. */
 export interface TrashResult {
