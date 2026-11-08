@@ -12,7 +12,7 @@
 /// Drives `dist/`, built with `bun run build:automation`: a plain production
 /// build leaves stdio automation out.
 
-import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
@@ -159,15 +159,21 @@ describe("tasks app automation", () => {
       await firstTask.getByTestId("checkbox-off").click()
       await firstTask.getByTestId("checkbox-on").waitFor({ timeoutMs: 5_000 })
 
-      const dir = mkdtempSync(join(tmpdir(), "tasks-automation-"))
+      // CI keeps screenshots for failed runs by pointing this at an artifact
+      // directory; a local run uses and removes a temp directory.
+      const retained = process.env.SOLO_SCREENSHOT_DIR
+      const dir = retained ?? mkdtempSync(join(tmpdir(), "tasks-automation-"))
+      if (retained) mkdirSync(retained, { recursive: true })
       try {
-        const path = await app.screenshot({ path: join(dir, "window.png") })
+        const path = await app.screenshot({
+          path: join(dir, `window-${process.pid}.png`),
+        })
         // A PNG starts with this 8-byte signature.
         expect(readFileSync(path).subarray(0, 8)).toEqual(
           Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
         )
       } finally {
-        rmSync(dir, { recursive: true, force: true })
+        if (!retained) rmSync(dir, { recursive: true, force: true })
       }
     } finally {
       await app.close()
