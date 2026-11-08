@@ -1540,6 +1540,34 @@ impl SoloRenderer {
         }
     }
 
+    /// Run `update` against the app without a particular window, on the UI
+    /// thread off macOS. File dialogs need only the app; they open their own
+    /// platform window.
+    fn query_app<R: Send + 'static>(
+        &self,
+        query: &'static str,
+        update: impl FnOnce(&mut gpui::App) -> R + Send + 'static,
+    ) -> Result<R> {
+        #[cfg(target_os = "macos")]
+        {
+            let _ = query;
+            return app_update(update);
+        }
+        #[cfg(ui_thread)]
+        {
+            let (response, receiver) = sync_channel(1);
+            self.send_ui_command(UiCommand::App(Box::new(move |cx| {
+                response.send(update(cx)).ok();
+            })))?;
+            return wait_ui(receiver, Some(query));
+        }
+        #[cfg(not(any(target_os = "macos", ui_thread)))]
+        {
+            let _ = (query, update);
+            Err(Error::from_reason("Unsupported operating system"))
+        }
+    }
+
     fn in_window<R: Send + 'static>(
         &self,
         target: WindowTarget,
@@ -1815,6 +1843,9 @@ impl SoloRenderer {
                     gpui::Application::with_platform(platform).run(move |cx| {
                         init_key_bindings(cx);
                         crate::custom_elements::input::init(cx);
+                        // Linux's PlatformWindow has no native prompts, and
+                        // gpui's fallback ignores Enter/Escape.
+                        cx.set_prompt_builder(crate::prompt::renderer);
                         let bounds = centered_window_bounds(&window_options, None, cx);
                         let window = match cx.open_window(
                             to_gpui_window_options(&window_options, bounds, None),
@@ -2355,7 +2386,7 @@ impl SoloRenderer {
         &self,
         options_json: String,
     ) -> Result<AsyncTask<crate::file_dialogs::OpenDialogTask>> {
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", ui_thread))]
         {
             if !*self.initialized.lock().unwrap() {
                 return Err(Error::from_reason(
@@ -2364,16 +2395,21 @@ impl SoloRenderer {
             }
             let options = crate::file_dialogs::parse_open_options(&options_json)?;
             let lease = crate::file_dialogs::DialogLease::acquire(self.file_dialog_state.clone())?;
+            #[cfg(target_os = "macos")]
             let receiver = update_window(move |_view, _window, cx| {
+                cx.prompt_for_paths(options.to_path_prompt_options())
+            })?;
+            #[cfg(ui_thread)]
+            let receiver = self.query_app("file dialog", move |cx| {
                 cx.prompt_for_paths(options.to_path_prompt_options())
             })?;
             return Ok(crate::file_dialogs::OpenDialogTask::new(receiver, lease));
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", ui_thread)))]
         {
             let _ = options_json;
             Err(Error::from_reason(
-                "File dialogs are supported only on macOS",
+                "File dialogs are not supported on this operating system",
             ))
         }
     }
@@ -2388,7 +2424,7 @@ impl SoloRenderer {
         options_json: String,
         window_id: Option<f64>,
     ) -> Result<AsyncTask<crate::alerts::AlertTask>> {
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", ui_thread))]
         {
             if !*self.initialized.lock().unwrap() {
                 return Err(Error::from_reason(
@@ -2401,14 +2437,17 @@ impl SoloRenderer {
                 self.alert_state.clone(),
                 crate::alerts::ALERT_ALREADY_OPEN,
             )?;
-            let receiver =
-                update_window_in(target, move |_view, window, cx| options.show(window, cx))?;
+            let receiver = self.query_window(target, Some("alert"), move |_view, window, cx| {
+                options.show(window, cx)
+            })?;
             return Ok(crate::alerts::AlertTask::new(receiver, lease));
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", ui_thread)))]
         {
             let _ = (options_json, window_id);
-            Err(Error::from_reason("Alerts are supported only on macOS"))
+            Err(Error::from_reason(
+                "Alerts are not supported on this operating system",
+            ))
         }
     }
 
@@ -2420,7 +2459,7 @@ impl SoloRenderer {
         &self,
         options_json: String,
     ) -> Result<AsyncTask<crate::file_dialogs::SaveDialogTask>> {
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", ui_thread))]
         {
             if !*self.initialized.lock().unwrap() {
                 return Err(Error::from_reason(
@@ -2429,7 +2468,15 @@ impl SoloRenderer {
             }
             let options = crate::file_dialogs::parse_save_options(&options_json)?;
             let lease = crate::file_dialogs::DialogLease::acquire(self.file_dialog_state.clone())?;
+            #[cfg(target_os = "macos")]
             let receiver = update_window(move |_view, _window, cx| {
+                cx.prompt_for_new_path(
+                    &options.initial_directory,
+                    options.suggested_name.as_deref(),
+                )
+            })?;
+            #[cfg(ui_thread)]
+            let receiver = self.query_app("save dialog", move |cx| {
                 cx.prompt_for_new_path(
                     &options.initial_directory,
                     options.suggested_name.as_deref(),
@@ -2437,11 +2484,11 @@ impl SoloRenderer {
             })?;
             return Ok(crate::file_dialogs::SaveDialogTask::new(receiver, lease));
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", ui_thread)))]
         {
             let _ = options_json;
             Err(Error::from_reason(
-                "File dialogs are supported only on macOS",
+                "File dialogs are not supported on this operating system",
             ))
         }
     }
