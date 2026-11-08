@@ -21,6 +21,16 @@ export {
 export type { TrashResult } from "./desktop.js"
 export { getScreens, onScreensChanged } from "./screens.js"
 export type { Screen, ScreenRect } from "./screens.js"
+export {
+  createKeyboardLayout,
+  createThermalState,
+  hideApplication,
+  hideOtherApplications,
+  restartApplication,
+  shouldAutoHideScrollbars,
+  showAllApplications,
+} from "./application.js"
+export type { KeyboardLayout, ThermalState } from "./application.js"
 export { onOpenUrls, registerUrlScheme } from "./open-urls.js"
 export type { OpenUrlsListener } from "./open-urls.js"
 export { showAlert } from "./alert.js"

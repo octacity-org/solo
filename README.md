@@ -163,6 +163,7 @@ renders as plain text.
 | Dock reopen, menu and recent documents | `onApplicationReopen()`, `configureDockMenu()`, `addRecentDocument()` | [dock.md](docs/dock.md) |
 | URLs, clipboard, Finder, Trash | `openExternalUrl()`, `readClipboardText()`, `writeClipboardText()`, `openPath()`, `revealPath()`, `moveToTrash()` | [desktop-actions.md](docs/desktop-actions.md) |
 | Light and dark mode | `createSystemAppearance()` | [system-appearance.md](docs/system-appearance.md) |
+| Hide, restart, thermal state, keyboard layout, scroll-bar preference | `hideApplication()`, `restartApplication()`, `createThermalState()`, `createKeyboardLayout()`, `shouldAutoHideScrollbars()` | [application.md](docs/application.md) |
 
 ## Development loop
 

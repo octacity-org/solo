@@ -9,6 +9,7 @@ import { createSolidNativeTestRoot, hasNativeTestRenderer } from "../testing.js"
 import type { SolidNativeTestRoot } from "../testing.js"
 import { Text } from "../components.js"
 import { getScreens } from "../screens.js"
+import { getKeyboardLayout, getThermalState, shouldAutoHideScrollbars } from "@solo/native"
 import { openWindow } from "../root.js"
 import { flushMutations } from "../runtime.js"
 
@@ -96,6 +97,15 @@ describeNative("openWindow on the test renderer", () => {
     inspector.setTabbingIdentifier(undefined)
     expect(testRoot.renderer.getWindowTabbingIdentifier(inspector.id)).not.toBe("documents")
     expect(testRoot.renderer.getWindowTabbingIdentifier()).toBe("documents")
+  })
+
+  it("reads the application's thermal state, keyboard layout and scroll-bar preference", () => {
+    testRoot.render(() => <Text>Main</Text>)
+    expect(["nominal", "fair", "serious", "critical"]).toContain(getThermalState())
+    const layout = getKeyboardLayout()
+    expect(layout.id).not.toBe("")
+    expect(layout.name).not.toBe("")
+    expect(typeof shouldAutoHideScrollbars()).toBe("boolean")
   })
 
   it("lists screens and opens a window only on a connected one", () => {
