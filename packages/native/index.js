@@ -583,6 +583,7 @@ module.exports.enableWorkerMainThread = nativeBinding.enableWorkerMainThread
 module.exports.moveToTrash = nativeBinding.moveToTrash
 module.exports.openExternalUrl = nativeBinding.openExternalUrl
 module.exports.openPath = nativeBinding.openPath
+module.exports.readClipboardText = nativeBinding.readClipboardText
 module.exports.requestProcessExit = nativeBinding.requestProcessExit
 module.exports.revealPath = nativeBinding.revealPath
 module.exports.runMainLoop = nativeBinding.runMainLoop

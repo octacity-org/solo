@@ -4,6 +4,7 @@ import * as solo from "@solo/solid"
 const platform = vi.hoisted(() => ({
   openExternalUrl: vi.fn(),
   writeClipboardText: vi.fn(),
+  readClipboardText: vi.fn(),
   moveToTrash: vi.fn(),
   revealPath: vi.fn(),
   openPath: vi.fn(),
@@ -30,6 +31,18 @@ describe("public desktop actions", () => {
     ])
   })
 
+  it("reads clipboard text unchanged, and null when there is no text", () => {
+    platform.readClipboardText.mockReturnValueOnce("Hello 世界 👋\nİstanbul")
+    expect(solo.readClipboardText()).toBe("Hello 世界 👋\nİstanbul")
+    platform.readClipboardText.mockReturnValueOnce("")
+    expect(solo.readClipboardText()).toBe("")
+    platform.readClipboardText.mockReturnValueOnce(null)
+    expect(solo.readClipboardText()).toBeNull()
+    // napi-rs maps a Rust `None` to `undefined` on some paths.
+    platform.readClipboardText.mockReturnValueOnce(undefined)
+    expect(solo.readClipboardText()).toBeNull()
+  })
+
   it("rejects non-string arguments before platform dispatch", () => {
     for (const value of [undefined, null, 42, {}, new URL("https://example.com")]) {
       expect(() => solo.openExternalUrl(value as never)).toThrow("URL must be a string")
@@ -43,8 +56,10 @@ describe("public desktop actions", () => {
     const error = new Error("macOS refused the operation")
     platform.openExternalUrl.mockImplementation(() => { throw error })
     platform.writeClipboardText.mockImplementation(() => { throw error })
+    platform.readClipboardText.mockImplementation(() => { throw error })
     expect(() => solo.openExternalUrl("https://example.com")).toThrow(error)
     expect(() => solo.writeClipboardText("text")).toThrow(error)
+    expect(() => solo.readClipboardText()).toThrow(error)
   })
 })
 

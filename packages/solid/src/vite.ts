@@ -57,6 +57,7 @@ const NATIVE_EXPORTS = [
   "moveToTrash",
   "openExternalUrl",
   "openPath",
+  "readClipboardText",
   "requestProcessExit",
   "revealPath",
   "runMainLoop",
