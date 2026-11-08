@@ -85,6 +85,19 @@ describeNative("openWindow on the test renderer", () => {
     expect(testRoot.renderer.isWindowFullscreen()).toBe(false)
   })
 
+  it("sets and clears the tabbing identifier of open windows", () => {
+    const { inspector } = mountApp()
+    inspector.setTabbingIdentifier("documents")
+    expect(testRoot.renderer.getWindowTabbingIdentifier(inspector.id)).toBe("documents")
+    testRoot.renderer.setWindowTabbingIdentifier("documents")
+    expect(testRoot.renderer.getWindowTabbingIdentifier()).toBe("documents")
+
+    // Cleared, AppKit reports its own default identifier again.
+    inspector.setTabbingIdentifier(undefined)
+    expect(testRoot.renderer.getWindowTabbingIdentifier(inspector.id)).not.toBe("documents")
+    expect(testRoot.renderer.getWindowTabbingIdentifier()).toBe("documents")
+  })
+
   it("lists screens and opens a window only on a connected one", () => {
     testRoot.render(() => <Text>Main</Text>)
     const screens = getScreens()

@@ -45,6 +45,7 @@ The returned `AppWindow` controls that window:
 | `setBackground(background)` | `"opaque"`, `"transparent"` or `"blurred"` |
 | `size()` | the content size in logical pixels, read from the live window |
 | `resize({ width, height })` | sets the content size `size()` reports |
+| `setTabbingIdentifier(identifier)`, `toggleTabOverview()` | native window tabs; see [Window tabs](#window-tabs) |
 
 Calls other than `close()` throw after the window has closed. The render root
 has the same controls for the main window; see [Window state](#window-state).
@@ -61,7 +62,7 @@ titlebar options, `render()` and `openWindow()` accept:
 | `kind` | `"normal"` | `"normal"`, `"floating"` (stays above normal windows) or `"popup"` (a non-activating panel) |
 | `movable` | `true` | let the user drag the window |
 | `minimizable` | `true` | enable the minimize button |
-| `tabbingIdentifier` | none | windows sharing an identifier can merge into native tabs |
+| `tabbingIdentifier` | none | windows sharing an identifier can merge into native tabs; see [Window tabs](#window-tabs) |
 | `useDisplayP3` | `false` | render in the Display P3 color space |
 | `screen` | the main screen | open on this screen, an `id` from `getScreens()` |
 
@@ -147,6 +148,41 @@ root.toggleFullscreen()
   The `fullscreen` window option opens a window fullscreen.
 - `setBackground` takes the values of the `windowBackground` window option
   and applies them to the open window. Any other value throws.
+
+## Window tabs
+
+Windows that share a tabbing identifier can merge into one window with native
+tabs. Set it when the window opens with the `tabbingIdentifier` option, or
+later:
+
+```ts
+const root = render(() => <App />, { title: "Untitled", tabbingIdentifier: "documents" })
+const second = openWindow(() => <Document />, { title: "Notes" })
+
+second.setTabbingIdentifier("documents")
+root.toggleTabOverview() // Show All Tabs
+second.setTabbingIdentifier(undefined) // clear it
+```
+
+| render root | `AppWindow` |
+|---|---|
+| `setTabbingIdentifier(identifier)` | the same |
+| `toggleTabOverview()` | the same |
+
+- Sharing an identifier makes windows *able* to merge. Whether a new window
+  opens as a tab follows the user's System Settings → Desktop & Dock →
+  "Prefer tabs when opening documents": always, only in full screen (the
+  default), or never. Windows that do not merge on their own stay separate
+  until the user merges them.
+- AppKit's automatic window tabbing is one setting for the whole
+  application. Setting an identifier turns it on and clearing one turns it
+  off, for every window; opening a window with or without
+  `tabbingIdentifier` sets it the same way. Mixing tabbed and untabbed
+  windows therefore follows whichever call came last.
+- `toggleTabOverview()` shows or hides the overview of the tabs the window
+  belongs to.
+- Events for tabs (moved to a new window, all windows merged) are not
+  exposed.
 
 ## Close requests
 

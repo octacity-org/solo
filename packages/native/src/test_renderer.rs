@@ -498,6 +498,31 @@ impl TestSoloRenderer {
         })
     }
 
+    #[napi]
+    pub fn set_window_tabbing_identifier(
+        &self,
+        identifier: Option<String>,
+        window_id: Option<f64>,
+    ) -> Result<()> {
+        let root = window_id.map(to_element_id).transpose()?;
+        in_view(root, move |_view, window, _cx| window.set_tabbing_identifier(identifier))
+    }
+
+    #[napi]
+    pub fn get_window_tabbing_identifier(&self, window_id: Option<f64>) -> Result<String> {
+        let root = window_id.map(to_element_id).transpose()?;
+        with_appkit_window(root, |window| Ok(window.tabbingIdentifier().to_string()))
+    }
+
+    #[napi]
+    pub fn toggle_window_tab_overview(&self, window_id: Option<f64>) -> Result<()> {
+        let root = window_id.map(to_element_id).transpose()?;
+        with_appkit_window(root, |window| {
+            window.toggleTabOverview(None);
+            Ok(())
+        })
+    }
+
     /// Content size of the main window, or of the window `window_id`.
     #[napi]
     pub fn get_window_size(&self, window_id: Option<f64>) -> Result<WindowSize> {

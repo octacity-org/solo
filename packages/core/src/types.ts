@@ -327,6 +327,12 @@ export interface NativeRenderer {
   setWindowBackground?(background: string, windowId?: number): void
   /** Content size in logical pixels, as `getWindowSize` reports it. */
   resizeWindow?(width: number, height: number, windowId?: number): void
+  /** Set or, with null, clear the identifier windows share to merge into tabs. */
+  setWindowTabbingIdentifier?(identifier: string | null, windowId?: number): void
+  /** AppKit's identifier for the window, its default when none is set. */
+  getWindowTabbingIdentifier?(windowId?: number): string
+  /** Show or hide the native tab overview. */
+  toggleWindowTabOverview?(windowId?: number): void
   quitApplication?(): void
   /** Content size in logical pixels. */
   getWindowSize?(windowId?: number): { width: number; height: number }

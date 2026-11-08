@@ -51,6 +51,14 @@ export interface Root {
   getWindowSize: () => { width: number; height: number }
   /** Resize the content to a size in logical pixels, as getWindowSize reports it. */
   resizeWindow: (size: { width: number; height: number }) => void
+  /**
+   * Let the window merge into native tabs with windows that share
+   * `identifier`; undefined clears it. Switches automatic window tabbing on
+   * or off for the whole application.
+   */
+  setTabbingIdentifier: (identifier: string | undefined) => void
+  /** Show or hide the native tab overview (Show All Tabs). */
+  toggleTabOverview: () => void
   /** Explicitly terminate the native application. */
   quitApplication: () => void
 }
@@ -87,6 +95,14 @@ export interface AppWindow {
   size: () => { width: number; height: number }
   /** Resize the content to a size in logical pixels, as size() reports it. */
   resize: (size: { width: number; height: number }) => void
+  /**
+   * Let the window merge into native tabs with windows that share
+   * `identifier`; undefined clears it. Switches automatic window tabbing on
+   * or off for the whole application.
+   */
+  setTabbingIdentifier: (identifier: string | undefined) => void
+  /** Show or hide the native tab overview (Show All Tabs). */
+  toggleTabOverview: () => void
 }
 
 /** A window's background, as the `windowBackground` option takes it. */
@@ -180,6 +196,13 @@ function windowState(host: NativeRenderer, windowId?: number) {
       requireCapability(host, "setWindowBackground", "support window backgrounds")(background, windowId),
     resize: ({ width, height }: { width: number; height: number }) =>
       requireCapability(host, "resizeWindow", "support resizing windows")(width, height, windowId),
+    setTabbingIdentifier: (identifier: string | undefined) =>
+      requireCapability(host, "setWindowTabbingIdentifier", "support window tabs")(
+        identifier ?? null,
+        windowId,
+      ),
+    toggleTabOverview: () =>
+      requireCapability(host, "toggleWindowTabOverview", "support window tabs")(windowId),
   }
 }
 
@@ -290,6 +313,8 @@ export function render(code: () => SolidElement, options: RenderOptions = {}): R
     setWindowBackground: state.setBackground,
     getWindowSize: () => requireCapability(host, "getWindowSize", "expose the window size")(),
     resizeWindow: state.resize,
+    setTabbingIdentifier: state.setTabbingIdentifier,
+    toggleTabOverview: state.toggleTabOverview,
     quitApplication: () =>
       requireCapability(host, "quitApplication", "support quitting applications")(),
   }
@@ -403,5 +428,7 @@ export function openWindow(code: () => SolidElement, options: OpenWindowOptions 
       return requireCapability(host, "getWindowSize", "expose the window size")(rootId)
     },
     resize: whileOpen("resize", state.resize),
+    setTabbingIdentifier: whileOpen("change", state.setTabbingIdentifier),
+    toggleTabOverview: whileOpen("show the tabs of", state.toggleTabOverview),
   }
 }

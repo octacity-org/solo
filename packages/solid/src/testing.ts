@@ -35,6 +35,9 @@ interface NativeTestRendererApi {
   resizeWindow(width: number, height: number, windowId?: number): void
   setWindowBackground(background: string, windowId?: number): void
   isWindowFullscreen(windowId?: number): boolean
+  setWindowTabbingIdentifier(identifier: string | null, windowId?: number): void
+  getWindowTabbingIdentifier(windowId?: number): string
+  toggleWindowTabOverview(windowId?: number): void
   getWindowAutomationTrees(): string
   scrollToItem(elementId: number, index: number): void
   scrollTo(elementId: number, x: number, y: number): void

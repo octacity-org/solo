@@ -93,6 +93,20 @@ export declare class SoloRenderer {
    * size `getWindowSize` reports.
    */
   resizeWindow(width: number, height: number, windowId?: number | undefined | null): void
+  /**
+   * Set the identifier that lets windows sharing it merge into native
+   * tabs, or clear it with `None`. AppKit then switches automatic window
+   * tabbing on (set) or off (clear) for the whole process, as opening a
+   * window does.
+   */
+  setWindowTabbingIdentifier(identifier?: string | undefined | null, windowId?: number | undefined | null): void
+  /**
+   * The window's tabbing identifier as AppKit reports it. A window without
+   * one reports AppKit's default.
+   */
+  getWindowTabbingIdentifier(windowId?: number | undefined | null): string
+  /** Show or hide the tab overview (Show All Tabs) for the window's tabs. */
+  toggleWindowTabOverview(windowId?: number | undefined | null): void
   /** Replace application commands atomically. macOS only for now. */
   setApplicationCommands(json: string): void
   /**
@@ -302,6 +316,9 @@ export declare class TestSoloRenderer {
    * size `getWindowSize` reports.
    */
   resizeWindow(width: number, height: number, windowId?: number | undefined | null): void
+  setWindowTabbingIdentifier(identifier?: string | undefined | null, windowId?: number | undefined | null): void
+  getWindowTabbingIdentifier(windowId?: number | undefined | null): string
+  toggleWindowTabOverview(windowId?: number | undefined | null): void
   /** Content size of the main window, or of the window `window_id`. */
   getWindowSize(windowId?: number | undefined | null): WindowSize
   /** JSON array of the trees of the windows opened with `openWindow`. */
