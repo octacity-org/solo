@@ -242,6 +242,8 @@ impl RetainedTree {
         self.destroy_element_recursive(id, &mut destroyed);
         #[cfg(target_os = "macos")]
         crate::context_menu::cancel_destroyed(&destroyed);
+        #[cfg(all(not(target_os = "macos"), ui_thread))]
+        crate::context_menu_gpui::cancel_destroyed(&destroyed);
         if self.root_id == Some(id) {
             self.root_id = None;
         }

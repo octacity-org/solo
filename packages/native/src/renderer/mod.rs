@@ -2966,6 +2966,31 @@ impl SoloRenderer {
         })
     }
 
+    /// Route automation keys to an open context menu on the UI thread. The
+    /// menu takes them before the window sees them, as the macOS helper does;
+    /// a closed menu leaves the keystrokes to the focused element.
+    #[cfg(all(not(target_os = "macos"), ui_thread))]
+    fn dispatch_menu_keys(&self, keys: &[gpui::Keystroke]) -> Result<bool> {
+        if !crate::context_menu_gpui::is_open() {
+            return Ok(false);
+        }
+        let keys = keys.to_vec();
+        self.query_window(
+            WindowTarget::Main,
+            Some("routing keys to the context menu"),
+            move |_view, _window, cx| {
+                let mut handled = false;
+                for key in &keys {
+                    handled |= crate::context_menu_gpui::handle_key(&key.key);
+                }
+                if handled {
+                    cx.notify();
+                }
+                handled
+            },
+        )
+    }
+
     /// Type a space-separated sequence of keystrokes, e.g. `"a enter cmd-s"`.
     ///
     /// Text is inserted through GPUI's input pipeline, so it lands in whatever
@@ -2980,6 +3005,11 @@ impl SoloRenderer {
 
         #[cfg(target_os = "macos")]
         if crate::context_menu::dispatch_keys(&keys) {
+            return Ok(());
+        }
+
+        #[cfg(all(not(target_os = "macos"), ui_thread))]
+        if self.dispatch_menu_keys(&keys)? {
             return Ok(());
         }
 
@@ -3005,6 +3035,11 @@ impl SoloRenderer {
 
         #[cfg(target_os = "macos")]
         if crate::context_menu::dispatch_keys(std::slice::from_ref(&key)) {
+            return Ok(());
+        }
+
+        #[cfg(all(not(target_os = "macos"), ui_thread))]
+        if self.dispatch_menu_keys(std::slice::from_ref(&key))? {
             return Ok(());
         }
 
@@ -3688,5 +3723,83 @@ impl SoloRenderer {
                 )))
             }
         })?
+    }
+}
+
+/// Context menus off macOS paint inside the app window; see
+/// `context_menu_gpui`. Navigation keys reach them through the view's capture
+/// listener, and the waiting `MenuTask` resolves when the session settles.
+#[cfg(all(not(target_os = "macos"), ui_thread))]
+#[napi]
+impl SoloRenderer {
+    #[napi]
+    pub fn show_context_menu(
+        &self,
+        json: String,
+    ) -> Result<AsyncTask<crate::context_menu_gpui::MenuTask>> {
+        let tree = self.tree.clone();
+        // The menu opens in the owner element's window; `show` validates the id.
+        let owner = serde_json::from_str::<serde_json::Value>(&json)
+            .ok()
+            .and_then(|value| value["elementId"].as_f64())
+            .and_then(|id| to_element_id(id).ok());
+        let target = owner.map_or(WindowTarget::Main, |id| self.window_of(id));
+        let receiver = self.query_window(
+            target,
+            Some("opening the context menu"),
+            move |_view, window, cx| -> Result<std::sync::mpsc::Receiver<Option<String>>> {
+                let focus = cx.focus_handle();
+                let receiver =
+                    crate::context_menu_gpui::show(&json, &tree.lock().unwrap(), focus.clone())?;
+                focus.focus(window, cx);
+                // Physical keys reach the menu before any key binding or
+                // focused input, whichever element currently has focus.
+                let weak = cx.weak_entity();
+                let subscription = cx.intercept_keystrokes(move |event, _window, cx| {
+                    if crate::context_menu_gpui::handle_key(&event.keystroke.key) {
+                        if let Some(view) = weak.upgrade() {
+                            view.update(cx, |_view, cx| cx.notify());
+                        }
+                        cx.stop_propagation();
+                    }
+                });
+                crate::context_menu_gpui::set_interceptor(subscription);
+                cx.notify();
+                Ok(receiver)
+            },
+        )??;
+        Ok(AsyncTask::new(crate::context_menu_gpui::MenuTask::new(
+            receiver,
+        )))
+    }
+
+    #[napi]
+    pub fn cancel_context_menu(&self, request_id: f64) -> Result<()> {
+        let request_id = to_element_id(request_id)?;
+        self.query_window(
+            WindowTarget::Main,
+            Some("cancelling the context menu"),
+            move |_view, _window, cx| {
+                if crate::context_menu_gpui::cancel(request_id) {
+                    cx.notify();
+                }
+            },
+        )
+    }
+}
+
+#[cfg(all(not(target_os = "macos"), not(ui_thread)))]
+#[napi]
+impl SoloRenderer {
+    #[napi]
+    pub fn show_context_menu(&self, _json: String) -> Result<()> {
+        Err(Error::from_reason(
+            "Context menus are supported only on macOS and Linux",
+        ))
+    }
+
+    #[napi]
+    pub fn cancel_context_menu(&self, _request_id: f64) -> Result<()> {
+        Ok(())
     }
 }

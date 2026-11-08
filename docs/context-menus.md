@@ -1,7 +1,9 @@
-# Native context menus
+# Context menus
 
-`createContextMenu` from `@solo/solid` presents a macOS `NSMenu` with native
-placement, keyboard navigation, disabled/checked items, and dismissal.
+`createContextMenu` from `@solo/solid` presents a menu with keyboard
+navigation, disabled and checked items, and dismissal. macOS shows an
+`NSMenu`; Linux draws the menu inside the app window (see
+[Linux](#linux)).
 
 ```tsx
 import { createContextMenu, View, Text } from "@solo/solid"
@@ -23,8 +25,8 @@ function Article() {
 
 Pass a Solo pointer event to position at its window-content coordinates, in
 logical points. Pass `{ elementId }` to position below an already-painted
-element instead. AppKit handles screen-edge adjustment. A missing or destroyed
-element produces an error.
+element instead. The platform keeps the menu inside the screen (macOS) or the
+window (Linux). A missing or destroyed element produces an error.
 
 `show()` returns `Promise<string | null>`: the selected action ID, or `null`
 for Escape, outside dismissal, replacement, `dismiss()`, or disposal. Errors
@@ -42,6 +44,32 @@ previous session. Unsupported platforms report a missing renderer capability.
 Menus support up to 256 entries; IDs are limited to 1024 UTF-8 bytes and labels
 to 4096 UTF-8 bytes. IDs must be unique and labels non-empty.
 
+## Linux
+
+Linux has no native menu: a menu is an overlay in the app's own window. Solo
+draws it with GPUI, so the frame loop keeps running and no helper process is
+started. Labels, separators, disabled and checked items match the macOS
+versions.
+
+- The menu opens at the pointer, or below the anchored element, and is clamped
+to the window's content area, including when the anchor sits in a corner.
+- The mouse selects an item; clicking anywhere else dismisses the menu, as
+does Escape.
+- Up and Down move the highlight, skipping disabled items and separators and
+stopping at the ends. Home and End jump to the first and last selectable
+item. Enter selects the highlighted item, and with nothing highlighted it
+dismisses, as AppKit does.
+- The menu takes focus while it is open, and keys also pass through an
+  app-wide interceptor, so it works whether or not the owner element can take
+  focus. It is not a system-wide modal: unlike
+  an open `NSMenu`, it cannot be steered from outside the app, so there is no
+  scripted mode and automation drives it like a person would.
+- Release builds need no extra file: everything is inside the addon.
+
+The GPU-backed automation tests in `context-menu-native.test.tsx` need the
+macOS test renderer; on Linux the layout and keyboard rules are covered by
+unit tests in `packages/native/src/context_menu_gpui.rs`.
+
 ## Event loops and packaging
 
 AppKit tracks menus synchronously. Solo runs the menu in a small native helper
@@ -56,7 +84,7 @@ defers AppKit termination until workers have reaped the helpers and removed
 their temporary copies; JavaScript keeps running during this drain. Updates
 after window closure retain state without trying to repaint the closed window.
 
-The existing `@solo/native` build commands also build the matching
+On macOS the existing `@solo/native` build commands also build the matching
 `solo-context-menu.darwin-arm64` or `solo-context-menu.darwin-x64` executable.
 Development keeps it beside the native `.node` file. A standalone compiled
 executable keeps it beside the app executable. Packaged `.app` applications

@@ -206,8 +206,9 @@ For the smallest app:
   at the time of writing).
 
 Built that way, the counter example is a single 40,215,634-byte (40.2 MB)
-executable. An app that uses context menus also ships the 389,088-byte menu
-helper next to it; inside an `.app`, it goes in `Contents/Resources`.
+executable. On macOS, an app that uses context menus also ships the
+389,088-byte menu helper next to it; inside an `.app`, it goes in
+`Contents/Resources`. Linux menus are drawn in-window and need nothing extra.
 
 ## Automation
 
@@ -246,7 +247,7 @@ cd packages/native && cargo test --features test-support --lib --test layout_pro
 | Platform | Status |
 |---|---|
 | macOS | Primary. Windows, input, desktop APIs, `<webview>`, live automation and the GPU test renderer. |
-| Linux (Wayland, X11) | Windows, input, clipboard, browser/file actions, the freedesktop Trash and recent-document list, portal file dialogs, in-window alerts, keyboard layout, scroll-bar preference and compiled-binary restart work. System appearance follows the desktop on Wayland. Live automation works; screenshots need X11. Window state (maximize, fullscreen, minimize, resize, background) and screens work; window tabs, menus and Dock integration still report that they are macOS-only. |
+| Linux (Wayland, X11) | Windows, input, clipboard, browser/file actions, the freedesktop Trash and recent-document list, portal file dialogs, in-window alerts, keyboard layout, scroll-bar preference and compiled-binary restart work. System appearance follows the desktop on Wayland. Live automation works; screenshots need X11. Window state (maximize, fullscreen, minimize, resize, background), screens and in-window context menus work; window tabs, the menu bar and Dock integration still report that they are macOS-only. |
 | Windows | Builds in CI. Untested. |
 
 ## Current boundaries
