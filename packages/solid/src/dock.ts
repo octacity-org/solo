@@ -42,9 +42,9 @@ export function configureDockMenu(source: () => readonly DockMenuItem[]): () => 
 
 /**
  * Called when the user clicks the app's Dock icon, or opens the app again,
- * while it shows no window (macOS). A background app (`menuBar` in `render`)
- * can reopen its window here with `root.showWindow()`. Returns a function
- * that stops listening.
+ * while it shows no window (macOS), or clicks its status-item icon (Linux).
+ * A background app (`menuBar` in `render`) can reopen its window here with
+ * `root.showWindow()`. Returns a function that stops listening.
  */
 export function onApplicationReopen(listener: () => void): () => void {
   if (typeof listener !== "function") throw new TypeError("onApplicationReopen expects a function")

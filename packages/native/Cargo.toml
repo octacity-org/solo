@@ -75,6 +75,10 @@ libc = "0.2"
 raw-window-handle = "0.6"
 x11rb = "0.13"
 image = { version = "0.25", default-features = false, features = ["png"] }
+# `menuBar`: a StatusNotifierItem over D-Bus, with no GTK of its own. The
+# blocking API runs the service on its own thread, so the UI thread never
+# awaits D-Bus.
+ksni = { version = "0.3", features = ["blocking"] }
 
 [features]
 # Syntax highlighting is opt-in: its grammars are about 8 MB of the library,

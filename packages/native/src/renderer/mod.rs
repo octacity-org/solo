@@ -304,6 +304,10 @@ thread_local! {
     static SECONDARY_WINDOWS: RefCell<Vec<(u64, gpui::WindowHandle<SoloView>)>> = const { RefCell::new(Vec::new()) };
     #[cfg(target_os = "macos")]
     static MAC_APPLICATION: RefCell<Option<MacApplicationState>> = const { RefCell::new(None) };
+    /// The status item a `menuBar` application installed. Linux hosts it in a
+    /// status-notifier plugin rather than the window manager's menu bar.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    static MENU_BAR: RefCell<Option<crate::menu_bar::MenuBar>> = const { RefCell::new(None) };
 }
 
 /// Drop everything a closed window registered for the napi side.
@@ -1861,6 +1865,48 @@ fn main_window_closed_on_ui(_cx: &mut gpui::App) {
     }
 }
 
+/// Install the status item the `menuBar` option asks for. Called once the
+/// window exists, so a session without a status-notifier host fails `init`
+/// rather than leaving an app that can only be killed.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn create_ui_menu_bar(options: &WindowOptions, title: &str) -> Result<()> {
+    let Some(menu_options) = options.menu_bar.as_ref() else {
+        return Ok(());
+    };
+    let menu_bar = crate::menu_bar::MenuBar::new(menu_options, title)?;
+    MENU_BAR.with(|slot| *slot.borrow_mut() = Some(menu_bar));
+    Ok(())
+}
+
+/// The status item's Open item: activate the main window, or reopen it when the
+/// application kept running without one.
+#[cfg(all(ui_thread, any(target_os = "linux", target_os = "freebsd")))]
+pub(crate) fn show_main_window_from_menu() -> Result<()> {
+    post_ui_command(UiCommand::App(Box::new(|cx| {
+        let open = UI_WINDOWS.with(|windows| windows.borrow().main);
+        if let Some(window) = open {
+            if window
+                .update(cx, |_view, window, _cx| window.activate_window())
+                .is_ok()
+            {
+                cx.activate(true);
+                return;
+            }
+            UI_WINDOWS.with(|windows| windows.borrow_mut().main = None);
+        }
+        if let Err(error) = reopen_main_window(cx) {
+            log::error!("Failed to reopen the Solo window: {error}");
+        }
+    })))
+}
+
+/// The status item's Quit item: end the loop, which exits the process as the
+/// window's close button does once the last window is gone.
+#[cfg(all(ui_thread, any(target_os = "linux", target_os = "freebsd")))]
+pub(crate) fn quit_from_menu() -> Result<()> {
+    post_ui_command(UiCommand::App(Box::new(|cx| cx.quit())))
+}
+
 /// Close the tab painting `root`, leaving its host window and its other tabs.
 /// Called from the tab strip's close button and from `closeWindow`.
 #[cfg(ui_thread)]
@@ -2405,11 +2451,21 @@ impl SoloRenderer {
                             tree,
                             callback,
                             selection,
-                            title,
+                            title.clone(),
                             &window_options,
                             None,
                             cx,
                         ) {
+                            startup_sender.send(Err(error.reason.clone())).ok();
+                            cx.quit();
+                            return;
+                        }
+                        // A `menuBar` app outlives its windows, so it quits
+                        // only when asked, and `showWindow` (or the status
+                        // item's Open) brings the window back.
+                        cx.set_quit_mode(quit_mode_for_options(&window_options));
+                        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+                        if let Err(error) = create_ui_menu_bar(&window_options, &title) {
                             startup_sender.send(Err(error.reason.clone())).ok();
                             cx.quit();
                             return;
@@ -3236,11 +3292,34 @@ impl SoloRenderer {
         {
             return set_macos_menu_bar(json);
         }
-        #[cfg(not(target_os = "macos"))]
+
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        {
+            let callback = self.event_callback_for_view();
+            let updated: std::result::Result<(), String> = self.query_app(
+                "configuring the menu bar",
+                move |_cx| {
+                    MENU_BAR.with(|slot| {
+                        let mut slot = slot.borrow_mut();
+                        match slot.as_mut() {
+                            Some(menu_bar) => menu_bar
+                                .update(json.as_deref(), callback)
+                                .map_err(|error| error.reason.clone()),
+                            None => Err(
+                                "The application was not created with menuBar options".to_string()
+                            ),
+                        }
+                    })
+                },
+            )?;
+            return updated.map_err(Error::from_reason);
+        }
+
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "freebsd")))]
         {
             let _ = json;
             Err(Error::from_reason(
-                "Menu-bar configuration is supported only on macOS",
+                "Menu-bar configuration is supported only on macOS and Linux",
             ))
         }
     }
@@ -4162,8 +4241,9 @@ pub struct WindowOptions {
     pub window_background: Option<String>,
     pub traffic_light_x: Option<f64>,
     pub traffic_light_y: Option<f64>,
-    /// Keep the application alive after its window closes and install a macOS
-    /// status item with built-in Open and Quit actions.
+    /// Keep the application alive after its window closes and install a status
+    /// item with built-in Open and Quit actions: a macOS menu-bar item, or a
+    /// Linux StatusNotifierItem.
     pub menu_bar: Option<MenuBarOptions>,
     /// Make the window key when it opens. Defaults to true. `false` also
     /// leaves the application where it is instead of bringing it forward.
@@ -4195,7 +4275,8 @@ pub struct WindowOptions {
 #[derive(Debug, Clone)]
 #[napi(object)]
 pub struct MenuBarOptions {
-    /// Absolute path to a template image displayed in the macOS menu bar.
+    /// Absolute path to the status item's icon: an AppKit template image on
+    /// macOS, a PNG pixmap on Linux.
     pub icon_path: String,
     pub tooltip: Option<String>,
 }
@@ -4255,6 +4336,12 @@ pub(crate) fn validate_window_options(options: &WindowOptions) -> Result<()> {
                 "Window kind must be \"normal\", \"popup\" or \"floating\", not {kind:?}"
             )));
         }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "freebsd")))]
+    if options.menu_bar.is_some() {
+        return Err(Error::from_reason(
+            "The menuBar option is supported only on macOS and Linux",
+        ));
     }
     if let Some(menu_bar) = options.menu_bar.as_ref() {
         validate_menu_bar_options(menu_bar)?;

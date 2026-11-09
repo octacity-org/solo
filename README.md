@@ -157,6 +157,7 @@ renders as plain text.
 | Context menus | `createContextMenu()` | [context-menus.md](docs/context-menus.md) |
 | Application commands | `registerApplicationCommand()` | [application-commands.md](docs/application-commands.md) |
 | Menu-bar apps that outlive their windows | `render(..., { menuBar })`, `configureMenuBar()` | [menu-bar-apps.md](docs/menu-bar-apps.md) |
+| Reopen on the app-icon click | `onApplicationReopen()` | [menu-bar-apps.md](docs/menu-bar-apps.md#getting-the-window-back) |
 | Alerts | `showAlert()` | [alerts.md](docs/alerts.md) |
 | Open, folder and save dialogs | `selectFiles()`, `selectSavePath()` | [file-dialogs.md](docs/file-dialogs.md) |
 | Files dropped from Finder | `onFileDrop`, `fileDragOver` style | [file-drop.md](docs/file-drop.md) |
