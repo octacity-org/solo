@@ -49,6 +49,15 @@ pub(super) fn scroll_retained_child_into_view(
     true
 }
 
+/// The root element a `WindowTarget` addresses, `None` for the main window.
+#[cfg(any(target_os = "macos", ui_thread))]
+pub(super) fn tab_root(target: super::WindowTarget) -> Option<u64> {
+    match target {
+        super::WindowTarget::Main => None,
+        super::WindowTarget::Root(root) => Some(root),
+    }
+}
+
 /// `title`, prefixed with `*` while the document has unsaved changes. No Linux
 /// window protocol carries an edited flag, so the title is the only place the
 /// window manager can show one.
@@ -61,10 +70,55 @@ fn marked_title(title: &str, edited: bool) -> String {
     }
 }
 
+/// One window hosted by a native window: the root it paints and the window
+/// state the app can set for it.
+///
+/// A native window owns one tab until another window with the same tabbing
+/// identifier joins it; Linux has no native tabs, so Solo draws the strip (see
+/// `renderer::tabs`).
+pub(crate) struct Tab {
+    /// The element this tab paints, `None` for the main window's tree root.
+    pub(crate) root: Option<u64>,
+    pub(crate) title: String,
+    /// `setDocumentEdited`.
+    pub(crate) document_edited: bool,
+    /// `setDocumentPath`.
+    pub(crate) document_path: Option<String>,
+    /// The app handles close requests: the close button and `performClose:`
+    /// leave the window open and emit `windowCloseRequested` instead.
+    pub(crate) close_guarded: bool,
+}
+
+impl Tab {
+    fn new(root: Option<u64>, title: String) -> Self {
+        Self {
+            root,
+            title,
+            document_edited: false,
+            document_path: None,
+            close_guarded: false,
+        }
+    }
+
+    /// The title the platform shows: [`marked_title`] off macOS. The tab strip
+    /// shows the same string, so a window's tab says what its title says.
+    pub(super) fn native_title(&self) -> String {
+        #[cfg(target_os = "macos")]
+        return self.title.clone();
+
+        #[cfg(not(target_os = "macos"))]
+        marked_title(&self.title, self.document_edited)
+    }
+}
+
 pub(crate) struct SoloView {
     pub(crate) tree: Arc<Mutex<RetainedTree>>,
     pub(crate) event_callback: Option<EventCallback>,
-    pub(crate) window_title: String,
+    /// The windows this native window hosts, in tab-strip order. Always at
+    /// least one.
+    pub(crate) tabs: Vec<Tab>,
+    /// The tab whose tree paints.
+    pub(super) active: usize,
     /// The title last given to the platform window.
     applied_title: Option<String>,
     /// The tree generation, command state and root that focus handles and
@@ -97,26 +151,10 @@ pub(crate) struct SoloView {
     /// Releases custom-element entities on app quit. Without this, gpui's
     /// exit leak check panics because quitting does not drop root views.
     quit_hook: Option<gpui::Subscription>,
-    /// The element this view paints, for a window opened with `openWindow`.
-    /// None paints `tree.root_id`, the main window.
-    root: Option<u64>,
-    /// The app handles close requests: the close button and `performClose:`
-    /// leave the window open and emit `windowCloseRequested` instead.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    pub(crate) close_guarded: bool,
     /// The app draws its own titlebar (`titlebarTransparent`), so the Linux
     /// client-decoration titlebar stays off.
     #[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
     pub(super) titlebar_hidden: bool,
-    /// `setDocumentEdited`: the document has unsaved changes. macOS shows that
-    /// in the close button; elsewhere the title carries a `*`.
-    #[cfg_attr(target_os = "macos", allow(dead_code))]
-    pub(crate) document_edited: bool,
-    /// `setDocumentPath`: the file this window edits, kept so it can be read
-    /// back. No Linux window protocol carries it to the window manager, so
-    /// unlike macOS it draws nothing.
-    #[cfg_attr(target_os = "macos", allow(dead_code))]
-    pub(crate) document_path: Option<String>,
 }
 
 impl SoloView {
@@ -129,7 +167,8 @@ impl SoloView {
         Self {
             tree,
             event_callback,
-            window_title,
+            tabs: vec![Tab::new(None, window_title)],
+            active: 0,
             applied_title: None,
             synced: None,
             focus_handles: HashMap::new(),
@@ -142,25 +181,60 @@ impl SoloView {
             clock: crate::automation::AutomationClock::new(),
             system_appearance_subscription: None,
             quit_hook: None,
-            root: None,
-            close_guarded: false,
             titlebar_hidden: false,
-            document_edited: false,
-            document_path: None,
         }
     }
 
-    /// The title the platform shows. macOS marks unsaved changes with the
-    /// close button's dot; the platforms that have no such affordance prefix
-    /// the app's title with `*`, so the marker follows `setTitle` too.
-    #[cfg(not(target_os = "macos"))]
-    pub(crate) fn native_title(&self) -> String {
-        marked_title(&self.window_title, self.document_edited)
+    /// The tab painting this native window.
+    pub(super) fn tab(&self) -> &Tab {
+        &self.tabs[self.active]
     }
 
-    #[cfg(target_os = "macos")]
+    /// The tab a window-scoped call acts on: the one addressed by `target`,
+    /// or the active one when the window is not a tab.
+    pub(super) fn tab_for(&self, target: super::WindowTarget) -> &Tab {
+        self.tabs
+            .iter()
+            .find(|tab| tab.root == tab_root(target))
+            .unwrap_or_else(|| self.tab())
+    }
+
+    /// Mutable [`SoloView::tab_for`].
+    pub(crate) fn tab_for_mut(&mut self, target: super::WindowTarget) -> &mut Tab {
+        match self.tabs.iter().position(|tab| tab.root == tab_root(target)) {
+            Some(index) => &mut self.tabs[index],
+            None => &mut self.tabs[self.active],
+        }
+    }
+
+    /// The title the platform shows, for the tab it paints.
     pub(crate) fn native_title(&self) -> String {
-        self.window_title.clone()
+        self.tab().native_title()
+    }
+
+    /// Add `root` as a tab of this native window and select it. The app title
+    /// of a tab is the tab strip's text; the native title, the tab's.
+    pub(super) fn add_tab(&mut self, root: u64, title: String) {
+        self.tabs.push(Tab::new(Some(root), title));
+        self.active = self.tabs.len() - 1;
+    }
+
+    /// Select the tab painting `root`.
+    pub(super) fn activate_tab(&mut self, root: u64) {
+        if let Some(index) = self.tabs.iter().position(|tab| tab.root == Some(root)) {
+            self.active = index;
+        }
+    }
+
+    /// Take the tab painting `root` out of this window, selecting a neighbour.
+    /// Returns false when it was not hosted here.
+    pub(super) fn remove_tab(&mut self, root: u64) -> bool {
+        let Some(index) = self.tabs.iter().position(|tab| tab.root == Some(root)) else {
+            return false;
+        };
+        self.tabs.remove(index);
+        self.active = self.active.min(self.tabs.len().saturating_sub(1));
+        true
     }
 
     /// `titlebarTransparent`: the app paints its own titlebar, so Solo draws
@@ -179,7 +253,7 @@ impl SoloView {
         root: u64,
         clock: Option<crate::automation::AutomationClock>,
     ) -> Self {
-        self.root = Some(root);
+        self.tabs[0].root = Some(root);
         if let Some(clock) = clock {
             self.clock = clock;
         }
@@ -191,7 +265,7 @@ impl SoloView {
     /// element 0 for the main window.
     #[cfg(any(target_os = "macos", ui_thread))]
     pub(crate) fn allow_close(&self) -> bool {
-        if !self.close_guarded {
+        if !self.tab().close_guarded {
             return true;
         }
         super::emit_event_full(
@@ -203,15 +277,33 @@ impl SoloView {
         false
     }
 
+    /// Ask the tab `target` addresses to close: a guarded tab stays open and
+    /// emits `windowCloseRequested` on its root element. True when it may
+    /// close now.
+    #[cfg(any(target_os = "macos", ui_thread))]
+    pub(super) fn request_close(&self, target: super::WindowTarget) -> bool {
+        let tab = self.tab_for(target);
+        if !tab.close_guarded {
+            return true;
+        }
+        super::emit_event_full(
+            &self.event_callback,
+            tab.root.unwrap_or(0),
+            super::WINDOW_CLOSE_REQUESTED_EVENT,
+            |_| {},
+        );
+        false
+    }
+
     /// The element window-scoped events are reported on: the window's own
     /// root, or element 0 for the main window.
     #[cfg(any(target_os = "macos", ui_thread))]
     pub(super) fn root_for_events(&self) -> u64 {
-        self.root.unwrap_or(0)
+        self.tab().root.unwrap_or(0)
     }
 
     fn root_id(&self, tree: &RetainedTree) -> Option<u64> {
-        self.root.or(tree.root_id)
+        self.tab().root.or(tree.root_id)
     }
 
     pub(crate) fn set_system_appearance_subscription(
@@ -631,6 +723,15 @@ impl gpui::Render for SoloView {
             None => gpui::Empty.into_any_element(),
         };
 
+        // Linux has no native window tabs, so a window that other windows
+        // joined paints the strip itself (see `renderer::tabs`).
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        let result = if self.tabs.len() > 1 {
+            super::tabs::tabbed(self, result, &theme, cx)
+        } else {
+            result
+        };
+
         // A client-decorated window has no titlebar of its own, so Solo draws
         // one; server-decorated windows keep their window manager's chrome.
         // Wrapping the tree before the frame-reset wrapper below keeps the
@@ -691,7 +792,19 @@ impl gpui::Render for SoloView {
 
 #[cfg(all(test, not(target_os = "macos")))]
 mod tests {
-    use super::marked_title;
+    use super::{marked_title, SoloView};
+    use crate::retained_tree::RetainedTree;
+    use crate::text::selection::SelectionState;
+    use std::sync::Arc;
+
+    fn view() -> SoloView {
+        SoloView::new(
+            Arc::new(std::sync::Mutex::new(RetainedTree::new())),
+            None,
+            "Main".to_string(),
+            Arc::new(parking_lot::Mutex::new(SelectionState::default())),
+        )
+    }
 
     #[test]
     fn unsaved_changes_mark_the_native_title() {
@@ -700,5 +813,33 @@ mod tests {
         // The marker is a prefix, so a title the app retitles keeps it at the
         // front where window managers truncate last.
         assert_eq!(marked_title("", true), "*");
+    }
+
+    #[test]
+    fn tabs_select_and_close_in_order() {
+        let mut view = view();
+        assert_eq!(view.tabs.len(), 1);
+        assert_eq!(view.tab().root, None);
+        assert_eq!(view.native_title(), "Main");
+
+        view.add_tab(7, "Alpha".to_string());
+        view.add_tab(9, "Beta".to_string());
+        assert_eq!(
+            view.tabs.iter().filter_map(|tab| tab.root).collect::<Vec<_>>(),
+            vec![7, 9]
+        );
+        // A join selects the new tab, and the native title follows the tab.
+        assert_eq!(view.tab().root, Some(9));
+        assert_eq!(view.native_title(), "Beta");
+
+        view.activate_tab(7);
+        assert_eq!(view.native_title(), "Alpha");
+        // A closed tab leaves its neighbour selected.
+        assert!(view.remove_tab(7));
+        assert_eq!(view.tab().root, Some(9));
+        assert!(!view.remove_tab(7));
+        // The window still owns its own root: the last tab never removes it.
+        assert!(view.remove_tab(9));
+        assert_eq!(view.tab().root, None);
     }
 }

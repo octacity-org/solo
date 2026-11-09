@@ -45,7 +45,7 @@ The returned `AppWindow` controls that window:
 | `setBackground(background)` | `"opaque"`, `"transparent"` or `"blurred"` |
 | `size()` | the content size in logical pixels, read from the live window |
 | `resize({ width, height })` | sets the content size `size()` reports |
-| `setTabbingIdentifier(identifier)`, `toggleTabOverview()` | native window tabs; see [Window tabs](#window-tabs) |
+| `setTabbingIdentifier(identifier)`, `toggleTabOverview()` | window tabs; see [Window tabs](#window-tabs) |
 | `setDocumentEdited(edited)`, `setDocumentPath(path)` | unsaved-changes marker and title-bar file icon; see [Document windows](#document-windows) |
 
 Calls other than `close()` throw after the window has closed. The render root
@@ -184,20 +184,49 @@ second.setTabbingIdentifier(undefined) // clear it
 | `setTabbingIdentifier(identifier)` | the same |
 | `toggleTabOverview()` | the same |
 
-- Sharing an identifier makes windows *able* to merge. Whether a new window
-  opens as a tab follows the user's System Settings → Desktop & Dock →
-  "Prefer tabs when opening documents": always, only in full screen (the
-  default), or never. Windows that do not merge on their own stay separate
-  until the user merges them.
+- Sharing an identifier makes windows *able* to merge. On macOS, whether a
+  new window opens as a tab follows the user's System Settings → Desktop &
+  Dock → "Prefer tabs when opening documents": always, only in full screen
+  (the default), or never. Windows that do not merge on their own stay
+  separate until the user merges them.
 - AppKit's automatic window tabbing is one setting for the whole
   application. Setting an identifier turns it on and clearing one turns it
   off, for every window; opening a window with or without
   `tabbingIdentifier` sets it the same way. Mixing tabbed and untabbed
   windows therefore follows whichever call came last.
 - `toggleTabOverview()` shows or hides the overview of the tabs the window
-  belongs to.
+  belongs to. Linux draws the tabs in the window itself and has no overview:
+  it throws.
 - Events for tabs (moved to a new window, all windows merged) are not
   exposed.
+
+On Linux nothing groups windows natively, so Solo draws the tabs. Windows
+opened with the same identifier join the first one as tabs of its native
+window, "always" with no setting to consult:
+
+```tsx
+const editor = openWindow(() => <Editor />, { title: "notes.txt", tabbingIdentifier: "documents" })
+openWindow(() => <Preview />, { title: "preview", tabbingIdentifier: "documents" }) // a tab of editor's window
+openWindow(() => <Settings />, { title: "Settings" }) // its own window
+```
+
+- The first window with an identifier keeps its native window; later ones
+  become tabs in it and are selected on open. A window without an identifier
+  gets a native window of its own.
+- The strip shows each tab's title (with the document marker, see
+  [Document windows](#document-windows)) and a close button. Selecting a tab
+  paints its tree; the window title follows the selected tab.
+- Each tab keeps the window API it would have had alone: `setTitle`,
+  `setDocumentEdited`, `close()`, `requestClose()`, `onCloseRequest`, and its
+  `windowClosed` event. Closing a tab leaves the window and its other tabs;
+  closing the last tab closes the native window.
+- The native window's own close button asks the selected tab's
+  `onCloseRequest`, then closes the window with all of its tabs.
+- `setTabbingIdentifier` decides which windows join later; clearing it keeps
+  the tabs the window already has, because moving a tab out into its own
+  window is not implemented yet.
+- Automation sees the tabs that exist but only the selected tab has painted
+  bounds, so `getByTestId()` finds elements of the tab you can see.
 
 ## Document windows
 
@@ -366,8 +395,9 @@ as it does on macOS, with these differences:
   paints the app opaque, so both look like `opaque`.
 - `setDocumentEdited` marks the title with a `*` (see
   [Document windows](#document-windows)), and `setDocumentPath` validates and
-  stores the path without drawing anything. Window tabs and the menu bar are
-  still macOS-only.
+  stores the path without drawing anything.
+- Window tabs are drawn by Solo (see [Window tabs](#window-tabs)); the menu
+  bar is still macOS-only.
 
 ## Limits
 

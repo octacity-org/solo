@@ -436,8 +436,11 @@ impl TestSoloRenderer {
     /// Opt a window in or out of close requests, as the live renderer does.
     #[napi]
     pub fn set_window_close_guard(&self, guarded: bool, window_id: Option<f64>) -> Result<()> {
+        let target = crate::renderer::WindowTarget::from_arg(window_id)?;
         let root = window_id.map(to_element_id).transpose()?;
-        in_view(root, move |view, _window, _cx| view.close_guarded = guarded)
+        in_view(root, move |view, _window, _cx| {
+            view.tab_for_mut(target).close_guarded = guarded
+        })
     }
 
     /// Ask to close a window as its close button does: a guarded window stays

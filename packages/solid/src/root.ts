@@ -54,9 +54,9 @@ export interface Root {
   /** Resize the content to a size in logical pixels, as getWindowSize reports it. */
   resizeWindow: (size: { width: number; height: number }) => void
   /**
-   * Let the window merge into native tabs with windows that share
-   * `identifier`; undefined clears it. Switches automatic window tabbing on
-   * or off for the whole application.
+   * Let the window merge into tabs with windows that share `identifier`;
+   * undefined clears it. macOS uses AppKit's window tabs, Linux a tab strip
+   * Solo draws in the window.
    */
   setTabbingIdentifier: (identifier: string | undefined) => void
   /** Show or hide the native tab overview (Show All Tabs). */
@@ -108,9 +108,9 @@ export interface AppWindow {
   /** Resize the content to a size in logical pixels, as size() reports it. */
   resize: (size: { width: number; height: number }) => void
   /**
-   * Let the window merge into native tabs with windows that share
-   * `identifier`; undefined clears it. Switches automatic window tabbing on
-   * or off for the whole application.
+   * Let the window merge into tabs with windows that share `identifier`;
+   * undefined clears it. macOS uses AppKit's window tabs, Linux a tab strip
+   * Solo draws in the window.
    */
   setTabbingIdentifier: (identifier: string | undefined) => void
   /** Show or hide the native tab overview (Show All Tabs). */
