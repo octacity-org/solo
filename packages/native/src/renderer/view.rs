@@ -123,7 +123,7 @@ impl SoloView {
     }
 
     /// Paint `root` instead of the tree's main root, sharing `clock`.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", ui_thread))]
     pub(crate) fn for_window_root(
         mut self,
         root: u64,
@@ -139,7 +139,7 @@ impl SoloView {
     /// Whether a close request may close the window now. A guarded window
     /// stays open and emits `windowCloseRequested` on its root element, or on
     /// element 0 for the main window.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", ui_thread))]
     pub(crate) fn allow_close(&self) -> bool {
         if !self.close_guarded {
             return true;
