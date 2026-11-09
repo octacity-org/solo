@@ -23,6 +23,9 @@
 //! retained tree uses. That is what lets `destroy` on the element and
 //! `destroy_all` on app quit be the only two cleanup paths.
 
+use futures::channel::oneshot;
+use napi::bindgen_prelude::{AsyncTask, Error, Result, Task};
+use napi_derive::napi;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::c_void;
@@ -30,7 +33,96 @@ use std::ffi::c_void;
 /// WKWebView host. macOS-only: `<webview>` has no implementation elsewhere, so
 /// the element is simply not registered off macOS.
 #[cfg(target_os = "macos")]
+#[path = "native_view/webview_macos.rs"]
 pub mod webview;
+#[cfg(target_os = "linux")]
+#[path = "native_view/webview_linux.rs"]
+pub mod webview;
+
+/// The napi task that waits for a WebKit JavaScript evaluation.
+pub type EvaluateReceiver = oneshot::Receiver<anyhow::Result<String>>;
+/// The napi task that waits for a WebView document to become ready.
+pub type ReadyReceiver = oneshot::Receiver<anyhow::Result<u64>>;
+
+/// Wrap an expression in an async function so Promise results are awaited and
+/// serialize only the documented JSON-compatible value space. Returning the
+/// JSON text (rather than an arbitrary native object) keeps the napi
+/// boundary deterministic and lets the Solid layer validate it once.
+pub(crate) fn evaluation_script(script: &str) -> String {
+    format!(
+        "const value = await ({script}); if (value === undefined) return \"null\"; const seen = new WeakSet(); return JSON.stringify(value, (_key, item) => {{ if (typeof item === \"number\" && !Number.isFinite(item)) throw new Error(\"unsupported non-finite number\"); if (typeof item === \"undefined\" || typeof item === \"function\" || typeof item === \"symbol\" || typeof item === \"bigint\") throw new Error(\"unsupported JavaScript result\"); if (item !== null && typeof item === \"object\") {{ if (seen.has(item)) throw new Error(\"unsupported cyclic result\"); seen.add(item); }} return item; }});"
+    )
+}
+
+/// Napi task that waits for the main-thread WebKit callback without blocking
+/// the JavaScript thread. Destruction/source changes drain the same channel,
+/// so every evaluation promise settles even when WebKit never calls back.
+pub struct EvaluateJavaScriptTask {
+    receiver: Option<EvaluateReceiver>,
+}
+
+/// Napi task that resolves when the intended WebView document has finished
+/// loading. The generation is returned for diagnostics; Solid only exposes the
+/// readiness promise and guards it against unmount/source changes.
+pub struct WebviewReadyTask {
+    receiver: Option<ReadyReceiver>,
+}
+
+impl WebviewReadyTask {
+    pub(crate) fn new(receiver: ReadyReceiver) -> AsyncTask<Self> {
+        AsyncTask::new(Self {
+            receiver: Some(receiver),
+        })
+    }
+}
+
+#[napi]
+impl Task for WebviewReadyTask {
+    type Output = u64;
+    type JsValue = f64;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        let receiver = self
+            .receiver
+            .take()
+            .ok_or_else(|| Error::from_reason("WebView readiness task was already consumed"))?;
+        futures::executor::block_on(receiver)
+            .map_err(|_| Error::from_reason("WebView readiness channel closed"))?
+            .map_err(|error| Error::from_reason(format!("WebView failed to become ready: {error}")))
+    }
+
+    fn resolve(&mut self, _env: napi::Env, output: Self::Output) -> Result<Self::JsValue> {
+        Ok(output as f64)
+    }
+}
+
+impl EvaluateJavaScriptTask {
+    pub(crate) fn new(receiver: EvaluateReceiver) -> AsyncTask<Self> {
+        AsyncTask::new(Self {
+            receiver: Some(receiver),
+        })
+    }
+}
+
+#[napi]
+impl Task for EvaluateJavaScriptTask {
+    type Output = String;
+    type JsValue = String;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        let receiver = self
+            .receiver
+            .take()
+            .ok_or_else(|| Error::from_reason("WebView evaluation task was already consumed"))?;
+        futures::executor::block_on(receiver)
+            .map_err(|_| Error::from_reason("WebView evaluation channel closed"))?
+            .map_err(|error| Error::from_reason(format!("WebView JavaScript failed: {error}")))
+    }
+
+    fn resolve(&mut self, _env: napi::Env, output: Self::Output) -> Result<Self::JsValue> {
+        Ok(output)
+    }
+}
 
 /// A rectangle in logical points, in the platform's native convention.
 ///
@@ -121,26 +213,25 @@ pub trait NativeViewInstance {
 
     /// Start evaluating JavaScript in this view. WebKit invokes the callback
     /// on the main thread; the receiver is consumed by a napi async task.
-    #[cfg(target_os = "macos")]
     fn evaluate_javascript(
         &mut self,
         script: &str,
-    ) -> anyhow::Result<crate::native_view::webview::EvaluateReceiver> {
+    ) -> anyhow::Result<EvaluateReceiver> {
         let _ = script;
         Err(anyhow::anyhow!("This native view does not support JavaScript"))
     }
 
     /// Wait until the current WebView document has finished loading.
-    #[cfg(target_os = "macos")]
-    fn wait_for_ready(&mut self) -> anyhow::Result<crate::native_view::webview::ReadyReceiver> {
-        Err(anyhow::anyhow!("This native view does not support WebView readiness"))
+    fn wait_for_ready(&mut self) -> anyhow::Result<ReadyReceiver> {
+        Err(anyhow::anyhow!(
+            "This native view does not support WebView readiness"
+        ))
     }
 
     /// Enable the navigation-decision path while a Solid listener exists.
     fn set_navigation_interception(&mut self, _enabled: bool) {}
 
     /// Resolve or cancel a previously emitted navigation request.
-    #[cfg(target_os = "macos")]
     fn decide_navigation(&mut self, _navigation_id: u64, _allow: bool) -> bool {
         false
     }
@@ -214,23 +305,21 @@ impl NativeViewRegistry {
         }
     }
 
-    #[cfg(target_os = "macos")]
     pub fn evaluate_javascript(
         &mut self,
         id: u64,
         script: &str,
-    ) -> anyhow::Result<crate::native_view::webview::EvaluateReceiver> {
+    ) -> anyhow::Result<EvaluateReceiver> {
         self.views
             .get_mut(&id)
             .ok_or_else(|| anyhow::anyhow!("WebView {id} is not mounted"))?
             .evaluate_javascript(script)
     }
 
-    #[cfg(target_os = "macos")]
     pub fn wait_for_ready(
         &mut self,
         id: u64,
-    ) -> anyhow::Result<crate::native_view::webview::ReadyReceiver> {
+    ) -> anyhow::Result<ReadyReceiver> {
         self.views
             .get_mut(&id)
             .ok_or_else(|| anyhow::anyhow!("WebView {id} is not mounted"))?
@@ -243,7 +332,6 @@ impl NativeViewRegistry {
         }
     }
 
-    #[cfg(target_os = "macos")]
     pub fn decide_navigation(&mut self, id: u64, navigation_id: u64, allow: bool) -> bool {
         self.views
             .get_mut(&id)

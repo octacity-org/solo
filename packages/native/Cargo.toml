@@ -80,6 +80,17 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 # awaits D-Bus.
 ksni = { version = "0.3", features = ["blocking"] }
 
+# `<webview>`: a WebKitGTK child of the GPUI X11 window (see
+# `native_view/webview_linux.rs`). GTK3 + WebKit 6.0 API (webkit2gtk-4.1);
+# GNOME and Wayland embedding does not exist, so this only builds on Linux.
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = { version = "0.18", features = ["v3_24"] }
+gdkx11 = "0.18"
+webkit2gtk = { version = "2.0", features = ["v2_40"] }
+javascriptcore = { version = "1.1", package = "javascriptcore-rs" }
+x11-dl = "2"
+async-channel = "1"
+
 [features]
 # Syntax highlighting is opt-in: its grammars are about 8 MB of the library,
 # and without them `code`, `diff` and markdown code blocks render plain.

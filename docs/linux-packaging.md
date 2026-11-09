@@ -70,6 +70,15 @@ The executable must stay in one piece: `bun build --compile` output cannot be
 split, and the addon must be the build for the target architecture
 (`x86_64-unknown-linux-gnu` or `aarch64-unknown-linux-gnu`).
 
+## Web views
+
+A Linux app that uses `<webview>` links against GTK 3 and WebKitGTK
+(libwebkit2gtk-4.1, which also pulls in JavaScriptCoreGTK). Host machines
+need those runtime libraries installed; development machines need the
+`-devel` packages (`webkit2gtk4.1-devel` on Fedora, `libwebkit2gtk-4.1-dev`
+on Debian/Ubuntu, `webkit2gtk4.1` on Arch). See
+[webview.md](webview.md#platform-support) for the X11/Wayland boundary.
+
 ## Status item
 
 `menuBar` in `render()` needs no extra library: the item is a
