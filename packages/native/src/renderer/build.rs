@@ -168,11 +168,16 @@ thread_local! {
     static PRESSED_DRAG_REGION: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
 }
 
-/// An app-drawn titlebar, as Zed's own: dragging moves the window, and a
-/// double-click zooms or minimizes as the user's macOS setting says. The move
+/// An app-drawn titlebar, as Zed's own: dragging moves the window, a
+/// double-click zooms, and a right click opens the window menu. The move
 /// starts on the first mouse move after the press, from AppKit's current
-/// event, so a plain click still reaches the element's own handlers.
-fn window_drag_region(el: gpui::Stateful<gpui::Div>, id: u64) -> gpui::Stateful<gpui::Div> {
+/// event, so a plain click still reaches the element's own handlers. X11 and
+/// Wayland have no titlebar hit test to lean on (`on_hit_test_window_control`
+/// is a no-op there), so every platform goes through here.
+pub(super) fn window_drag_region(
+    el: gpui::Stateful<gpui::Div>,
+    id: u64,
+) -> gpui::Stateful<gpui::Div> {
     use gpui::prelude::*;
 
     el.window_control_area(gpui::WindowControlArea::Drag)
@@ -193,9 +198,35 @@ fn window_drag_region(el: gpui::Stateful<gpui::Div>, id: u64) -> gpui::Stateful<
         })
         .on_click(|event, window, _cx| {
             if event.click_count() == 2 {
-                window.titlebar_double_click();
+                titlebar_double_click(window);
             }
         })
+        .on_mouse_down(gpui::MouseButton::Right, |event, window, _cx| {
+            window_menu(window, event.position);
+        })
+}
+
+/// What a double click on the titlebar does. macOS has a user setting for it,
+/// so AppKit decides; Linux has no platform titlebar to ask, so zoom as a
+/// window manager would.
+fn titlebar_double_click(window: &mut gpui::Window) {
+    #[cfg(target_os = "macos")]
+    window.titlebar_double_click();
+
+    #[cfg(not(target_os = "macos"))]
+    if window.is_resizable() {
+        window.zoom_window();
+    }
+}
+
+/// The window manager's menu for the window under `position`. Only Linux has
+/// one; elsewhere this is a no-op.
+fn window_menu(window: &mut gpui::Window, position: gpui::Point<gpui::Pixels>) {
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    window.show_window_menu(position);
+
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+    let _ = (window, position);
 }
 
 /// AppKit drags the window from its current event. Injected test and

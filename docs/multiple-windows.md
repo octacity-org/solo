@@ -304,9 +304,36 @@ render(
   a possible double-click. Use it with `windowDragRegion`; on its own
   nothing drags the window.
 
-macOS only for now. GPUI also has resize edges and a window menu for
-client-drawn decorations, but on macOS they do nothing, so Solo does not
-expose them. Linux decorations and drag regions are tracked in #89.
+On Linux a drag region works the same way, and there it is the only way to
+move a window from app chrome when Solo owns the frame.
+
+## Decorations
+
+Who draws the titlebar and the frame is the window manager's call:
+
+- **Server decorations** (XFCE, KDE, most X11 sessions, a Wayland compositor
+  that supports `xdg-decoration`): the window manager draws both, and Solo
+  paints exactly the app's own view, sized to the content area. Nothing
+  changes for these sessions.
+- **Client decorations** (GNOME on Wayland, which has no `xdg-decoration`, and
+  any window that asked for them): gpui reports `Decorations::Client` and
+  draws nothing itself, so Solo paints a 34px titlebar — window buttons in the
+  desktop's own order (`App::button_layout()`, right-hand side by default),
+  the window title in a drag region between them, and double-click and
+  right-click doing what a titlebar does: zoom the resizable window, or open
+  the window menu. Resize strips live on the sides the window manager does not
+  own, so a maximized or tiled window is not offered an edge that would do
+  nothing.
+
+The close button asks `onCloseRequest` first, so a client-decorated window
+closes exactly like a window-manager close.
+
+`titlebarTransparent` asks for client decorations on Linux, since an app that
+draws under the titlebar needs the window manager to stop drawing one too. It
+also hides Solo's titlebar, leaving the resize strips, so the app's own
+chrome is the only titlebar on screen. On a compositor that hands out client
+decorations anyway, the app gets Solo's titlebar unless it passes
+`titlebarTransparent`.
 
 ## Lifetime
 
@@ -323,9 +350,11 @@ expose them. Linux decorations and drag regions are tracked in #89.
 On Linux every window is a real top-level window, and the surface above works
 as it does on macOS, with these differences:
 
-- The window manager owns the close button. A close request reaches the
-  window as `on_should_close`, so with `onCloseRequest` the window stays open
-  and the handler runs, exactly as on macOS.
+- The window manager owns the close button, or Solo draws one when the
+  window is client-decorated (see [Decorations](#decorations)). Either way a
+  close request reaches the window as `on_should_close`, so with
+  `onCloseRequest` the window stays open and the handler runs, exactly as on
+  macOS.
 - Closing the last window ends the process, because Linux has no menu-bar app
   lifecycle yet. `showWindow()` still calls `activate` on an open window, and
   reopens the main window while another window keeps the app running.

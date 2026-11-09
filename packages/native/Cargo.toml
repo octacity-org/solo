@@ -69,6 +69,9 @@ raw-window-handle = "0.6"
 # Live automation screenshots read the window back from the X server. Both
 # crates are already in the graph through gpui_linux and gpui.
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+# `_exit`, so a quit skips the UI thread's TLS destructors; see
+# `exit_after_quit` in renderer/mod.rs.
+libc = "0.2"
 raw-window-handle = "0.6"
 # The deep-link single-instance socket checks the owner of its private
 # fallback directory (~/.cargo already has libc in the graph via gpui).
