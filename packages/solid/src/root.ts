@@ -131,7 +131,7 @@ export interface AppWindow {
 export type WindowBackground = "opaque" | "transparent" | "blurred"
 
 /**
- * Decides whether a window closes (macOS). The window's close button and
+ * Decides whether a window closes. The window's close button and
  * `requestClose()` call it instead of closing; close the window yourself, or
  * return to keep it open. While a returned promise is pending, further
  * requests are ignored.
@@ -373,7 +373,6 @@ export function render(code: () => SolidElement, options: RenderOptions = {}): R
 /**
  * Open another window that renders `code`, in the app started by render().
  * It shares the app's state and signals; closing it disposes only its tree.
- * macOS only.
  */
 export function openWindow(code: () => SolidElement, options: OpenWindowOptions = {}): AppWindow {
   const host = renderSlot().renderer

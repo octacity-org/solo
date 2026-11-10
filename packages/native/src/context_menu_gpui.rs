@@ -15,7 +15,7 @@ use gpui::{div, px, Context, KeyDownEvent, MouseDownEvent};
 use napi::bindgen_prelude::{AsyncTask, Error, Result, Task};
 use napi_derive::napi;
 use std::cell::RefCell;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 use crate::renderer::SoloView;
@@ -43,6 +43,10 @@ pub(crate) struct MenuItem {
 struct OpenMenu {
     request_id: u64,
     owner: u64,
+    /// The window root that paints the owner: `None` for the main window.
+    /// The overlay is drawn only there, so a second window does not paint a
+    /// copy of the menu (or its full-window backdrop).
+    window_root: Option<u64>,
     x: f32,
     y: f32,
     items: Vec<MenuItem>,
@@ -68,10 +72,21 @@ thread_local! {
 
 /// Readable from any thread: automation asks whether keys belong to a menu.
 static OPEN: AtomicBool = AtomicBool::new(false);
+/// The open menu's owner element, so calls from the JS thread can name the
+/// window the menu belongs to. 0 means no menu.
+static OWNER: AtomicU64 = AtomicU64::new(0);
 
 /// Whether a menu is currently waiting for input.
 pub(crate) fn is_open() -> bool {
     OPEN.load(Ordering::Acquire)
+}
+
+/// The element whose context menu is open, if any.
+pub(crate) fn owner() -> Option<u64> {
+    match OWNER.load(Ordering::Acquire) {
+        0 => None,
+        id => Some(id),
+    }
 }
 
 /// Install the app-wide keystroke interceptor while a menu is open.
@@ -104,6 +119,7 @@ fn settle(result: Option<String>) {
     let menu = ACTIVE.with(|active| active.try_borrow_mut().ok().and_then(|mut slot| slot.take()));
     if let Some(menu) = menu {
         OPEN.store(false, Ordering::Release);
+        OWNER.store(0, Ordering::Release);
         clear_interceptor();
         RESTORE.with(|slot| {
             if let Ok(mut slot) = slot.try_borrow_mut() {
@@ -163,17 +179,20 @@ pub(crate) fn cancel_destroyed(ids: &[u64]) {
 pub(crate) fn overlay(
     theme: &Theme,
     viewport: gpui::Size<gpui::Pixels>,
+    window_root: Option<u64>,
     cx: &mut Context<SoloView>,
 ) -> Option<gpui::AnyElement> {
     let (items, highlighted, x, y, focus) = with_active(|menu| {
-        (
-            menu.items.clone(),
-            menu.highlighted,
-            menu.x,
-            menu.y,
-            menu.focus.clone(),
-        )
-    })?;
+        (menu.window_root == window_root).then(|| {
+            (
+                menu.items.clone(),
+                menu.highlighted,
+                menu.x,
+                menu.y,
+                menu.focus.clone(),
+            )
+        })
+    })??;
     let layout = layout(
         &items,
         x,
@@ -522,6 +541,7 @@ pub(crate) fn show(
         .find_map(crate::automation::get_bounds)
         .ok_or_else(|| Error::from_reason("Context menu owner element has not been painted"))?;
     let (x, y) = position.unwrap_or((bounds.x as f32, (bounds.y + bounds.height) as f32));
+    let window_root = tree.window_root_of(owner);
     // Opening a second menu cancels the first, as the macOS helper does.
     cancel_all();
     // The cancelled menu's saved focus was not handed back to anyone, so drop
@@ -538,6 +558,7 @@ pub(crate) fn show(
             *slot = Some(OpenMenu {
                 request_id,
                 owner,
+                window_root,
                 x,
                 y,
                 items,
@@ -549,6 +570,7 @@ pub(crate) fn show(
         }
     });
     OPEN.store(true, Ordering::Release);
+    OWNER.store(owner, Ordering::Release);
     Ok(receiver)
 }
 

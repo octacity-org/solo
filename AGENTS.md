@@ -104,13 +104,16 @@ supported on macOS. Compile both files with `bun build --compile`.
   build. Events sent to a terminated Worker's callback are dropped safely
   (Bun finalizes its threadsafe functions).
 
-## Multiple windows (macOS)
+## Multiple windows
 
 One renderer, one `RetainedTree` and one id space serve every window.
 `openWindow()` (`packages/solid/src/root.ts`) mounts a parentless root and
 calls `SoloRenderer.openWindow(rootId)`; that root is listed in
 `tree.window_roots`, and its id is the window id. The main window paints
-`tree.root_id` from `GPUI_WINDOW`; the others are `SECONDARY_WINDOWS`.
+`tree.root_id`. On macOS the handles live in `GPUI_WINDOW` and
+`SECONDARY_WINDOWS` on the main thread; on Linux they are `UI_WINDOWS` on the
+`solo-ui` thread, and JS calls carry a `WindowTarget` that the thread
+resolves.
 
 - Element-targeted native calls resolve their window with
   `tree.window_root_of(id)`; window methods take an optional window id
@@ -124,9 +127,15 @@ calls `SoloRenderer.openWindow(rootId)`; that root is listed in
   elements with listeners, scroll containers and their children; context
   menus fall back to the nearest painted ancestor.
 - A secondary window closing natively emits `windowClosed` on its root; the
-  JS side then disposes the tree. `reattach_macos_application` takes the
-  secondary windows out of the registry before closing them, so a reloaded
-  app never receives a stale `windowClosed`.
+  JS side then disposes the tree. `register_macos_lifecycle` and
+  `register_ui_lifecycle` do that cleanup per platform;
+  `reattach_macos_application` takes the secondary windows out of the registry
+  before closing them, so a reloaded app never receives a stale
+  `windowClosed`.
+- Close requests use the platform's should-close path: AppKit's
+  `windowShouldClose:` on macOS and `install_close_guard` on both. Linux's
+  WM close button goes through `PlatformWindow::on_should_close`, and a
+  guarded window stays open.
 - `TestSoloRenderer` mirrors this with offscreen windows in
   `VisualTestState::secondary`; `createSolidNativeTestRoot` registers it as
   the `openWindow` host through `setWindowHost`.
