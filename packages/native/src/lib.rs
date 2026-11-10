@@ -33,7 +33,7 @@ mod syntax;
 mod text;
 mod theme;
 
-#[cfg(all(feature = "test-support", target_os = "macos"))]
+#[cfg(all(feature = "test-support", any(target_os = "macos", target_os = "linux")))]
 mod test_renderer;
 
 pub use element_tree::*;

@@ -33,7 +33,8 @@ jobs:
             target: x86_64-apple-darwin
             build: bun run build --target x86_64-apple-darwin
           # ── Linux (Vulkan/wgpu) ────────────────────────────────────
-          # build:release skips test-support (pulls gpui_macos, macOS-only)
+          # Release bindings leave test-support out; CI builds it separately
+          # in linux-test for the Solid native suite.
           - host: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             build: bun run build:release --target x86_64-unknown-linux-gnu
@@ -213,6 +214,25 @@ jobs:
           SOLO_SCREENSHOT_DIR: ${{ github.workspace }}/examples/tasks/screenshots
         working-directory: examples/tasks
         run: xvfb-run -a --server-args="-screen 0 1280x1024x24" bun run test
+
+      # The Solid native suites mount real GPUI test windows, which needs the
+      # test-support binding that the live automation build above omits.
+      - name: Build native with test support
+        working-directory: packages/native
+        run: bun run build:debug
+
+      - name: Restore generated binding files after test-support build
+        run: git checkout -- packages/native/index.js packages/native/index.d.ts
+
+      # GPUI's headless `TestPlatform` windows need no X server, so this runs
+      # without Xvfb. Screenshots still rasterize through wgpu, so Vulkan must
+      # resolve to Mesa's lavapipe CPU driver (no GPU on runners).
+      - name: Run @solo/solid tests
+        env:
+          VK_DRIVER_FILES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        working-directory: packages/solid
+        run: bun run test
 
   test:
     name: test

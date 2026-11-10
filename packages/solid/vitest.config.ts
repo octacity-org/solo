@@ -38,6 +38,10 @@ export default defineConfig({
     // processes. Running those files concurrently starves GPUI's event pump
     // and makes otherwise unrelated hooks cross their timeout in CI.
     fileParallelism: process.platform !== "darwin",
+    // Linux screenshots go through wgpu (Vulkan, lavapipe in CI): the first
+    // capture compiles pipelines and takes several seconds, past vitest's 5 s
+    // default.
+    testTimeout: process.platform === "linux" ? 60_000 : 5_000,
     // Inline the Solid packages so solidUniversal's resolveId pinning
     // also applies to their INTERNAL imports. Externalized, they would load
     // solid-js's server build natively and lose all reactivity.

@@ -199,7 +199,7 @@ impl SoloView {
 
     /// The tab a window-scoped call acts on: the one addressed by `target`,
     /// or the active one when the window is not a tab.
-    pub(super) fn tab_for(&self, target: super::WindowTarget) -> &Tab {
+    pub(crate) fn tab_for(&self, target: super::WindowTarget) -> &Tab {
         self.tabs
             .iter()
             .find(|tab| tab.root == tab_root(target))
