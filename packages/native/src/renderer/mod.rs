@@ -1874,12 +1874,24 @@ impl SoloRenderer {
                         crate::custom_elements::input::init(cx);
                         // Element-0 keyboard-layout events; see application.rs.
                         crate::application::observe(cx);
+                        crate::screens::observe(cx);
                         // Linux's PlatformWindow has no native prompts, and
                         // gpui's fallback ignores Enter/Escape.
                         cx.set_prompt_builder(crate::prompt::renderer);
-                        let bounds = centered_window_bounds(&window_options, None, cx);
+                        let display = match crate::screens::display_for(
+                            window_options.screen.as_deref(),
+                            cx,
+                        ) {
+                            Ok(display) => display,
+                            Err(error) => {
+                                startup_sender.send(Err(error.reason.clone())).ok();
+                                cx.quit();
+                                return;
+                            }
+                        };
+                        let bounds = centered_window_bounds(&window_options, display, cx);
                         let window = match cx.open_window(
-                            to_gpui_window_options(&window_options, bounds, None),
+                            to_gpui_window_options(&window_options, bounds, display),
                             |_window, cx| {
                                 cx.new(|_| SoloView::new(tree, callback, title, selection))
                             },
@@ -2109,11 +2121,22 @@ impl SoloRenderer {
             Ok(())
         })?;
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(ui_thread)]
+        return self.query_window(
+            WindowTarget::from_arg(window_id)?,
+            Some("setting the maximized window state"),
+            move |_view, window, _cx| {
+                if window.is_maximized() != maximized {
+                    window.zoom_window();
+                }
+            },
+        );
+
+        #[cfg(all(not(target_os = "macos"), not(ui_thread)))]
         {
             let _ = (maximized, window_id);
             Err(Error::from_reason(
-                "Maximized window state is supported only on macOS",
+                "Maximized window state is supported only on macOS and Linux",
             ))
         }
     }
@@ -2126,11 +2149,18 @@ impl SoloRenderer {
             Ok(appkit_window(window)?.isZoomed())
         })?;
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(ui_thread)]
+        return self.query_window(
+            WindowTarget::from_arg(window_id)?,
+            Some("reading the maximized window state"),
+            |_view, window, _cx| window.is_maximized(),
+        );
+
+        #[cfg(all(not(target_os = "macos"), not(ui_thread)))]
         {
             let _ = window_id;
             Err(Error::from_reason(
-                "Maximized window state is supported only on macOS",
+                "Maximized window state is supported only on macOS and Linux",
             ))
         }
     }
@@ -2156,11 +2186,18 @@ impl SoloRenderer {
             window_size(window)
         });
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(ui_thread)]
+        return self.query_window(
+            WindowTarget::from_arg(window_id)?,
+            Some("reading the window size"),
+            |_view, window, _cx| window_size(window),
+        );
+
+        #[cfg(all(not(target_os = "macos"), not(ui_thread)))]
         {
             let _ = window_id;
             Err(Error::from_reason(
-                "Reading the window size is supported only on macOS",
+                "Reading the window size is supported only on macOS and Linux",
             ))
         }
     }
@@ -2175,10 +2212,23 @@ impl SoloRenderer {
             Ok(())
         });
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(ui_thread)]
+        return self.query_window(
+            WindowTarget::from_arg(window_id)?,
+            Some("setting the fullscreen window state"),
+            move |_view, window, _cx| {
+                if window.is_fullscreen() != fullscreen {
+                    window.toggle_fullscreen();
+                }
+            },
+        );
+
+        #[cfg(all(not(target_os = "macos"), not(ui_thread)))]
         {
             let _ = (fullscreen, window_id);
-            Err(Error::from_reason("Fullscreen windows are supported only on macOS"))
+            Err(Error::from_reason(
+                "Fullscreen windows are supported only on macOS and Linux",
+            ))
         }
     }
 
@@ -2190,10 +2240,19 @@ impl SoloRenderer {
             window.is_fullscreen()
         });
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(ui_thread)]
+        return self.query_window(
+            WindowTarget::from_arg(window_id)?,
+            Some("reading the fullscreen window state"),
+            |_view, window, _cx| window.is_fullscreen(),
+        );
+
+        #[cfg(all(not(target_os = "macos"), not(ui_thread)))]
         {
             let _ = window_id;
-            Err(Error::from_reason("Fullscreen windows are supported only on macOS"))
+            Err(Error::from_reason(
+                "Fullscreen windows are supported only on macOS and Linux",
+            ))
         }
     }
 
@@ -2206,10 +2265,19 @@ impl SoloRenderer {
             Ok(())
         });
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(ui_thread)]
+        return self.query_window(
+            WindowTarget::from_arg(window_id)?,
+            Some("minimizing the window"),
+            |_view, window, _cx| window.minimize_window(),
+        );
+
+        #[cfg(all(not(target_os = "macos"), not(ui_thread)))]
         {
             let _ = window_id;
-            Err(Error::from_reason("Minimizing windows is supported only on macOS"))
+            Err(Error::from_reason(
+                "Minimizing windows is supported only on macOS and Linux",
+            ))
         }
     }
 
@@ -2225,10 +2293,22 @@ impl SoloRenderer {
             });
         }
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(ui_thread)]
+        {
+            let appearance = window_background_appearance(&background)?;
+            return self.query_window(
+                WindowTarget::from_arg(window_id)?,
+                Some("setting the window background"),
+                move |_view, window, _cx| window.set_background_appearance(appearance),
+            );
+        }
+
+        #[cfg(all(not(target_os = "macos"), not(ui_thread)))]
         {
             let _ = (background, window_id);
-            Err(Error::from_reason("Changing the window background is supported only on macOS"))
+            Err(Error::from_reason(
+                "Changing the window background is supported only on macOS and Linux",
+            ))
         }
     }
 
@@ -2241,10 +2321,22 @@ impl SoloRenderer {
             resize_appkit_window(window, width, height)
         });
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(ui_thread)]
+        {
+            let size = validated_window_size(width, height)?;
+            return self.query_window(
+                WindowTarget::from_arg(window_id)?,
+                Some("resizing the window"),
+                move |_view, window, _cx| window.resize(size),
+            );
+        }
+
+        #[cfg(all(not(target_os = "macos"), not(ui_thread)))]
         {
             let _ = (width, height, window_id);
-            Err(Error::from_reason("Resizing windows is supported only on macOS"))
+            Err(Error::from_reason(
+                "Resizing windows is supported only on macOS and Linux",
+            ))
         }
     }
 
@@ -3246,6 +3338,19 @@ pub struct WindowSize {
     pub height: f64,
 }
 
+/// Validate a requested content size and convert it to GPUI pixels. Linux's
+/// `PlatformWindow::resize` takes the same shape, so both platforms share the
+/// check.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn validated_window_size(width: f64, height: f64) -> Result<gpui::Size<gpui::Pixels>> {
+    if !(width.is_finite() && width > 0.0 && height.is_finite() && height > 0.0) {
+        return Err(Error::from_reason(format!(
+            "Window size must be positive and finite, got {width}×{height}"
+        )));
+    }
+    Ok(gpui::size(gpui::px(width as f32), gpui::px(height as f32)))
+}
+
 pub(crate) fn window_size(window: &gpui::Window) -> WindowSize {
     let size = window.viewport_size();
     WindowSize {
@@ -3375,9 +3480,9 @@ pub(crate) fn validate_window_options(options: &WindowOptions) -> Result<()> {
     if let Some(menu_bar) = options.menu_bar.as_ref() {
         validate_menu_bar_options(menu_bar)?;
     }
-    if cfg!(not(target_os = "macos")) && options.screen.is_some() {
+    if cfg!(not(any(target_os = "macos", ui_thread))) && options.screen.is_some() {
         return Err(Error::from_reason(
-            "The screen window option is supported only on macOS",
+            "The screen window option is supported only on macOS and Linux",
         ));
     }
     Ok(())
