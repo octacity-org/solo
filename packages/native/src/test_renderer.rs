@@ -457,6 +457,14 @@ impl TestSoloRenderer {
         Ok(())
     }
 
+    /// A window's close handler kept it open. As in the live renderer on
+    /// macOS, each window is asked on its own, so there is nothing to drop.
+    #[napi]
+    pub fn decline_window_close(&self, window_id: Option<f64>) -> Result<()> {
+        window_id.map(to_element_id).transpose()?;
+        Ok(())
+    }
+
     /// Enter or leave native fullscreen, as the live renderer does.
     #[napi]
     pub fn set_window_fullscreen(&self, fullscreen: bool, window_id: Option<f64>) -> Result<()> {

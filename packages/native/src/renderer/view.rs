@@ -157,7 +157,8 @@ pub(crate) struct SoloView {
     pub(super) titlebar_hidden: bool,
     /// The window's close button asked its guarded tabs: the native window
     /// closes once the last of them has, including any unguarded tabs it also
-    /// hosts. Cleared when a later close request replaces it.
+    /// hosts. Cleared when a later close request replaces it, or when a
+    /// guarded tab's handler declines (`declineWindowClose`).
     #[cfg_attr(not(ui_thread), allow(dead_code))]
     close_pending: std::cell::Cell<bool>,
 }

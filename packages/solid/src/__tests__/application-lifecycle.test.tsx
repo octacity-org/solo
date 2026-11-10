@@ -318,6 +318,47 @@ describe("openWindow", () => {
     expect(renderer.calls.at(-1)).toEqual(["guard", false, undefined])
   })
 
+  it("tells native when a window's onCloseRequest keeps it open", async () => {
+    class DeclineRenderer extends WindowsRenderer {
+      setWindowCloseGuard(): void {}
+      declineWindowClose(windowId?: number): void {
+        this.calls.push(["decline", windowId])
+      }
+    }
+    const renderer = new DeclineRenderer()
+    const root = render(() => <Text>main</Text>, { renderer })
+    const declines = () => renderer.calls.filter((call) => call[0] === "decline")
+
+    // Returning without closing declines at once.
+    let approve = false
+    const kept = openWindow(() => <Text>kept</Text>, {
+      onCloseRequest: () => {
+        if (approve) kept.close()
+      },
+    })
+    handleSoloEvent({ elementId: kept.id, eventType: "windowCloseRequested" } as never)
+    expect(declines()).toEqual([["decline", kept.id]])
+
+    // Closing from the handler approves; nothing to decline.
+    approve = true
+    handleSoloEvent({ elementId: kept.id, eventType: "windowCloseRequested" } as never)
+    expect(kept.closed).toBe(true)
+    expect(declines()).toEqual([["decline", kept.id]])
+
+    // An async handler declines once its promise settles with the window open.
+    let settle!: () => void
+    const asked = openWindow(() => <Text>asked</Text>, {
+      onCloseRequest: () => new Promise<void>((resolve) => (settle = resolve)),
+    })
+    handleSoloEvent({ elementId: asked.id, eventType: "windowCloseRequested" } as never)
+    expect(declines()).toHaveLength(1)
+    settle()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(declines()).toEqual([["decline", kept.id], ["decline", asked.id]])
+    root.unmount()
+  })
+
   it("requires a running app", () => {
     Reflect.deleteProperty(globalThis, "__soloSolidRenderHost")
     expect(() => openWindow(() => <Text>x</Text>)).toThrow("Call render() before openWindow()")

@@ -229,10 +229,10 @@ openWindow(() => <Settings />, { title: "Settings" }) // its own window
   last prompt closes the whole window, including tabs that never asked, so
   approving every prompt takes one click. The strip's ✕ and `requestClose()`
   always close just their own tab, and replace a pending window close.
-  Solo cannot tell that an `onCloseRequest` declined, because declining is
-  simply not calling `close()`: after a declined window close, a guarded tab
-  that later closes with a bare `close()` still finishes that window close.
-  Use `requestClose()` to close one tab.
+  An `onCloseRequest` that returns, or whose promise settles, with its tab
+  still open has declined: that cancels the window close, so a later
+  `close()` of the tab closes only the tab. A handler that closes later
+  from a callback, without returning a promise, counts as declined too.
 - `setTabbingIdentifier` decides which windows join later; clearing it keeps
   the tabs the window already has, because moving a tab out into its own
   window is not implemented yet.

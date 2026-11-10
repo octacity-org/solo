@@ -318,6 +318,8 @@ export interface NativeRenderer {
   setWindowCloseGuard?(guarded: boolean, windowId?: number): void
   /** Close as the close button does, through the close guard. */
   requestWindowClose?(windowId?: number): void
+  /** The window's close handler kept it open: drop any pending window-level close. */
+  declineWindowClose?(windowId?: number): void
   setWindowMaximized?(maximized: boolean, windowId?: number): void
   isWindowMaximized?(windowId?: number): boolean
   setWindowFullscreen?(fullscreen: boolean, windowId?: number): void

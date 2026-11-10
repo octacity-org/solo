@@ -2726,6 +2726,26 @@ impl SoloRenderer {
         }
     }
 
+    /// The close handler of the main window, or of the window `window_id`,
+    /// kept it open. On Linux the window's close button asks every guarded
+    /// tab and closes the whole window once the last of them closes; a
+    /// declined tab drops that, so closing it later closes only the tab.
+    /// AppKit asks each window on its own, so macOS has nothing to drop.
+    #[napi]
+    pub fn decline_window_close(&self, window_id: Option<f64>) -> Result<()> {
+        let target = WindowTarget::from_arg(window_id)?;
+        #[cfg(ui_thread)]
+        return self.query_window(target, Some("declining the window close"), {
+            |view, _window, _cx| view.clear_pending_close()
+        });
+
+        #[cfg(not(ui_thread))]
+        {
+            let _ = target;
+            Ok(())
+        }
+    }
+
     /// Enter or leave the standard macOS zoomed state. AppKit owns the saved
     /// normal frame, so restoring uses exactly the platform's previous frame.
     #[napi]
