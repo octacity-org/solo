@@ -128,6 +128,87 @@ jobs:
             packages/native/solo-context-menu.darwin-*
           if-no-files-found: error
 
+  linux-test:
+    name: linux-test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+          rustflags: ""
+
+      - name: Install Linux build and display dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y \
+            gcc g++ clang \
+            libfontconfig-dev \
+            libwayland-dev \
+            libxkbcommon-x11-dev \
+            libx11-xcb-dev \
+            libssl-dev \
+            libzstd-dev \
+            libvulkan1 \
+            mesa-vulkan-drivers \
+            libegl1 \
+            libegl-mesa0 \
+            xvfb
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            packages/native/target/
+          key: linux-test-cargo-${{ hashFiles('packages/native/Cargo.lock') }}
+          restore-keys: |
+            linux-test-cargo-
+
+      - name: Install dependencies
+        run: bun install
+
+      # The test job does not download a build artifact: the Linux binding
+      # must keep the automation feature, which the release matrix omits.
+      - name: Build native with automation
+        working-directory: packages/native
+        run: bun run build:release:full
+
+      # napi rewrites these for the host target. The checked-in files are the
+      # macOS declarations; restoring them keeps the JS loader and types stable
+      # for the following TypeScript builds.
+      - name: Restore generated binding files
+        run: git checkout -- packages/native/index.js packages/native/index.d.ts
+
+      - name: Build @solo/core
+        run: bun run build
+        working-directory: packages/core
+
+      - name: Build @solo/solid
+        run: bun run build
+        working-directory: packages/solid
+
+      - name: Build tasks automation fixture
+        run: bun run build:automation
+        working-directory: examples/tasks
+
+      # Xvfb has no DRI3, so Vulkan must use Mesa's lavapipe CPU driver.
+      - name: Run tasks automation suite
+        env:
+          VK_DRIVER_FILES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          SOLO_SCREENSHOT_DIR: ${{ github.workspace }}/examples/tasks/screenshots
+        working-directory: examples/tasks
+        run: xvfb-run -a --server-args="-screen 0 1280x1024x24" bun run test
+
   test:
     name: test
     needs: build
