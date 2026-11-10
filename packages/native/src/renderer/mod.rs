@@ -37,6 +37,8 @@ use crate::theme::Theme;
 
 mod batch;
 mod build;
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+mod decorations;
 mod styles;
 mod view;
 mod virtual_list;
@@ -583,12 +585,13 @@ pub fn enable_app_reload() {
     worker_main::enable_reload();
 }
 
-/// Element-0 event asking the Worker to exit, so its JS `exit` handlers run.
-#[cfg(target_os = "macos")]
+/// Element-0 event asking JS to exit the process (from the Worker on macOS),
+/// so its JS `exit` handlers run.
+#[cfg(any(target_os = "macos", ui_thread))]
 const APPLICATION_QUIT_REQUESTED_EVENT: &str = "applicationQuitRequested";
 
-/// How long an AppKit-initiated quit waits for the Worker to exit.
-#[cfg(target_os = "macos")]
+/// How long a quit waits for JS to exit before ending the process anyway.
+#[cfg(any(target_os = "macos", ui_thread))]
 const WORKER_QUIT_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// End the process from the main thread after the cleanup `on_app_quit` does.
@@ -1595,10 +1598,12 @@ fn open_window_in_app(
 ) -> Result<gpui::WindowHandle<SoloView>> {
     let display = crate::screens::display_for(options.screen.as_deref(), cx)?;
     let bounds = centered_window_bounds(options, display, cx);
+    let titlebar_hidden = options.titlebar_transparent.unwrap_or(false);
     let window = cx
         .open_window(to_gpui_window_options(options, bounds, display), move |window, cx| {
             install_close_guard(window, cx);
-            let view = SoloView::new(tree, callback, title, selection);
+            let view = SoloView::new(tree, callback, title, selection)
+                .with_titlebar_hidden(titlebar_hidden);
             cx.new(move |_| match root {
                 Some(root) => view.for_window_root(root, clock),
                 None => view,
@@ -1706,6 +1711,35 @@ fn main_window_closed_on_ui(_cx: &mut gpui::App) {
         crate::context_menu_gpui::cancel_all();
         crate::native_view::with_registry(|registry| registry.destroy_all());
     }
+}
+
+/// End the process once the GPUI loop returns on `solo-ui`.
+///
+/// JS ends it, as on macOS: `applicationQuitRequested` makes it call
+/// `process.exit` on its own thread, so its `exit` handlers run. This thread
+/// waits rather than ending the process itself, which would skip them.
+///
+/// It never returns either: on Linux this thread's TLS drop order is broken —
+/// wgpu's snatch-trace thread-local is destroyed before the `WgpuContext` that
+/// reads it, so dropping the context panics and aborts the process. A JS exit
+/// runs only the exiting thread's destructors, and if JS has not exited within
+/// the grace period, `_exit` ends the process without any. Windows has no such
+/// drop order to dodge and no `libc` crate, so it exits normally.
+#[cfg(ui_thread)]
+fn exit_after_quit() -> ! {
+    crate::context_menu_gpui::cancel_all();
+    crate::native_view::with_registry(|registry| registry.destroy_all());
+    let callback = UI_EVENT_CALLBACK.lock().unwrap().clone();
+    if callback.is_some() {
+        emit_event_full(&callback, 0, APPLICATION_QUIT_REQUESTED_EVENT, |_| {});
+        std::thread::sleep(WORKER_QUIT_GRACE);
+    }
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    unsafe {
+        libc::_exit(0)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+    std::process::exit(0)
 }
 
 /// Wait for a reply from the `solo-ui` thread. `query` names what was asked
@@ -2170,6 +2204,10 @@ impl SoloRenderer {
         std::thread::Builder::new()
             .name("solo-ui".to_string())
             .spawn(move || {
+                // Set once the loop is up and the window is open; until then a
+                // return from `run` is an initialization failure, not a quit.
+                let loop_started = std::rc::Rc::new(std::cell::Cell::new(false));
+                let started = loop_started.clone();
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     let platform = gpui_platform::current_platform(false);
                     install_ui_platform(platform.clone());
@@ -2207,10 +2245,13 @@ impl SoloRenderer {
                             cx.activate(true);
                         }
                         startup_sender.send(Ok(())).ok();
+                        started.set(true);
                     });
                 }));
 
                 let error = match result {
+                    // The loop only returns when something quit the app.
+                    Ok(()) if loop_started.get() => exit_after_quit(),
                     Ok(()) => {
                         "The GPUI event loop exited before initialization completed".to_string()
                     }
@@ -4011,6 +4052,13 @@ fn to_gpui_window_options(
         app_owns_titlebar_drag: options.app_owns_titlebar_drag.unwrap_or(false),
         is_resizable: options.resizable.unwrap_or(true),
         is_minimizable: options.minimizable.unwrap_or(true),
+        // Linux has no platform titlebar unless the app asks for client
+        // decorations. An app that draws under the titlebar
+        // (`titlebarTransparent`) needs them, or the window manager paints a
+        // second titlebar above the app's own.
+        window_decorations: (titlebar_transparent
+            && cfg!(any(target_os = "linux", target_os = "freebsd")))
+            .then_some(gpui::WindowDecorations::Client),
         window_background,
         window_min_size,
         tabbing_identifier: options.tabbing_identifier.clone(),
