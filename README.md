@@ -244,13 +244,14 @@ cd packages/native && cargo test --features test-support --lib --test layout_pro
 | Platform | Status |
 |---|---|
 | macOS | Primary. Windows, input, desktop APIs, `<webview>`, live automation and the GPU test renderer. |
-| Linux (Wayland, X11) | Windows and input work. Live automation works; screenshots need X11. Most desktop APIs report that they are macOS-only. |
+| Linux (Wayland, X11) | Windows, input, clipboard, browser/file actions and the freedesktop Trash work. Live automation works; screenshots need X11. Window management, dialogs and menus still report that they are macOS-only. |
 | Windows | Builds in CI. Untested. |
 
 ## Current boundaries
 
 - Not published to npm; there is no release pipeline yet.
-- Desktop integration APIs are macOS-only for now.
+- Desktop integration is split: desktop actions work on macOS and Linux;
+  window management, dialogs, menus and Dock integration are still macOS-only.
 - `<webview>` is macOS-only; there is no WebView2 or WebKitGTK backend.
 - Native code has no hot reload: Rust changes need a rebuild and restart.
 - Solid is the only supported frontend. React support was removed.

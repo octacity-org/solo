@@ -61,11 +61,17 @@ pub fn open_external_url(url: String) -> Result<()> {
             "opening the browser URL",
         )
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    {
+        return crate::renderer::with_ui_platform("opening the browser URL", move |platform| {
+            platform.open_url(&url);
+        });
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "freebsd")))]
     {
         let _ = url;
         Err(Error::from_reason(
-            "External browser opening is supported only on macOS",
+            "External browser opening is supported only on macOS and Linux",
         ))
     }
 }
@@ -81,11 +87,17 @@ pub fn write_clipboard_text(text: String) -> Result<()> {
         macos::require_main_thread()?;
         macos::write_text(&objc2_app_kit::NSPasteboard::generalPasteboard(), &text)
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    {
+        return crate::renderer::with_ui_platform("writing clipboard text", move |platform| {
+            platform.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+        });
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "freebsd")))]
     {
         let _ = text;
         Err(Error::from_reason(
-            "Clipboard text writing is supported only on macOS",
+            "Clipboard text writing is supported only on macOS and Linux",
         ))
     }
 }
@@ -104,10 +116,19 @@ pub fn read_clipboard_text() -> Result<Option<String>> {
             &objc2_app_kit::NSPasteboard::generalPasteboard(),
         ))
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    {
+        return crate::renderer::with_ui_platform("reading the clipboard", |platform| {
+            platform
+                .read_from_clipboard()
+                .and_then(|item| item.text())
+                .filter(|text| !text.is_empty())
+        });
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "freebsd")))]
     {
         Err(Error::from_reason(
-            "Clipboard text reading is supported only on macOS",
+            "Clipboard text reading is supported only on macOS and Linux",
         ))
     }
 }
@@ -149,10 +170,16 @@ pub fn reveal_path(path: String) -> Result<()> {
             "showing the path in Finder",
         )
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    {
+        return crate::renderer::with_ui_platform("showing the path in the file manager", move |platform| {
+            platform.reveal_path(std::path::Path::new(&path));
+        });
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "freebsd")))]
     {
         Err(Error::from_reason(
-            "Showing a path in Finder is supported only on macOS",
+            "Showing a path in the file manager is supported only on macOS and Linux",
         ))
     }
 }
@@ -176,10 +203,16 @@ pub fn open_path(path: String) -> Result<()> {
             "opening the path",
         )
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    {
+        return crate::renderer::with_ui_platform("opening the path", move |platform| {
+            platform.open_with_system(std::path::Path::new(&path));
+        });
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "freebsd")))]
     {
         Err(Error::from_reason(
-            "Opening a path with its default application is supported only on macOS",
+            "Opening a path with its default application is supported only on macOS and Linux",
         ))
     }
 }
@@ -227,10 +260,29 @@ impl Task for MoveToTrashTask {
                 })
                 .collect())
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         {
+            Ok(std::mem::take(&mut self.paths)
+                .into_iter()
+                .map(|path| match linux::trash(&path) {
+                    Ok(()) => TrashResult {
+                        path,
+                        ok: true,
+                        error: None,
+                    },
+                    Err(error) => TrashResult {
+                        path,
+                        ok: false,
+                        error: Some(error),
+                    },
+                })
+                .collect())
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "freebsd")))]
+        {
+            let _ = &mut self.paths;
             Err(Error::from_reason(
-                "Moving to the Trash is supported only on macOS",
+                "Moving to the Trash is supported only on macOS and Linux",
             ))
         }
     }
@@ -294,6 +346,33 @@ mod macos {
         board
             .stringForType(unsafe { NSPasteboardTypeString })
             .map(|text| text.to_string())
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+mod linux {
+    use std::process::Command;
+
+    /// Move one item to the desktop Trash through GLib's freedesktop
+    /// implementation, which picks the right top-level trash directory and
+    /// writes the `.trashinfo` entry the file manager reads.
+    pub(super) fn trash(path: &str) -> std::result::Result<(), String> {
+        let output = Command::new("gio")
+            .args(["trash", "--", path])
+            .output()
+            .map_err(|error| {
+                format!("gio is unavailable, so the freedesktop Trash cannot be used: {error}")
+            })?;
+        if output.status.success() {
+            return Ok(());
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = stderr.trim();
+        Err(if stderr.is_empty() {
+            format!("gio trash failed with {}", output.status)
+        } else {
+            stderr.to_string()
+        })
     }
 }
 
@@ -411,6 +490,46 @@ mod tests {
         let error = validate_existing_path(missing.to_str().unwrap()).unwrap_err();
         assert!(error.to_string().contains("solo-missing-"), "{error}");
         assert!(validate_existing_path("relative").is_err());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[test]
+    fn trashes_a_file_through_the_freedesktop_trash() {
+        if std::process::Command::new("gio")
+            .arg("help")
+            .arg("trash")
+            .output()
+            .is_err()
+        {
+            eprintln!("skipping: gio is unavailable");
+            return;
+        }
+        let name = format!("solo-trash-{}-{}.txt", std::process::id(), std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos());
+        // `gio` refuses files on system-internal mounts, and /tmp often is one.
+        let path = std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir)
+            .join(&name);
+        std::fs::write(&path, "x").unwrap();
+        super::linux::trash(path.to_str().unwrap()).unwrap();
+        assert!(!path.exists(), "the source file is still present");
+
+        // Remove the test file from the user's Trash.
+        let data_home = std::env::var_os("XDG_DATA_HOME")
+            .map(std::path::PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".local/share")))
+            .unwrap();
+        let trashed = data_home.join("Trash/files").join(&name);
+        if trashed.exists() {
+            std::fs::remove_file(trashed).unwrap();
+        }
+        let info = data_home.join("Trash/info").join(format!("{name}.trashinfo"));
+        if info.exists() {
+            std::fs::remove_file(info).unwrap();
+        }
     }
 
     #[cfg(target_os = "macos")]
