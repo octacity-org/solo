@@ -68,9 +68,9 @@ dismisses, as AppKit does.
   scripted mode and automation drives it like a person would.
 - Release builds need no extra file: everything is inside the addon.
 
-The GPU-backed automation tests in `context-menu-native.test.tsx` need the
-macOS test renderer; on Linux the layout and keyboard rules are covered by
-unit tests in `packages/native/src/context_menu_gpui.rs`.
+The GPU-backed automation tests in `context-menu-native.test.tsx` run on the
+test renderer on macOS and Linux; the Linux layout and keyboard rules also
+have unit tests in `packages/native/src/context_menu_gpui.rs`.
 
 ## Event loops and packaging
 
