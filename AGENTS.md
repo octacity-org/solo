@@ -139,6 +139,14 @@ resolves.
 - `TestSoloRenderer` mirrors this with offscreen windows in
   `VisualTestState::secondary`; `createSolidNativeTestRoot` registers it as
   the `openWindow` host through `setWindowHost`.
+- A `menuBar` app sets `QuitMode::Explicit`, so closing every window leaves
+  the process and Solid state alive and `showWindow`/`reopen_main_window`
+  paints the retained tree into a new window. macOS hosts the status item in
+  the menu bar (`menu_bar/macos.rs`); Linux publishes a StatusNotifierItem
+  over D-Bus through `ksni` (`menu_bar/linux.rs`), created once the window
+  exists so a session with no watcher fails `init` instead of running hidden.
+  Menu callbacks arrive on the tray's own thread: they only emit element-0
+  events or `post_ui_command`, never touch GPUI directly.
 - Linux has no native tabs: windows opened with the same
   `tabbingIdentifier` join one native window as tabs of it. `SoloView` holds
   the tabs (`Tab`: root, title, document state, close guard) plus the active

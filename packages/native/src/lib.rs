@@ -16,7 +16,7 @@ mod context_menu;
 mod context_menu_gpui;
 #[cfg(target_os = "macos")]
 mod macos_shutdown;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd"))]
 mod menu_bar;
 mod markdown;
 mod motion;

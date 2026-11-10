@@ -2,6 +2,7 @@
 
 Three macOS Dock behaviors: reopening the window when the Dock icon is
 clicked, app-defined items in the Dock icon's menu, and recent documents.
+Only the reopen event has a Linux counterpart (the status-item icon click).
 
 ```tsx
 import {
@@ -27,11 +28,13 @@ addRecentDocument("/Users/me/Notes/today.txt")
 
 `onApplicationReopen(listener)` runs when the user clicks the Dock icon, or
 opens the app again from Finder or with `open`, while the app shows no
-window. It returns a function that stops listening.
+window. It returns a function that stops listening. On Linux the same event
+comes from a click on the status-item icon, so one listener serves both.
 
 Only a background app (one with `menuBar` in `render`) keeps running after its
 window closes; an ordinary app quits with its last window. Solo does not
-reopen the window by itself: call `root.showWindow()` from the listener.
+reopen the window by itself: call `root.showWindow()` from the listener, or
+let the user choose the item's Open entry.
 
 ## Dock menu
 
@@ -62,8 +65,9 @@ same way as a file opened from Finder. Decode it with
 `fileURLToPath(new URL(url))` from `node:url`, and treat it as untrusted input
 (see [deep-links.md](deep-links.md)).
 
-On Linux there is no Dock. `configureDockMenu` and `onApplicationReopen`
-throw, but `addRecentDocument(path)` appends a bookmark to the freedesktop
+On Linux there is no Dock: `configureDockMenu` throws, and `onApplicationReopen`
+runs on a click on the app's status-item icon instead ([menu-bar-apps.md](menu-bar-apps.md)).
+`addRecentDocument(path)` appends a bookmark to the freedesktop
 `recently-used.xbel`, so the file appears in GTK file choosers and desktop
 recent lists; it is not shown in a Solo-drawn menu. See
 [linux-packaging.md](linux-packaging.md).
