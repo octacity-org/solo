@@ -212,7 +212,10 @@ openWindow(() => <Settings />, { title: "Settings" }) // its own window
 
 - The first window with an identifier keeps its native window; later ones
   become tabs in it and are selected on open. A window without an identifier
-  gets a native window of its own.
+  gets a native window of its own. The main window (the one `render()`
+  creates) takes no part in tabs on Linux: it neither hosts nor joins them,
+  and `setTabbingIdentifier` throws for it rather than doing nothing. Set the
+  identifier on windows from `openWindow()`.
 - The strip shows each tab's title (with the document marker, see
   [Document windows](#document-windows)) and a close button. Selecting a tab
   paints its tree; the window title follows the selected tab.
@@ -220,8 +223,10 @@ openWindow(() => <Settings />, { title: "Settings" }) // its own window
   `setDocumentEdited`, `close()`, `requestClose()`, `onCloseRequest`, and its
   `windowClosed` event. Closing a tab leaves the window and its other tabs;
   closing the last tab closes the native window.
-- The native window's own close button asks the selected tab's
-  `onCloseRequest`, then closes the window with all of its tabs.
+- The native window's own close button closes the window and all of its
+  tabs, so it first asks every guarded tab's `onCloseRequest`, not only the
+  selected one. If any tab refuses, the window stays open. The strip's ✕
+  always closes just its own tab.
 - `setTabbingIdentifier` decides which windows join later; clearing it keeps
   the tabs the window already has, because moving a tab out into its own
   window is not implemented yet.

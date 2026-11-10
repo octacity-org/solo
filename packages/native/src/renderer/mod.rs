@@ -1718,15 +1718,12 @@ fn open_window_in_app(
     cx: &mut gpui::App,
 ) -> Result<gpui::WindowHandle<SoloView>> {
     // Windows sharing a tabbing identifier become tabs of the first one:
-    // Linux has no native tabs, so the host window paints them.
-    if let Some(identifier) = options.tabbing_identifier.clone() {
+    // Linux has no native tabs, so the host window paints them. The main
+    // window neither hosts nor joins tabs on Linux (docs/multiple-windows.md),
+    // and reopening it must not fail because its options carry an identifier.
+    if let (Some(root), Some(identifier)) = (root, options.tabbing_identifier.clone()) {
         let host = UI_WINDOWS.with(|windows| windows.borrow().tab_host(&identifier));
         if let Some(host) = host {
-            let Some(root) = root else {
-                return Err(Error::from_reason(
-                    "The main window cannot join a tab group",
-                ));
-            };
             host.update(cx, |view, window, cx| {
                 view.add_tab(root, title.clone());
                 refresh_view(window, cx);
@@ -2978,6 +2975,13 @@ impl SoloRenderer {
 
         #[cfg(ui_thread)]
         {
+            // The main window paints the app's own tree and cannot take part
+            // in the tab strip; saying so beats a silent no-op.
+            if matches!(target, WindowTarget::Main) && identifier.is_some() {
+                return Err(Error::from_reason(
+                    "The main window cannot host window tabs on Linux; set the identifier on a window opened with openWindow()",
+                ));
+            }
             return self.query_app("setting the window tabbing identifier", move |_cx| {
                 UI_WINDOWS.with(|windows| windows.borrow_mut().set_identifier(target, identifier));
             });

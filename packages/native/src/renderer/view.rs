@@ -263,18 +263,26 @@ impl SoloView {
     /// Whether a close request may close the window now. A guarded window
     /// stays open and emits `windowCloseRequested` on its root element, or on
     /// element 0 for the main window.
+    ///
+    /// The window's close button closes the whole native window, so every
+    /// guarded tab is asked, not just the selected one: a background tab with
+    /// unsaved work must not be discarded silently.
     #[cfg(any(target_os = "macos", ui_thread))]
     pub(crate) fn allow_close(&self) -> bool {
-        if !self.tab().close_guarded {
-            return true;
+        let mut guarded = false;
+        for tab in &self.tabs {
+            if !tab.close_guarded {
+                continue;
+            }
+            guarded = true;
+            super::emit_event_full(
+                &self.event_callback,
+                tab.root.unwrap_or(0),
+                super::WINDOW_CLOSE_REQUESTED_EVENT,
+                |_| {},
+            );
         }
-        super::emit_event_full(
-            &self.event_callback,
-            self.root_for_events(),
-            super::WINDOW_CLOSE_REQUESTED_EVENT,
-            |_| {},
-        );
-        false
+        !guarded
     }
 
     /// Ask the tab `target` addresses to close: a guarded tab stays open and
@@ -776,7 +784,7 @@ impl gpui::Render for SoloView {
                 .children(crate::context_menu_gpui::overlay(
                     &theme,
                     viewport,
-                    self.root,
+                    self.tab().root,
                     cx,
                 ))
                 .into_any_element()
@@ -841,5 +849,25 @@ mod tests {
         // The window still owns its own root: the last tab never removes it.
         assert!(view.remove_tab(9));
         assert_eq!(view.tab().root, None);
+    }
+
+    /// The window's close button closes every tab, so it must ask the guards
+    /// of background tabs too, not only the selected one.
+    #[test]
+    fn a_window_close_asks_every_guarded_tab() {
+        let mut view = SoloView::new(
+            Arc::new(std::sync::Mutex::new(RetainedTree::new())),
+            None,
+            "Alpha".to_string(),
+            Arc::new(parking_lot::Mutex::new(SelectionState::default())),
+        );
+        view.add_tab(9, "Beta".to_string());
+        assert!(view.allow_close());
+        view.tabs[0].close_guarded = true;
+        assert!(!view.allow_close());
+        view.tabs[0].close_guarded = false;
+        view.tabs[1].close_guarded = true;
+        // Beta is selected; Alpha guarding still keeps the window open.
+        assert!(!view.allow_close());
     }
 }
