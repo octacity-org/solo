@@ -139,6 +139,12 @@ export type WindowBackground = "opaque" | "transparent" | "blurred"
 export type CloseRequestHandler = () => void | Promise<void>
 
 export interface OpenWindowOptions extends Omit<WindowOptions, "menuBar"> {
+  /**
+   * Application identifier the desktop groups the window under, such as
+   * `dev.solo.tasks` (Linux). It becomes X11 `WM_CLASS` and the Wayland
+   * `app_id`, and should match the desktop entry's `StartupWMClass`.
+   */
+  appId?: string
   /** Called once after the window closes, however it closed. */
   onClose?: () => void
   /** Confirm or cancel closing; close with `close()`. */
@@ -146,6 +152,12 @@ export interface OpenWindowOptions extends Omit<WindowOptions, "menuBar"> {
 }
 
 export interface RenderOptions extends WindowOptions {
+  /**
+   * Application identifier the desktop groups the window under, such as
+   * `dev.solo.tasks` (Linux). It becomes X11 `WM_CLASS` and the Wayland
+   * `app_id`, and should match the desktop entry's `StartupWMClass`.
+   */
+  appId?: string
   onEvent?: (event: EventPayload) => void
   /** Confirm or cancel closing the main window; close with `closeWindow()`. */
   onCloseRequest?: CloseRequestHandler

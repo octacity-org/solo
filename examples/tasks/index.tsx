@@ -7,4 +7,11 @@
 import { render } from "@solo/solid"
 import { TasksApp } from "./app.js"
 
-render(() => <TasksApp />, { title: "Solo Tasks", width: 480, height: 640 })
+render(() => <TasksApp />, {
+  // Matches the .desktop entry's StartupWMClass so the window groups under
+  // its launcher icon.
+  appId: "dev.solo.tasks",
+  title: "Solo Tasks",
+  width: 480,
+  height: 640,
+})
