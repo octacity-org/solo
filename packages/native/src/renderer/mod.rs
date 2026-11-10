@@ -585,12 +585,13 @@ pub fn enable_app_reload() {
     worker_main::enable_reload();
 }
 
-/// Element-0 event asking the Worker to exit, so its JS `exit` handlers run.
-#[cfg(target_os = "macos")]
+/// Element-0 event asking JS to exit the process (from the Worker on macOS),
+/// so its JS `exit` handlers run.
+#[cfg(any(target_os = "macos", ui_thread))]
 const APPLICATION_QUIT_REQUESTED_EVENT: &str = "applicationQuitRequested";
 
-/// How long an AppKit-initiated quit waits for the Worker to exit.
-#[cfg(target_os = "macos")]
+/// How long a quit waits for JS to exit before ending the process anyway.
+#[cfg(any(target_os = "macos", ui_thread))]
 const WORKER_QUIT_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// End the process from the main thread after the cleanup `on_app_quit` does.
@@ -1714,16 +1715,25 @@ fn main_window_closed_on_ui(_cx: &mut gpui::App) {
 
 /// End the process once the GPUI loop returns on `solo-ui`.
 ///
-/// On Linux `std::process::exit` is not enough: glibc's `exit` runs the
-/// calling thread's TLS destructors, and this thread's drop order is broken —
+/// JS ends it, as on macOS: `applicationQuitRequested` makes it call
+/// `process.exit` on its own thread, so its `exit` handlers run. This thread
+/// waits rather than ending the process itself, which would skip them.
+///
+/// It never returns either: on Linux this thread's TLS drop order is broken —
 /// wgpu's snatch-trace thread-local is destroyed before the `WgpuContext` that
-/// reads it, so dropping the context panics and aborts the process. `_exit`
-/// skips them, which is what a quit does anyway. Windows has no such drop
-/// order to dodge and no `libc` crate, so it exits normally.
+/// reads it, so dropping the context panics and aborts the process. A JS exit
+/// runs only the exiting thread's destructors, and if JS has not exited within
+/// the grace period, `_exit` ends the process without any. Windows has no such
+/// drop order to dodge and no `libc` crate, so it exits normally.
 #[cfg(ui_thread)]
 fn exit_after_quit() -> ! {
     crate::context_menu_gpui::cancel_all();
     crate::native_view::with_registry(|registry| registry.destroy_all());
+    let callback = UI_EVENT_CALLBACK.lock().unwrap().clone();
+    if callback.is_some() {
+        emit_event_full(&callback, 0, APPLICATION_QUIT_REQUESTED_EVENT, |_| {});
+        std::thread::sleep(WORKER_QUIT_GRACE);
+    }
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     unsafe {
         libc::_exit(0)
