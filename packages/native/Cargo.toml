@@ -73,9 +73,6 @@ raw-window-handle = "0.6"
 # `exit_after_quit` in renderer/mod.rs.
 libc = "0.2"
 raw-window-handle = "0.6"
-# The deep-link single-instance socket checks the owner of its private
-# fallback directory (~/.cargo already has libc in the graph via gpui).
-libc = "0.2"
 x11rb = "0.13"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
