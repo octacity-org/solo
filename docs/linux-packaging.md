@@ -70,6 +70,19 @@ The executable must stay in one piece: `bun build --compile` output cannot be
 split, and the addon must be the build for the target architecture
 (`x86_64-unknown-linux-gnu` or `aarch64-unknown-linux-gnu`).
 
+## Status item
+
+`menuBar` in `render()` needs no extra library: the item is a
+StatusNotifierItem published on the session bus by `ksni`, a pure-Rust D-Bus
+implementation. No GTK, libappindicator or other system package is required
+on top of D-Bus itself, which a desktop session already runs.
+
+The item can only appear through a host: KDE Plasma shows it in its panel,
+XFCE through the status notifier plugin, GNOME through the AppIndicator and
+KStatusNotifierItem extensions. A session without one makes `render()` throw,
+because a background app whose only entry point is a hidden icon could never
+be reached again. See [menu-bar-apps.md](menu-bar-apps.md).
+
 ## Recent documents
 
 `addRecentDocument(path)` validates the absolute path and adds a bookmark to
