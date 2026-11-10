@@ -20,6 +20,8 @@ mod markdown;
 mod motion;
 mod native_view;
 mod open_urls;
+#[cfg(ui_thread)]
+mod prompt;
 mod renderer;
 mod retained_tree;
 mod screens;

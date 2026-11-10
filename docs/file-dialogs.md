@@ -42,10 +42,16 @@ if (destination !== null) {
 `initialDirectory` must be absolute and defaults to the process working
 directory. File-extension filtering is not supported by the pinned GPUI API.
 
-Dialogs currently require macOS. Unsupported platforms, a renderer without the
-capability, and an uninitialized or stopped renderer reject explicitly. Paths
-are returned as Unicode strings; non-Unicode native paths reject because they
-cannot be represented faithfully in JavaScript.
+Dialogs open through xdg-desktop-portal's FileChooser on Linux and through
+`NSOpenPanel`/`NSSavePanel` on macOS. A missing or unreachable portal rejects
+with the platform's message instead of hanging. The portal cannot select files
+and folders in one dialog; Solo's `directories` option chooses one kind for
+the whole dialog, so a mixed request cannot be expressed.
+
+Unsupported platforms, a renderer without the capability, and an uninitialized
+or stopped renderer reject explicitly. Paths are returned as Unicode strings;
+non-Unicode native paths reject because they cannot be represented faithfully
+in JavaScript.
 
 GPUI creates the native panels on its foreground executor. Solo waits for their
 oneshot result on a napi worker task, so neither JavaScript nor the macOS event

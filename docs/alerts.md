@@ -1,7 +1,7 @@
 # Native alerts
 
-`showAlert` shows a native alert, an `NSAlert` sheet on macOS, and resolves
-to the index of the button the user clicked.
+`showAlert` shows a native alert — an `NSAlert` sheet on macOS, an in-window
+prompt on Linux — and resolves to the index of the button the user clicked.
 
 ```ts
 import { showAlert } from "@solo/solid"
@@ -23,9 +23,10 @@ if (choice === 0) {
 - `level` is `"info"` (the default), `"warning"` or `"critical"`. It picks
   the alert's icon and emphasis.
 - `buttons` is a non-empty list of non-empty labels, shown in order, and
-  defaults to `["OK"]`. The first button answers Return. A label reading
-  "Cancel" (in any case) answers Escape. Labels are shown as written.
-- `window` attaches the sheet to an `openWindow` window. The main window is
+  defaults to `["OK"]`. Enter answers the first button that is not the cancel
+  button; a label reading "Cancel" (in any case) answers Escape. With a
+  single button, Escape answers it too. Labels are shown as written.
+- `window` attaches the alert to an `openWindow` window. The main window is
   the default. A closed window rejects with `Window <id> is not open`.
 
 Invalid options throw a `TypeError` before anything reaches the native side.
@@ -45,8 +46,18 @@ stacking behind the first.
 If the window closes, or the app shuts down, before the alert is answered,
 the promise rejects. It never resolves to a made-up index.
 
-Alerts currently require macOS. Other platforms, and renderers without the
-capability, reject explicitly.
+## Platforms
+
+macOS presents a native `NSAlert` sheet. Linux has no platform prompt, so Solo
+draws its own overlay inside the window: message, optional detail, and the
+buttons in order, with Enter and Escape wired as described above. The window
+keeps its normal frame and the overlay takes keyboard focus while it is open.
+
+On Linux the overlay's strings are painted through Solo's text pipeline, so
+`getPaintedText()` includes the message, detail and button labels. Automation
+answers an alert with `keystrokes("enter")` or `keystrokes("escape")`, or by
+clicking a button's painted bounds. Windows and renderers without the
+capability reject explicitly.
 
 ## Verification
 
@@ -55,6 +66,10 @@ a dropped alert. `TestSoloRenderer` replaces the `NSAlert` with a stand-in
 prompt: GPU-backed tests read it with `pendingAlert()` and click a button
 with `answerAlert(index)`, and they cover the index result, the rejected
 second alert and attaching to an `openWindow` window.
+
+On Linux the prompt builder has unit tests for the Enter and Escape button
+choices, and the alert's strings appear in `getPaintedText()` once a frame
+paints them.
 
 For manual verification:
 
