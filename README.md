@@ -247,15 +247,16 @@ cd packages/native && cargo test --features test-support --lib --test layout_pro
 | Platform | Status |
 |---|---|
 | macOS | Primary. Windows, input, desktop APIs, `<webview>`, live automation and the GPU test renderer. |
-| Linux (Wayland, X11) | Windows, input, clipboard, browser/file actions, the freedesktop Trash and recent-document list, portal file dialogs, in-window alerts, keyboard layout, scroll-bar preference and compiled-binary restart work. System appearance follows the desktop on Wayland. Live automation works; screenshots need X11. Window state (maximize, fullscreen, minimize, resize, background), screens and in-window context menus work, and deep links arrive through launch arguments, a Unix socket for a second launch, and a `.desktop` entry written by `registerUrlScheme`; window tabs, the menu bar and Dock integration still report that they are macOS-only. |
+| Linux (Wayland, X11) | Windows, input, clipboard, browser/file actions, the freedesktop Trash and recent-document list, portal file dialogs, in-window alerts, keyboard layout, scroll-bar preference and compiled-binary restart work. System appearance follows the desktop on Wayland. Live automation works; screenshots need X11. Window state (maximize, fullscreen, minimize, resize, background), multiple windows with close requests, screens and in-window context menus work, and deep links arrive through launch arguments, a Unix socket for a second launch, and a `.desktop` entry written by `registerUrlScheme`; window tabs, document-window markers, the menu bar and Dock integration still report that they are macOS-only. |
 | Windows | Builds in CI. Untested. |
 
 ## Current boundaries
 
 - Not published to npm; there is no release pipeline yet.
-- Desktop integration is split: desktop actions, file dialogs, alerts and the
-  application controls that GPUI implements work on macOS and Linux; window
-  tabs, menus and Dock integration are still macOS-only.
+- Desktop integration is split: desktop actions, file dialogs, alerts,
+  multiple windows and the application controls that GPUI implements work on
+  macOS and Linux; window tabs, document windows, menus and Dock integration
+  are still macOS-only.
 - `<webview>` is macOS-only; there is no WebView2 or WebKitGTK backend.
 - Native code has no hot reload: Rust changes need a rebuild and restart.
 - Solid is the only supported frontend. React support was removed.

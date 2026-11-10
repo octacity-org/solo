@@ -1,4 +1,4 @@
-# Multiple windows (macOS)
+# Multiple windows
 
 `render()` starts the application and opens its main window. `openWindow()`
 opens further windows in the same application, after `render()` has run:
@@ -306,7 +306,7 @@ render(
 
 macOS only for now. GPUI also has resize edges and a window menu for
 client-drawn decorations, but on macOS they do nothing, so Solo does not
-expose them.
+expose them. Linux decorations and drag regions are tracked in #89.
 
 ## Lifetime
 
@@ -318,9 +318,25 @@ expose them.
 - `render()` again, or `unmount()` on the render root, closes every window
   opened with `openWindow`.
 
+## Platforms
+
+On Linux every window is a real top-level window, and the surface above works
+as it does on macOS, with these differences:
+
+- The window manager owns the close button. A close request reaches the
+  window as `on_should_close`, so with `onCloseRequest` the window stays open
+  and the handler runs, exactly as on macOS.
+- Closing the last window ends the process, because Linux has no menu-bar app
+  lifecycle yet. `showWindow()` still calls `activate` on an open window, and
+  reopens the main window while another window keeps the app running.
+- `setBackground("transparent" | "blurred")` sets the appearance, but GPUI
+  paints the app opaque, so both look like `opaque`.
+- `setDocumentEdited` and `setDocumentPath` throw until document windows
+  land on Linux (#100); window tabs and the menu bar are still macOS-only.
+
 ## Limits
 
-- macOS only. On Linux and Windows `openWindow` throws, and so do the
+- Windows are macOS and Linux. On Windows `openWindow` throws, and so do the
   render root's `setDocumentEdited` and `setDocumentPath`.
 - New windows open centered on their screen; there is no option for an
   exact position yet.
