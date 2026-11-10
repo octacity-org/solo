@@ -928,4 +928,25 @@ mod tests {
         assert!(view.remove_tab(9));
         assert!(view.pending_close_complete());
     }
+
+    /// A later request for one tab (the strip's ✕ or `requestClose()`)
+    /// replaces a declined window close, so confirming it closes only that
+    /// tab and the unguarded one stays.
+    #[test]
+    fn a_tab_request_replaces_a_pending_window_close() {
+        let mut view = SoloView::new(
+            Arc::new(std::sync::Mutex::new(RetainedTree::new())),
+            None,
+            "Main".to_string(),
+            Arc::new(parking_lot::Mutex::new(SelectionState::default())),
+        );
+        view.add_tab(9, "Guarded".to_string());
+        view.add_tab(10, "Plain".to_string());
+        view.tabs[1].close_guarded = true;
+        assert!(!view.allow_close());
+        // The guard declined; later the user closes just that tab.
+        view.clear_pending_close();
+        assert!(view.remove_tab(9));
+        assert!(!view.pending_close_complete());
+    }
 }

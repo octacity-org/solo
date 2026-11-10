@@ -2698,6 +2698,11 @@ impl SoloRenderer {
                 target,
                 Some("requesting the window close"),
                 move |view, window, cx| {
+                    // A request for one tab replaces a window-level close the
+                    // window's ✕ may have left pending, as the strip's ✕ does:
+                    // otherwise confirming it (Ctrl+W after declining the
+                    // window close) would close the whole window.
+                    view.clear_pending_close();
                     if !view.tab_for(target).close_guarded {
                         return true;
                     }
