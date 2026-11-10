@@ -1136,8 +1136,15 @@ impl TestSoloRenderer {
         }
         #[cfg(not(target_os = "macos"))]
         {
-            in_view(None, move |_view, _window, cx| {
+            // Cancel in the window that owns the menu, as the live renderer
+            // does; a menu opened in a secondary window repaints there.
+            let root = match crate::context_menu_gpui::owner() {
+                Some(owner) => self.window_root_of(Some(owner as f64))?,
+                None => None,
+            };
+            in_view(root, move |_view, window, cx| {
                 if crate::context_menu_gpui::cancel(request_id) {
+                    crate::context_menu_gpui::restore_focus(window, cx);
                     cx.notify();
                 }
             })

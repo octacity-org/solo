@@ -108,6 +108,10 @@ export const hasNativeTestRenderer = NativeTestRenderer != null
  * Mounted Solid tree against the native GPU-backed renderer. While mounted,
  * openWindow() opens offscreen windows on it. Simulation methods that take an
  * `elementId` act in the window that element is painted in.
+ *
+ * Every window stays a window of its own here: unlike the live Linux renderer,
+ * the harness does not merge windows that share a `tabbingIdentifier` into
+ * tabs, so a passing tab test does not prove the live tab strip works.
  */
 export interface SolidNativeTestRoot {
   renderer: SolidNativeTestRendererApi
