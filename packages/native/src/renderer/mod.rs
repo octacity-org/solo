@@ -4496,7 +4496,7 @@ impl SoloRenderer {
         &self,
         element_id: f64,
         script: String,
-    ) -> Result<AsyncTask<crate::native_view::webview::EvaluateJavaScriptTask>> {
+    ) -> Result<AsyncTask<crate::native_view::EvaluateJavaScriptTask>> {
         let element_id = to_element_id(element_id)?;
         if !*self.initialized.lock().unwrap() {
             return Err(Error::from_reason(
@@ -4510,7 +4510,7 @@ impl SoloRenderer {
                     .map_err(|error| Error::from_reason(error.to_string()))
             })
         })??;
-        Ok(crate::native_view::webview::EvaluateJavaScriptTask::new(receiver))
+        Ok(crate::native_view::EvaluateJavaScriptTask::new(receiver))
     }
 
     /// Resolve when the intended macOS WebView document has finished loading.
@@ -4518,7 +4518,7 @@ impl SoloRenderer {
     pub fn wait_webview_ready(
         &self,
         element_id: f64,
-    ) -> Result<AsyncTask<crate::native_view::webview::WebviewReadyTask>> {
+    ) -> Result<AsyncTask<crate::native_view::WebviewReadyTask>> {
         let element_id = to_element_id(element_id)?;
         if !*self.initialized.lock().unwrap() {
             return Err(Error::from_reason(
@@ -4532,7 +4532,7 @@ impl SoloRenderer {
                     .map_err(|error| Error::from_reason(error.to_string()))
             })
         })??;
-        Ok(crate::native_view::webview::WebviewReadyTask::new(receiver))
+        Ok(crate::native_view::WebviewReadyTask::new(receiver))
     }
 
     /// Resolve a pending native WebView navigation request.
@@ -4655,5 +4655,103 @@ impl SoloRenderer {
     #[napi]
     pub fn cancel_context_menu(&self, _request_id: f64) -> Result<()> {
         Ok(())
+    }
+}
+
+/// `<webview>` on Linux: the same capabilities as macOS, routed through the
+/// UI thread's window registry (the view itself lives on the webview
+/// thread; see `native_view/webview_linux.rs`).
+#[cfg(all(not(target_os = "macos"), ui_thread))]
+#[napi]
+impl SoloRenderer {
+    /// Evaluate an expression in a mounted Linux WebView without blocking JS.
+    #[napi(js_name = "evaluateWebviewJavaScript")]
+    pub fn evaluate_webview_javascript(
+        &self,
+        element_id: f64,
+        script: String,
+    ) -> Result<AsyncTask<crate::native_view::EvaluateJavaScriptTask>> {
+        let element_id = to_element_id(element_id)?;
+        if !*self.initialized.lock().unwrap() {
+            return Err(Error::from_reason(
+                "Renderer is not initialized. Call init() first.",
+            ));
+        }
+        let receiver = self.query_window(
+            self.window_of(element_id),
+            Some("evaluating webview JavaScript"),
+            move |_view, _window, _cx| {
+                crate::native_view::with_registry(|registry| {
+                    registry
+                        .evaluate_javascript(element_id, &script)
+                        .map_err(|error| Error::from_reason(error.to_string()))
+                })
+            },
+        )??;
+        Ok(crate::native_view::EvaluateJavaScriptTask::new(
+            receiver,
+        ))
+    }
+
+    /// Resolve when the intended Linux WebView document has finished loading.
+    #[napi]
+    pub fn wait_webview_ready(
+        &self,
+        element_id: f64,
+    ) -> Result<AsyncTask<crate::native_view::WebviewReadyTask>> {
+        let element_id = to_element_id(element_id)?;
+        if !*self.initialized.lock().unwrap() {
+            return Err(Error::from_reason(
+                "Renderer is not initialized. Call init() first.",
+            ));
+        }
+        let receiver = self.query_window(
+            self.window_of(element_id),
+            Some("waiting for the webview"),
+            move |_view, _window, _cx| {
+                crate::native_view::with_registry(|registry| {
+                    registry
+                        .wait_for_ready(element_id)
+                        .map_err(|error| Error::from_reason(error.to_string()))
+                })
+            },
+        )??;
+        Ok(crate::native_view::WebviewReadyTask::new(receiver))
+    }
+
+    /// Resolve a pending native WebView navigation request.
+    ///
+    /// Unlike macOS, the decision is fire-and-forget (the `PolicyDecision`
+    /// lives on the webview thread): an already-decided request is dropped
+    /// rather than reported.
+    #[napi]
+    pub fn allow_webview_navigation(&self, element_id: f64, navigation_id: f64) -> Result<()> {
+        self.decide_webview_navigation(element_id, navigation_id, true)
+    }
+
+    /// Cancel a pending native WebView navigation request.
+    #[napi]
+    pub fn cancel_webview_navigation(&self, element_id: f64, navigation_id: f64) -> Result<()> {
+        self.decide_webview_navigation(element_id, navigation_id, false)
+    }
+
+    fn decide_webview_navigation(
+        &self,
+        element_id: f64,
+        navigation_id: f64,
+        allow: bool,
+    ) -> Result<()> {
+        let element_id = to_element_id(element_id)?;
+        let navigation_id = to_element_id(navigation_id)?;
+        self.query_window(
+            self.window_of(element_id),
+            Some("deciding a webview navigation"),
+            move |_view, _window, _cx| {
+                let _ = crate::native_view::with_registry(|registry| {
+                    registry.decide_navigation(element_id, navigation_id, allow)
+                });
+                Ok::<(), Error>(())
+            },
+        )?
     }
 }

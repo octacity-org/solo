@@ -14,8 +14,6 @@ use std::rc::Rc;
 
 use block2::RcBlock;
 use futures::channel::oneshot;
-use napi::bindgen_prelude::{AsyncTask, Error, Result, Task};
-use napi_derive::napi;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
@@ -27,7 +25,7 @@ use objc2_web_kit::{
     WKNavigationDelegate, WKNavigationType, WKWebView, WKWebViewConfiguration,
 };
 
-use super::{NativeViewFrame, NativeViewInstance};
+use super::{EvaluateReceiver, NativeViewFrame, NativeViewInstance, ReadyReceiver, evaluation_script};
 use crate::renderer::{EventCallback, emit_event_full};
 
 // ── Event names ──────────────────────────────────────────────────────
@@ -45,8 +43,6 @@ const PROP_HTML: &str = "html";
 const PROP_BASE_URL: &str = "baseUrl";
 const PROP_USER_AGENT: &str = "userAgent";
 
-pub(crate) type EvaluateReceiver = oneshot::Receiver<anyhow::Result<String>>;
-pub(crate) type ReadyReceiver = oneshot::Receiver<anyhow::Result<u64>>;
 type EvaluateSender = oneshot::Sender<anyhow::Result<String>>;
 type ReadySender = oneshot::Sender<anyhow::Result<u64>>;
 type DecisionHandler = RcBlock<dyn Fn(WKNavigationActionPolicy)>;
@@ -841,12 +837,10 @@ impl NativeViewInstance for MacWebView {
         }
     }
 
-    #[cfg(target_os = "macos")]
     fn evaluate_javascript(&mut self, script: &str) -> anyhow::Result<EvaluateReceiver> {
         self.evaluate_javascript_inner(script)
     }
 
-    #[cfg(target_os = "macos")]
     fn wait_for_ready(&mut self) -> anyhow::Result<ReadyReceiver> {
         self.wait_for_ready_inner()
     }
@@ -861,7 +855,6 @@ impl NativeViewInstance for MacWebView {
         }
     }
 
-    #[cfg(target_os = "macos")]
     fn decide_navigation(&mut self, navigation_id: u64, allow: bool) -> bool {
         let Some(delegate) = self.delegate.as_ref() else {
             return false;
@@ -905,86 +898,6 @@ impl NativeViewInstance for MacWebView {
         self.last_html = None;
         self.last_base_url = None;
         self.last_user_agent = None;
-    }
-}
-
-/// Wrap an expression in an async function so Promise results are awaited and
-/// serialize only the documented JSON-compatible value space. Returning the
-/// JSON text (rather than an arbitrary Objective-C object) keeps the napi
-/// boundary deterministic and lets the Solid layer validate it once.
-fn evaluation_script(script: &str) -> String {
-    format!(
-        "const value = await ({script}); if (value === undefined) return \"null\"; const seen = new WeakSet(); return JSON.stringify(value, (_key, item) => {{ if (typeof item === \"number\" && !Number.isFinite(item)) throw new Error(\"unsupported non-finite number\"); if (typeof item === \"undefined\" || typeof item === \"function\" || typeof item === \"symbol\" || typeof item === \"bigint\") throw new Error(\"unsupported JavaScript result\"); if (item !== null && typeof item === \"object\") {{ if (seen.has(item)) throw new Error(\"unsupported cyclic result\"); seen.add(item); }} return item; }});"
-    )
-}
-
-/// Napi task that waits for the main-thread WebKit callback without blocking
-/// the JavaScript thread. Destruction/source changes drain the same channel,
-/// so every evaluation promise settles even when WebKit never calls back.
-pub struct EvaluateJavaScriptTask {
-    receiver: Option<EvaluateReceiver>,
-}
-
-/// Napi task that resolves when the intended WebView document has finished
-/// loading. The generation is returned for diagnostics; Solid only exposes the
-/// readiness promise and guards it against unmount/source changes.
-pub struct WebviewReadyTask {
-    receiver: Option<ReadyReceiver>,
-}
-
-impl WebviewReadyTask {
-    pub(crate) fn new(receiver: ReadyReceiver) -> AsyncTask<Self> {
-        AsyncTask::new(Self {
-            receiver: Some(receiver),
-        })
-    }
-}
-
-#[napi]
-impl Task for WebviewReadyTask {
-    type Output = u64;
-    type JsValue = f64;
-
-    fn compute(&mut self) -> Result<Self::Output> {
-        let receiver = self
-            .receiver
-            .take()
-            .ok_or_else(|| Error::from_reason("WebView readiness task was already consumed"))?;
-        futures::executor::block_on(receiver)
-            .map_err(|_| Error::from_reason("WebView readiness channel closed"))?
-            .map_err(|error| Error::from_reason(format!("WebView failed to become ready: {error}")))
-    }
-
-    fn resolve(&mut self, _env: napi::Env, output: Self::Output) -> Result<Self::JsValue> {
-        Ok(output as f64)
-    }
-}
-
-impl EvaluateJavaScriptTask {
-    pub(crate) fn new(receiver: EvaluateReceiver) -> AsyncTask<Self> {
-        AsyncTask::new(Self {
-            receiver: Some(receiver),
-        })
-    }
-}
-
-#[napi]
-impl Task for EvaluateJavaScriptTask {
-    type Output = String;
-    type JsValue = String;
-
-    fn compute(&mut self) -> Result<Self::Output> {
-        let receiver = self
-            .receiver
-            .take()
-            .ok_or_else(|| Error::from_reason("WebView evaluation task was already consumed"))?;
-        futures::executor::block_on(receiver)
-            .map_err(|_| Error::from_reason("WebView evaluation channel closed"))?
-            .map_err(|error| Error::from_reason(format!("WebView JavaScript failed: {error}")))
-    }
-
-    fn resolve(&mut self, _env: napi::Env, output: Self::Output) -> Result<Self::JsValue> {
-        Ok(output)
     }
 }
 

@@ -80,12 +80,37 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 # awaits D-Bus.
 ksni = { version = "0.3", features = ["blocking"] }
 
+# `<webview>`: a WebKitGTK child of the GPUI X11 window (see
+# `native_view/webview_linux.rs`). GTK3 + WebKit 6.0 API (webkit2gtk-4.1);
+# GNOME and Wayland embedding does not exist, so this only builds on Linux.
+# Optional: linking WebKitGTK makes it a runtime dependency of the addon, so
+# only apps that use `<webview>` enable the `webview-linux` feature.
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = { version = "0.18", features = ["v3_24"], optional = true }
+gdkx11 = { version = "0.18", optional = true }
+webkit2gtk = { version = "2.0", features = ["v2_40"], optional = true }
+javascriptcore = { version = "1.1", package = "javascriptcore-rs", optional = true }
+x11-dl = { version = "2", optional = true }
+async-channel = { version = "1", optional = true }
+
 [features]
 # Syntax highlighting is opt-in: its grammars are about 8 MB of the library,
 # and without them `code`, `diff` and markdown code blocks render plain.
 # test-support enables every grammar so the highlighter stays tested.
 default = ["automation"]
 automation = []
+# `<webview>` on Linux embeds WebKitGTK. Opt-in because its libraries become
+# DT_NEEDED entries of the addon, and an app that never renders a webview
+# should not need WebKitGTK installed. Without it the element reports the
+# same `loadError` path the Wayland case uses.
+webview-linux = [
+    "dep:gtk",
+    "dep:gdkx11",
+    "dep:webkit2gtk",
+    "dep:javascriptcore",
+    "dep:x11-dl",
+    "dep:async-channel",
+]
 profiling = ["gpui/profiler"]
 syntax = ["dep:tree-sitter", "dep:tree-sitter-highlight"]
 syntax-rust = ["syntax", "dep:tree-sitter-rust"]
@@ -120,6 +145,7 @@ test-support = [
     "automation",
     "profiling",
     "syntax-all",
+    "webview-linux",
     "gpui/test-support",
     "gpui_macos/test-support",
     "gpui_macos/font-kit",
