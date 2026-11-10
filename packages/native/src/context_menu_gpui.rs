@@ -524,6 +524,14 @@ pub(crate) fn show(
     let (x, y) = position.unwrap_or((bounds.x as f32, (bounds.y + bounds.height) as f32));
     // Opening a second menu cancels the first, as the macOS helper does.
     cancel_all();
+    // The cancelled menu's saved focus was not handed back to anyone, so drop
+    // it: otherwise the next interceptor keystroke would restore focus to an
+    // element behind this menu.
+    RESTORE.with(|slot| {
+        if let Ok(mut slot) = slot.try_borrow_mut() {
+            slot.take();
+        }
+    });
     let (sender, receiver) = channel();
     ACTIVE.with(|active| {
         if let Ok(mut slot) = active.try_borrow_mut() {
