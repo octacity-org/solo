@@ -11,7 +11,7 @@
 //! resolves the JavaScript promise.
 
 use gpui::prelude::*;
-use gpui::{div, px, Context, KeyDownEvent, MouseButton, MouseDownEvent};
+use gpui::{div, px, Context, KeyDownEvent, MouseDownEvent};
 use napi::bindgen_prelude::{AsyncTask, Error, Result, Task};
 use napi_derive::napi;
 use std::cell::RefCell;
@@ -50,6 +50,9 @@ struct OpenMenu {
     /// Focused while the menu is open, so keys reach the app's capture
     /// listener even when the owner element is not focusable.
     focus: gpui::FocusHandle,
+    /// Focused before the menu opened, restored when it closes as AppKit does
+    /// for an `NSMenu`.
+    previous_focus: Option<gpui::FocusHandle>,
     sender: Sender<Option<String>>,
 }
 
@@ -59,6 +62,8 @@ thread_local! {
     // Keystrokes for the open menu, installed on the app so they arrive before
     // key bindings and regardless of which element has focus.
     static INTERCEPTOR: RefCell<Option<gpui::Subscription>> = const { RefCell::new(None) };
+    // Focus to restore on the next repaint-capable caller after a menu settles.
+    static RESTORE: RefCell<Option<gpui::FocusHandle>> = const { RefCell::new(None) };
 }
 
 /// Readable from any thread: automation asks whether keys belong to a menu.
@@ -100,8 +105,23 @@ fn settle(result: Option<String>) {
     if let Some(menu) = menu {
         OPEN.store(false, Ordering::Release);
         clear_interceptor();
+        RESTORE.with(|slot| {
+            if let Ok(mut slot) = slot.try_borrow_mut() {
+                *slot = menu.previous_focus.clone();
+            }
+        });
         // The receiver may already be gone if the app is shutting down.
         let _ = menu.sender.send(result);
+    }
+}
+
+/// Give focus back to the element that had it before the menu opened. Safe to
+/// call when no menu closed; the handle may belong to a destroyed element, in
+/// which case GPUI simply ends up with no focused element.
+pub(crate) fn restore_focus(window: &mut gpui::Window, cx: &mut gpui::App) {
+    let focus = RESTORE.with(|slot| slot.try_borrow_mut().ok().and_then(|mut slot| slot.take()));
+    if let Some(focus) = focus {
+        focus.focus(window, cx);
     }
 }
 
@@ -204,11 +224,14 @@ pub(crate) fn overlay(
         let row = if disabled {
             row
         } else {
-            row            .on_click(cx.listener(move |_view, _: &gpui::ClickEvent, _window, cx| {
-                if choose(index) {
-                    cx.notify();
-                }
-            }))
+            row.on_click(cx.listener(
+                move |_view, _: &gpui::ClickEvent, window, cx| {
+                    if choose(index) {
+                        restore_focus(window, cx);
+                        cx.notify();
+                    }
+                },
+            ))
         };
         rows.push(row.into_any_element());
     }
@@ -241,15 +264,20 @@ pub(crate) fn overlay(
                     .top_0()
                     .left_0()
                     .size_full()
-                    // Outside click dismisses; the panel above keeps its own hits.
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|_view, _: &MouseDownEvent, _window, cx| {
+                    // A menu is modal: the backdrop takes every hit, so the
+                    // click that dismisses it cannot also reach the content
+                    // underneath, as AppKit's NSMenu does.
+                    .occlude()
+                    // Any button dismisses, so a right click outside does not
+                    // slip past the menu either.
+                    .on_any_mouse_down(cx.listener(
+                        |_view, _: &MouseDownEvent, window, cx| {
                             if dismiss() {
+                                restore_focus(window, cx);
                                 cx.notify();
                             }
-                        }),
-                    ),
+                        },
+                    )),
             )
             .child(panel)
             .into_any_element(),
@@ -485,6 +513,7 @@ pub(crate) fn show(
     json: &str,
     tree: &crate::retained_tree::RetainedTree,
     focus: gpui::FocusHandle,
+    previous_focus: Option<gpui::FocusHandle>,
 ) -> Result<Receiver<Option<String>>> {
     let (request_id, owner, items, position) = parse_request(json, tree)?;
     // Release builds record bounds only where something reads them, so an
@@ -506,6 +535,7 @@ pub(crate) fn show(
                 items,
                 highlighted: None,
                 focus,
+                previous_focus,
                 sender,
             });
         }

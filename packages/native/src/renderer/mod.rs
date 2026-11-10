@@ -3748,15 +3748,21 @@ impl SoloRenderer {
             target,
             Some("opening the context menu"),
             move |_view, window, cx| -> Result<std::sync::mpsc::Receiver<Option<String>>> {
+                let previous_focus = window.focused(cx);
                 let focus = cx.focus_handle();
-                let receiver =
-                    crate::context_menu_gpui::show(&json, &tree.lock().unwrap(), focus.clone())?;
+                let receiver = crate::context_menu_gpui::show(
+                    &json,
+                    &tree.lock().unwrap(),
+                    focus.clone(),
+                    previous_focus,
+                )?;
                 focus.focus(window, cx);
                 // Physical keys reach the menu before any key binding or
                 // focused input, whichever element currently has focus.
                 let weak = cx.weak_entity();
-                let subscription = cx.intercept_keystrokes(move |event, _window, cx| {
+                let subscription = cx.intercept_keystrokes(move |event, window, cx| {
                     if crate::context_menu_gpui::handle_key(&event.keystroke.key) {
+                        crate::context_menu_gpui::restore_focus(window, cx);
                         if let Some(view) = weak.upgrade() {
                             view.update(cx, |_view, cx| cx.notify());
                         }
@@ -3779,8 +3785,9 @@ impl SoloRenderer {
         self.query_window(
             WindowTarget::Main,
             Some("cancelling the context menu"),
-            move |_view, _window, cx| {
+            move |_view, window, cx| {
                 if crate::context_menu_gpui::cancel(request_id) {
+                    crate::context_menu_gpui::restore_focus(window, cx);
                     cx.notify();
                 }
             },
