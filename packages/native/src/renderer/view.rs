@@ -92,6 +92,10 @@ pub(crate) struct SoloView {
     /// leave the window open and emit `windowCloseRequested` instead.
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) close_guarded: bool,
+    /// The app draws its own titlebar (`titlebarTransparent`), so the Linux
+    /// client-decoration titlebar stays off.
+    #[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
+    pub(super) titlebar_hidden: bool,
 }
 
 impl SoloView {
@@ -119,7 +123,17 @@ impl SoloView {
             quit_hook: None,
             root: None,
             close_guarded: false,
+            titlebar_hidden: false,
         }
+    }
+
+    /// `titlebarTransparent`: the app paints its own titlebar, so Solo draws
+    /// none around a client-decorated window.
+    #[cfg(any(target_os = "macos", ui_thread))]
+    #[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
+    pub(crate) fn with_titlebar_hidden(mut self, hidden: bool) -> Self {
+        self.titlebar_hidden = hidden;
+        self
     }
 
     /// Paint `root` instead of the tree's main root, sharing `clock`.
@@ -146,11 +160,18 @@ impl SoloView {
         }
         super::emit_event_full(
             &self.event_callback,
-            self.root.unwrap_or(0),
+            self.root_for_events(),
             super::WINDOW_CLOSE_REQUESTED_EVENT,
             |_| {},
         );
         false
+    }
+
+    /// The element window-scoped events are reported on: the window's own
+    /// root, or element 0 for the main window.
+    #[cfg(any(target_os = "macos", ui_thread))]
+    pub(super) fn root_for_events(&self) -> u64 {
+        self.root.unwrap_or(0)
     }
 
     fn root_id(&self, tree: &RetainedTree) -> Option<u64> {
@@ -570,6 +591,13 @@ impl gpui::Render for SoloView {
             }
             None => gpui::Empty.into_any_element(),
         };
+
+        // A client-decorated window has no titlebar of its own, so Solo draws
+        // one; server-decorated windows keep their window manager's chrome.
+        // Wrapping the tree before the frame-reset wrapper below keeps the
+        // titlebar's text after the reset, so `getPaintedText` sees it.
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        let result = super::decorations::decorate(self, result, &theme, cx.button_layout(), window);
 
         // The frame reset must paint BEFORE any text, so it is the first child of
         // the root wrapper. Without it the selection registry accumulates stale

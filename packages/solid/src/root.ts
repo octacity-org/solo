@@ -280,8 +280,8 @@ function createNativeRenderer(
       return
     }
     if (event) {
-      // macOS: AppKit asked to quit. Exit through the Worker so JS `exit`
-      // handlers run before the process ends.
+      // The app is quitting (AppKit on macOS, the GPUI loop ending on Linux).
+      // Exit from JS so its `exit` handlers run before the process ends.
       if (event.elementId === 0 && event.eventType === "applicationQuitRequested") {
         process.exit(0)
       }

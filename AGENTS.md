@@ -156,6 +156,12 @@ resolves.
   wheels are not remapped horizontally.
 - Filled in-flow children use `block_mouse_except_scroll`; plain `occlude`
   is only for absolute/fixed overlays.
+- Client-decorated Linux windows get Solo's titlebar and resize strips from
+  `renderer/decorations.rs`, driven by `Window::window_decorations()`:
+  a `Decorations::Client` window gets them, a server-decorated one is
+  untouched. The wrapper goes *inside* the frame-reset wrapper in
+  `SoloView::render`, because text painted before that reset is dropped from
+  the paint log and `getPaintedText`.
 
 ## Text
 
