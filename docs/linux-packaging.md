@@ -51,10 +51,14 @@ StartupWMClass=dev.solo.tasks
 ```
 
 `StartupWMClass` is the window's `app_id`. GPUI's X11 backend writes it as
-`WM_CLASS`, so it must match the value the app passes as its application
-identifier; otherwise the desktop shows a second, unnamed launcher entry.
+`WM_CLASS`, so it must match the `appId` the app passes to `render()` (or
+`openWindow()`); otherwise the desktop shows a second, unnamed launcher entry.
 Wayland uses the same identifier as `xdg_toplevel.app_id`. Keep it stable
 across releases: desktops remember per-app data by it.
+
+```tsx
+render(() => <TasksApp />, { appId: "dev.solo.tasks", title: "Solo Tasks" })
+```
 
 Launcher actions (`.desktop` `Actions=`) are the closest Linux equivalent of
 a Dock menu. Solo does not generate the file, and an action is just another
@@ -68,12 +72,15 @@ split, and the addon must be the build for the target architecture
 
 ## Recent documents
 
-`addRecentDocument(path)` validates the absolute path and appends a bookmark
-to `$XDG_DATA_HOME/recently-used.xbel` (`~/.local/share/recently-used.xbel`
-when the variable is unset), following the freedesktop recent-files spec. An
-earlier bookmark for the same file is replaced, and the file is rewritten
-atomically because desktop menus may read it at any time. A file that is not
-XBEL is left untouched and the call throws.
+`addRecentDocument(path)` validates the absolute path and adds a bookmark to
+`$XDG_DATA_HOME/recently-used.xbel` (`~/.local/share/recently-used.xbel` when
+the variable is unset), following the freedesktop recent-files spec. A new
+entry carries the file's MIME type and Solo's `bookmark:application`. When
+another app already has a bookmark for the file, that entry is kept whole —
+including its metadata for the other apps — and only its `modified` and
+`visited` timestamps are bumped. The file is rewritten atomically because
+desktop menus may read it at any time. A file that is not XBEL is left
+untouched and the call throws.
 
 Picking a recent document from the desktop menu launches the app with a
 `file://` URL, which arrives through `onOpenUrls` — see

@@ -212,9 +212,11 @@ mod recent_documents {
         };
         let url = url::Url::from_file_path(Path::new(path))
             .map_err(|_| Error::from_reason(format!("Cannot represent {path:?} as a file URL")))?;
-        let updated = upsert(&existing, url.as_str())?;
+        let updated = upsert(&existing, url.as_str(), Path::new(path))?;
         // Replace atomically: a desktop menu may read this file at any time.
-        let temporary = file.with_extension("xbel.solo-tmp");
+        // A per-process suffix keeps two Solo apps adding documents at once
+        // from writing each other's half-finished file.
+        let temporary = file.with_extension(format!("xbel.solo-tmp-{}", std::process::id()));
         std::fs::write(&temporary, updated).map_err(|error| {
             Error::from_reason(format!("Cannot write {}: {error}", temporary.display()))
         })?;
@@ -224,42 +226,138 @@ mod recent_documents {
         })
     }
 
-    /// Insert one bookmark before `</xbel>`, replacing an earlier entry for the
-    /// same URL. Refuses a file that is not XBEL instead of truncating it.
-    fn upsert(xbel: &str, href: &str) -> Result<String> {
+    /// Insert one bookmark before `</xbel>`, or touch the earlier entry for the
+    /// same URL in place. Refuses a file that is not XBEL instead of
+    /// truncating it.
+    ///
+    /// An existing entry is kept whole: its `<info>` carries the MIME type and
+    /// the `bookmark:applications` list of every app that opened the file, so
+    /// replacing the element would erase other applications' history. Only
+    /// `modified` and `visited` are bumped, which is how the recent-files spec
+    /// describes a repeated open. New entries carry Solo's own application
+    /// metadata.
+    fn upsert(xbel: &str, href: &str, path: &Path) -> Result<String> {
         let end = xbel
             .rfind("</xbel>")
             .ok_or_else(|| Error::from_reason("recently-used.xbel has no closing </xbel>"))?;
-        let mut head = xbel[..end].to_string();
-        let marker = format!("<bookmark href=\"{}\"", xml_escape(href));
-        while let Some(start) = head.find(&marker) {
+        let now = timestamp();
+        let escaped_href = xml_escape(href);
+        let marker = format!("<bookmark href=\"{escaped_href}\"");
+        if let Some(start) = xbel[..end].find(&marker) {
             // An entry is either self-closing or ends with `</bookmark>`; both
             // are written by different desktop tools.
-            let Some(open_end) = head[start..].find('>') else {
-                break;
-            };
-            let open_end = start + open_end;
-            let element_end = if head[..open_end].ends_with('/') {
+            let open_end = start
+                + xbel[start..]
+                    .find('>')
+                    .ok_or_else(|| Error::from_reason("recently-used.xbel has an unclosed bookmark"))?;
+            let self_closing = xbel[..open_end].ends_with('/');
+            let element_end = if self_closing {
                 open_end + 1
             } else {
-                match head[open_end..].find("</bookmark>") {
-                    Some(close) => open_end + close + "</bookmark>".len(),
-                    None => break,
-                }
+                open_end
+                    + 1
+                    + xbel[open_end + 1..]
+                        .find("</bookmark>")
+                        .ok_or_else(|| {
+                            Error::from_reason("recently-used.xbel has an unclosed bookmark")
+                        })?
+                    + "</bookmark>".len()
             };
-            let line_start = head[..start].rfind('\n').map(|index| index + 1).unwrap_or(0);
-            let line_end = head[element_end..]
-                .find('\n')
-                .map(|index| element_end + index + 1)
-                .unwrap_or(element_end);
-            head.replace_range(line_start..line_end, "");
+            let mut bookmark = String::from(&xbel[start..element_end]);
+            if self_closing {
+                // Nothing to preserve: expand it so the new entry has metadata.
+                let open_end = bookmark.find('>').unwrap();
+                let tag = set_attribute(&bookmark[..open_end], "modified", &now);
+                let tag = set_attribute(&tag, "visited", &now);
+                let tag = tag.trim_end_matches('/').trim_end().to_string();
+                bookmark = format!("{tag}>{}</bookmark>", metadata(path));
+            } else {
+                let open_end = bookmark.find('>').unwrap();
+                let tag = set_attribute(&bookmark[..open_end], "modified", &now);
+                let tag = set_attribute(&tag, "visited", &now);
+                bookmark.replace_range(..=open_end, &format!("{tag}>"));
+            }
+            return Ok(format!(
+                "{}{}{}",
+                &xbel[..start],
+                bookmark,
+                &xbel[element_end..]
+            ));
         }
-        let now = timestamp();
+        let head = &xbel[..end];
         let entry = format!(
-            "  <bookmark href=\"{}\" added=\"{now}\" modified=\"{now}\" visited=\"{now}\"/>\n",
-            xml_escape(href)
+            "  <bookmark href=\"{escaped_href}\" added=\"{now}\" modified=\"{now}\" visited=\"{now}\">{}\n  </bookmark>\n",
+            metadata(path)
         );
         Ok(format!("{head}{entry}</xbel>\n"))
+    }
+
+    /// Solo's `<info>` for a new bookmark: its MIME type and application entry.
+    fn metadata(path: &Path) -> String {
+        let now = timestamp();
+        let exec = std::env::current_exe()
+            .ok()
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "solo".to_string());
+        let mime = mime_type_for_extension(path);
+        let mime = mime
+            .map(|mime| format!("\n        <mime:mime-type type=\"{mime}\"/>"))
+            .unwrap_or_default();
+        format!(
+            "\n    <info>\n      <metadata owner=\"http://freedesktop.org\">{mime}\n        <bookmark:applications>\n          <bookmark:application name=\"Solo\" exec=\"{}\" count=\"1\" modified=\"{now}\"/>\n        </bookmark:applications>\n      </metadata>\n    </info>\n",
+            xml_escape(&exec)
+        )
+    }
+
+    /// Set an attribute on an opening tag, replacing or appending it.
+    fn set_attribute(tag: &str, name: &str, value: &str) -> String {
+        let needle = format!("{name}=\"");
+        if let Some(start) = tag.find(&needle) {
+            let value_start = start + needle.len();
+            if let Some(length) = tag[value_start..].find('"') {
+                return format!(
+                    "{}{}{}",
+                    &tag[..value_start],
+                    xml_escape(value),
+                    &tag[value_start + length..]
+                );
+            }
+        }
+        let insert = tag.rfind('>').unwrap_or(tag.len());
+        let mut at = insert;
+        if tag[..insert].ends_with('/') {
+            at = insert - 1;
+        }
+        format!(
+            "{} {name}=\"{}\"{}",
+            tag[..at].trim_end(),
+            xml_escape(value),
+            &tag[at..]
+        )
+    }
+
+    /// A rough MIME type from the file name. The recent-files metadata may
+    /// omit it; GTK only uses it to filter and label entries.
+    fn mime_type_for_extension(path: &Path) -> Option<&'static str> {
+        let extension = path
+            .extension()?
+            .to_str()?
+            .to_ascii_lowercase();
+        Some(match extension.as_str() {
+            "txt" | "log" => "text/plain",
+            "md" | "markdown" => "text/markdown",
+            "html" | "htm" => "text/html",
+            "json" => "application/json",
+            "xml" => "application/xml",
+            "pdf" => "application/pdf",
+            "png" => "image/png",
+            "jpg" | "jpeg" => "image/jpeg",
+            "gif" => "image/gif",
+            "svg" => "image/svg+xml",
+            "mp3" => "audio/mpeg",
+            "mp4" => "video/mp4",
+            _ => return None,
+        })
     }
 
     fn xml_escape(text: &str) -> String {
@@ -309,38 +407,58 @@ mod recent_documents {
     mod tests {
         use super::*;
 
+        use std::path::Path;
+
         #[test]
         fn writes_a_bookmark_into_a_fresh_xbel() {
-            let updated = upsert(EMPTY, "file:///tmp/Notes%20%26%20More.md").unwrap();
+            let updated = upsert(
+                EMPTY,
+                "file:///tmp/Notes%20%26%20More.md",
+                Path::new("/tmp/Notes%20%26%20More.md"),
+            )
+            .unwrap();
             assert!(updated.contains("<bookmark href=\"file:///tmp/Notes%20%26%20More.md\""));
             assert!(updated.ends_with("</xbel>\n"));
             assert_eq!(updated.matches("</xbel>").count(), 1);
+            // GTK's recent view filters and labels by the metadata.
+            assert!(updated.contains("<mime:mime-type type=\"text/markdown\"/>"));
+            assert!(updated.contains("<bookmark:application name=\"Solo\""));
         }
 
         #[test]
-        fn replaces_an_existing_bookmark_instead_of_duplicating_it() {
-            let once = upsert(EMPTY, "file:///tmp/a.txt").unwrap();
-            let twice = upsert(&once, "file:///tmp/a.txt").unwrap();
+        fn touches_an_existing_bookmark_without_dropping_its_metadata() {
+            let once = upsert(EMPTY, "file:///tmp/a.txt", Path::new("/tmp/a.txt")).unwrap();
+            let twice = upsert(&once, "file:///tmp/a.txt", Path::new("/tmp/a.txt")).unwrap();
             assert_eq!(twice.matches("href=\"file:///tmp/a.txt\"").count(), 1);
-            assert_eq!(twice.matches("<bookmark").count(), 1);
+            assert_eq!(twice.matches("<bookmark ").count(), 1);
             assert!(twice.contains("file:///tmp/a.txt") && twice.contains("<xbel"));
-            // A desktop tool's open/close entry is replaced the same way.
+            // Another application's metadata is preserved, not rewritten.
             let hand_written = format!(
-                "{}\n  <bookmark href=\"file:///tmp/a.txt\">\n    <info/>\n  </bookmark>\n</xbel>\n",
+                "{}\n  <bookmark href=\"file:///tmp/a.txt\" added=\"2020-01-01T00:00:00Z\" modified=\"2020-01-01T00:00:00Z\" visited=\"2020-01-01T00:00:00Z\">\n    <info>\n      <metadata owner=\"http://freedesktop.org\">\n        <mime:mime-type type=\"text/plain\"/>\n        <bookmark:applications>\n          <bookmark:application name=\"gedit\" exec=\"gedit %u\" count=\"3\" modified=\"2020-01-01T00:00:00Z\"/>\n        </bookmark:applications>\n      </metadata>\n    </info>\n  </bookmark>\n</xbel>\n",
                 &EMPTY[..EMPTY.len() - "</xbel>\n".len()]
             );
-            let updated = upsert(&hand_written, "file:///tmp/a.txt").unwrap();
+            let updated = upsert(&hand_written, "file:///tmp/a.txt", Path::new("/tmp/a.txt"))
+                .unwrap();
             assert_eq!(updated.matches("href=\"file:///tmp/a.txt\"").count(), 1);
-            assert!(!updated.contains("<info/>"));
+            assert!(updated.contains("<bookmark:application name=\"gedit\""));
+            assert!(updated.contains("<mime:mime-type type=\"text/plain\"/>"));
+            // `added` and gedit's own application record keep their timestamps;
+            // only the bookmark's `modified` and `visited` are bumped.
+            assert_eq!(updated.matches("2020-01-01T00:00:00Z").count(), 2);
+            assert!(updated.contains("added=\"2020-01-01T00:00:00Z\""));
+            assert!(updated.contains("name=\"gedit\" exec=\"gedit %u\" count=\"3\" modified=\"2020-01-01T00:00:00Z\""));
         }
 
         #[test]
         fn keeps_unrelated_bookmarks_and_refuses_non_xbel() {
-            let once = upsert(EMPTY, "file:///tmp/a.txt").unwrap();
-            let updated = upsert(&once, "file:///tmp/b&c.txt").unwrap();
+            let once = upsert(EMPTY, "file:///tmp/a.txt", Path::new("/tmp/a.txt")).unwrap();
+            let updated = upsert(&once, "file:///tmp/b&c.txt", Path::new("/tmp/b&c.txt"))
+                .unwrap();
             assert!(updated.contains("file:///tmp/a.txt"));
             assert!(updated.contains("file:///tmp/b&amp;c.txt"));
-            assert!(upsert("not xbel", "file:///tmp/a.txt").is_err());
+            assert!(
+                upsert("not xbel", "file:///tmp/a.txt", Path::new("/tmp/a.txt")).is_err()
+            );
         }
 
         #[test]

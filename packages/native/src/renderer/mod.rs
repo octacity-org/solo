@@ -169,10 +169,12 @@ mod application_lifecycle_tests {
         assert!(defaults.focus && defaults.show && defaults.is_movable && defaults.is_minimizable);
         assert_eq!(defaults.kind, gpui::WindowKind::Normal);
         assert_eq!(defaults.tabbing_identifier, None);
+        assert_eq!(defaults.app_id, None);
         assert!(!defaults.use_display_p3);
         assert!(!defaults.app_owns_titlebar_drag);
 
         let options = WindowOptions {
+            app_id: Some("dev.solo.tasks".into()),
             focus: Some(false),
             show: Some(false),
             kind: Some("floating".into()),
@@ -184,6 +186,7 @@ mod application_lifecycle_tests {
             ..WindowOptions::default()
         };
         let gpui_options = to_gpui_window_options(&options, gpui::Bounds::default(), None);
+        assert_eq!(gpui_options.app_id.as_deref(), Some("dev.solo.tasks"));
         assert!(gpui_options.app_owns_titlebar_drag);
         assert!(!gpui_options.focus && !gpui_options.show);
         assert_eq!(gpui_options.kind, gpui::WindowKind::Floating);
@@ -3254,6 +3257,11 @@ pub(crate) fn window_size(window: &gpui::Window) -> WindowSize {
 #[derive(Debug, Clone)]
 #[napi(object)]
 pub struct WindowOptions {
+    /// Application identifier the desktop groups the window under, such as
+    /// `dev.solo.tasks`. On Linux it becomes X11 `WM_CLASS` and Wayland
+    /// `xdg_toplevel.app_id`, and should match the `.desktop` entry's
+    /// `StartupWMClass`. Ignored on macOS and Windows.
+    pub app_id: Option<String>,
     pub title: Option<String>,
     pub width: Option<f64>,
     pub height: Option<f64>,
@@ -3328,6 +3336,7 @@ fn validate_menu_bar_options(options: &MenuBarOptions) -> Result<()> {
 impl Default for WindowOptions {
     fn default() -> Self {
         Self {
+            app_id: None,
             title: Some("Solo".to_string()),
             width: Some(800.0),
             height: Some(600.0),
@@ -3432,6 +3441,7 @@ fn to_gpui_window_options(
         gpui::WindowBounds::Windowed(bounds)
     };
     gpui::WindowOptions {
+        app_id: options.app_id.clone(),
         window_bounds: Some(window_bounds),
         titlebar: Some(gpui::TitlebarOptions {
             title: Some(title.into()),
