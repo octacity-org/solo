@@ -139,6 +139,14 @@ resolves.
 - `TestSoloRenderer` mirrors this with offscreen windows in
   `VisualTestState::secondary`; `createSolidNativeTestRoot` registers it as
   the `openWindow` host through `setWindowHost`.
+- Linux has no native tabs: windows opened with the same
+  `tabbingIdentifier` join one native window as tabs of it. `SoloView` holds
+  the tabs (`Tab`: root, title, document state, close guard) plus the active
+  index, so every window-scoped call resolves its tab through `WindowTarget`
+  (`tab_for`/`tab_for_mut`) rather than the view as a whole;
+  `renderer/tabs.rs` paints the strip. The registry keeps one entry per tab
+  root, several sharing a `WindowHandle` — `UiWindows::all`/`matching` dedupe
+  by window id, and a native window closing reports every root it hosted.
 
 ## Layout invariants
 
