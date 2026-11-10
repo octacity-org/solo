@@ -1,4 +1,4 @@
-# macOS menu-bar applications
+# Menu-bar applications
 
 Pass `menuBar` to `render()` to keep the application and its JavaScript work
 alive after the last window closes. Without this option, Solo retains its
@@ -17,10 +17,29 @@ const application = render(() => <App />, {
 })
 ```
 
-The image is treated as an AppKit template image, so a monochrome asset adapts
-to light and dark menu bars. The status-item menu contains `Open <title>` and
-`Quit <title>` actions. Open activates the existing window or creates exactly
-one replacement; Quit terminates the native event loop and JavaScript process.
+The status-item menu contains `Open <title>` and `Quit <title>` actions. Open
+activates the existing window or creates exactly one replacement; Quit
+terminates the native event loop and JavaScript process.
+
+The platform decides where the item lives:
+
+| macOS | Linux |
+|---|---|
+| an `NSStatusItem` in the system menu bar | a StatusNotifierItem on the session bus |
+
+On Linux nothing shows unless a status-notifier host is running: KDE Plasma
+supports the item natively, XFCE through its status notifier panel plugin, and
+GNOME through the AppIndicator and KStatusNotifierItem extensions (Fedora and
+Arch package them). Without a host, `render()` throws, because a background
+app whose only entry point is a missing icon could not be reached again — Solo
+does not run hidden.
+
+An icon is required on both platforms. macOS treats it as an AppKit template
+image, so a monochrome asset adapts to light and dark menu bars; the
+StatusNotifierItem specification has no template images, so on Linux the PNG
+is shown as drawn. There is no dark-panel variant yet: use an icon that reads
+on both, or set a different `iconPath` from `configureMenuBar` when your app
+knows the panel's appearance.
 
 Use `configureMenuBar` inside the mounted Solid owner to prepend reactive,
 application-defined controls and update the icon or tooltip at runtime:
@@ -51,6 +70,9 @@ Action items support native disabled and checked states. Status items are
 non-actionable text. Solo keeps its built-in Open and Quit entries after the
 custom items. When the owning component unmounts, it drops the callbacks and
 restores the original icon, tooltip, and default menu.
+
+On Linux, `_` in a label is the menu's access-key marker, so Solo doubles it;
+`Refresh_now` shows as `Refresh_now` and not as `Refreshnow`.
 
 The render root exposes the same lifecycle controls for application UI:
 
@@ -89,5 +111,18 @@ resets: native focus, scroll handles, transient pointer state, and native child
 views such as `WKWebView` instances are recreated. Applications that need to
 restore focus or scroll position should keep those values in Solid state.
 
-This capability is macOS-only. It keeps the process alive after window close;
-it does not survive explicit Quit and does not provide launch-at-login behavior.
+## Getting the window back
+
+Open in the item's menu is enough for an app whose window needs no arguments.
+Apps that want the platform's usual gestures — clicking the Dock icon on
+macOS, clicking the status-item icon on Linux — can listen for the reopen
+event instead:
+
+```ts
+import { onApplicationReopen } from "@solo/solid"
+
+onApplicationReopen(() => root.showWindow())
+```
+
+This capability keeps the process alive after window close; it does not
+survive explicit Quit and does not provide launch-at-login behavior.
