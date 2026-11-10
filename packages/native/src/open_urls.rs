@@ -195,20 +195,10 @@ mod linux {
         let arguments: Vec<String> = std::env::args().skip(1).collect();
         // Development runs a JS entry through Bun or Node: that path is the
         // script, not something the user opened.
-        let script = arguments
-            .first()
-            .filter(|argument| {
-                let path = Path::new(argument);
-                path.is_file()
-                    && matches!(
-                        path.extension().and_then(|extension| extension.to_str()),
-                        Some("js" | "mjs" | "cjs")
-                    )
-            })
-            .map(String::as_str);
+        let script = script_argument(&arguments);
         arguments
             .iter()
-            .filter(|argument| Some(argument.as_str()) != script)
+            .filter(|argument| Some(argument.as_str()) != script.as_deref())
             .filter_map(|argument| argument_url(argument))
             .collect()
     }
@@ -229,17 +219,45 @@ mod linux {
         url::Url::from_file_path(path).ok().map(|url| url.to_string())
     }
 
-    /// The JS entry this process runs, when Bun or Node owns the executable.
-    /// The same detection as `exec_command` uses.
-    fn js_entry() -> Option<PathBuf> {
-        let script = std::env::args().nth(1)?;
-        let path = Path::new(&script);
-        let is_script = path.is_file()
+    /// Whether `executable` is the Bun or Node runtime rather than a compiled
+    /// Solo app. Only a runtime takes a script as its first argument; in a
+    /// compiled binary that argument is something the user passed.
+    fn is_runtime(executable: &Path) -> bool {
+        executable
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .is_some_and(|stem| matches!(stem, "bun" | "node" | "nodejs"))
+    }
+
+    fn current_is_runtime() -> bool {
+        std::env::current_exe().is_ok_and(|executable| is_runtime(&executable))
+    }
+
+    fn is_script(path: &Path) -> bool {
+        path.is_file()
             && matches!(
                 path.extension().and_then(|extension| extension.to_str()),
                 Some("js" | "mjs" | "cjs")
-            );
-        is_script.then(|| path.canonicalize().unwrap_or_else(|_| path.to_path_buf()))
+            )
+    }
+
+    /// The script argument this process runs, when Bun or Node owns the
+    /// executable. A compiled app never has one, so a user's `.js` file stays
+    /// a launch argument. `arguments` excludes `argv[0]`.
+    fn script_argument<'a>(arguments: &'a [String]) -> Option<&'a str> {
+        if !current_is_runtime() {
+            return None;
+        }
+        let first = arguments.first()?;
+        is_script(Path::new(first)).then_some(first.as_str())
+    }
+
+    /// The JS entry this process runs, when Bun or Node owns the executable.
+    /// The same detection as `exec_command` uses.
+    fn js_entry() -> Option<PathBuf> {
+        let arguments: Vec<String> = std::env::args().skip(1).collect();
+        let path = Path::new(script_argument(&arguments)?);
+        Some(path.canonicalize().unwrap_or_else(|_| path.to_path_buf()))
     }
 
     /// A stable name for this build: the executable's stem plus a hash of its
@@ -441,19 +459,12 @@ mod linux {
     /// the runtime would receive the URL as a script path.
     fn exec_command(executable: &Path) -> String {
         let mut command = quote(&executable.display().to_string());
-        let arguments: Vec<String> = std::env::args().collect();
-        if let Some(script) = arguments.get(1) {
+        let arguments: Vec<String> = std::env::args().skip(1).collect();
+        if let Some(script) = script_argument(&arguments) {
             let path = Path::new(script);
-            let is_script = path.is_file()
-                && matches!(
-                    path.extension().and_then(|extension| extension.to_str()),
-                    Some("js" | "mjs" | "cjs")
-                );
-            if is_script {
-                if let Ok(absolute) = path.canonicalize() {
-                    command.push(' ');
-                    command.push_str(&quote(&absolute.display().to_string()));
-                }
+            if let Ok(absolute) = path.canonicalize() {
+                command.push(' ');
+                command.push_str(&quote(&absolute.display().to_string()));
             }
         }
         command
@@ -526,6 +537,14 @@ mod linux {
             assert_eq!(argument_url("relative/path"), None);
             assert_eq!(argument_url("missing").as_deref(), None);
             assert_eq!(argument_url("://nope"), None);
+        }
+
+        #[test]
+        fn only_bun_and_node_take_a_script_argument() {
+            assert!(is_runtime(Path::new("/home/me/.bun/bin/bun")));
+            assert!(is_runtime(Path::new("/usr/bin/node")));
+            assert!(is_runtime(Path::new("/usr/bin/nodejs")));
+            assert!(!is_runtime(Path::new("/opt/solo/SoloTasks")));
         }
 
         #[test]
