@@ -83,10 +83,13 @@ A URL argument is used as is. An absolute path to a file becomes a
 `file://` URL. Flags and the JS entry that Bun or Node runs are ignored.
 
 **Single instance.** The first launch listens on
-`$XDG_RUNTIME_DIR/solo-<name>-<hash>.sock` (a private file in the process's
-temporary directory when `XDG_RUNTIME_DIR` is unset). A second launch sends
-its URLs and paths over that socket and exits with status 0, so there is
-never a second window. A socket left by a crashed instance is taken over.
+`$XDG_RUNTIME_DIR/solo-<name>-<hash>.sock`. When `XDG_RUNTIME_DIR` is unset,
+the socket goes into a per-user `solo-<uid>` directory under the temporary
+directory, created with mode 0700; an existing directory owned by another
+user, or accessible to group or others, is refused instead of used. A second
+launch sends its URLs and paths over the socket and exits with status 0, so
+there is never a second window. A socket left by a crashed instance is taken
+over.
 
 **Registration.**
 
@@ -99,8 +102,10 @@ writes `$XDG_DATA_HOME/applications/solo-<name>-<hash>.desktop` with
 any keys and MIME types already in the file, then runs
 `xdg-mime default` for the scheme. It needs `xdg-mime` (xdg-utils). The
 desktop file's name derives from the executable, so two builds of different
-apps do not collide. Under Bun or Node the `Exec` line repeats the JS entry
-with its absolute path.
+apps do not collide; under Bun or Node, where the executable is the shared
+runtime, it derives from the JS entry instead. That same identity names the
+single-instance socket. The `Exec` line repeats the JS entry with its
+absolute path.
 
 A link opened with `xdg-open` (or `gio open`) reaches the running app once
 `xdg-mime query default x-scheme-handler/myapp` names this entry. `xdg-open`

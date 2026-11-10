@@ -229,14 +229,36 @@ mod linux {
         url::Url::from_file_path(path).ok().map(|url| url.to_string())
     }
 
+    /// The JS entry this process runs, when Bun or Node owns the executable.
+    /// The same detection as `exec_command` uses.
+    fn js_entry() -> Option<PathBuf> {
+        let script = std::env::args().nth(1)?;
+        let path = Path::new(&script);
+        let is_script = path.is_file()
+            && matches!(
+                path.extension().and_then(|extension| extension.to_str()),
+                Some("js" | "mjs" | "cjs")
+            );
+        is_script.then(|| path.canonicalize().unwrap_or_else(|_| path.to_path_buf()))
+    }
+
     /// A stable name for this build: the executable's stem plus a hash of its
     /// path, so two different apps never share a socket or a desktop entry.
+    /// Under Bun or Node the executable is the shared runtime, so the app is
+    /// the JS entry it runs; hashing only the runtime would give every Solo
+    /// app the same identity and let the second launch exit into the first.
     fn app_key() -> String {
         use std::hash::{Hash, Hasher};
         let executable = std::env::current_exe().unwrap_or_default();
+        let script = js_entry();
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         executable.hash(&mut hasher);
-        let stem = executable
+        if let Some(script) = &script {
+            script.hash(&mut hasher);
+        }
+        let stem = script
+            .as_deref()
+            .unwrap_or(&executable)
             .file_stem()
             .and_then(|stem| stem.to_str())
             .unwrap_or("solo");
@@ -247,12 +269,60 @@ mod linux {
         format!("{name}-{:x}", hasher.finish())
     }
 
-    fn socket_path() -> PathBuf {
-        let directory = std::env::var_os("XDG_RUNTIME_DIR")
+    /// The directory the single-instance socket lives in.
+    ///
+    /// `XDG_RUNTIME_DIR` is per-user and private. When it is unset (`su`, some
+    /// ssh sessions, containers) a predictable name directly in the shared
+    /// temporary directory would let another local user bind the socket first
+    /// and receive this user's launch URLs, so create a per-user directory
+    /// that only its owner can enter and refuse to use it otherwise.
+    fn runtime_dir() -> Result<PathBuf> {
+        if let Some(directory) = std::env::var_os("XDG_RUNTIME_DIR")
             .filter(|value| !value.is_empty())
             .map(PathBuf::from)
-            .unwrap_or_else(std::env::temp_dir);
-        directory.join(format!("solo-{}.sock", app_key()))
+        {
+            return Ok(directory);
+        }
+        let directory = std::env::temp_dir().join(format!("solo-{}", unsafe { libc::getuid() }));
+        match std::fs::create_dir(&directory) {
+            Ok(()) => {
+                std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))
+                    .map_err(|error| {
+                        Error::from_reason(format!(
+                            "Cannot restrict {}: {error}",
+                            directory.display()
+                        ))
+                    })?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => {
+                return Err(Error::from_reason(format!(
+                    "Cannot create {}: {error}",
+                    directory.display()
+                )))
+            }
+        }
+        if !is_private_directory(&directory) {
+            return Err(Error::from_reason(format!(
+                "{} is not a private directory owned by this user",
+                directory.display()
+            )));
+        }
+        Ok(directory)
+    }
+
+    fn is_private_directory(directory: &Path) -> bool {
+        use std::os::unix::fs::MetadataExt;
+        let Ok(metadata) = std::fs::symlink_metadata(directory) else {
+            return false;
+        };
+        metadata.file_type().is_dir()
+            && metadata.uid() == unsafe { libc::getuid() }
+            && metadata.mode() & 0o077 == 0
+    }
+
+    fn socket_path() -> Result<PathBuf> {
+        Ok(runtime_dir()?.join(format!("solo-{}.sock", app_key())))
     }
 
     /// True when this process owns the app. A second launch forwards its
@@ -260,7 +330,7 @@ mod linux {
     /// caller can exit without opening a window.
     pub(super) fn claim_single_instance() -> Result<bool> {
         let urls = launch_urls();
-        let path = socket_path();
+        let path = socket_path()?;
         if path.exists() {
             if let Ok(mut stream) = UnixStream::connect(&path) {
                 let request = serde_json::to_vec(&urls)
@@ -289,6 +359,9 @@ mod linux {
             .spawn(move || {
                 for stream in listener.incoming() {
                     let Ok(mut stream) = stream else { continue };
+                    // A client that connects and never closes its write half
+                    // must not block every later deep-link delivery.
+                    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(2)));
                     let mut request = Vec::new();
                     if stream.take(MAX_REQUEST).read_to_end(&mut request).is_err() {
                         continue;
@@ -472,6 +545,21 @@ mod linux {
             assert!(entry.contains("[Desktop Action new]"), "{entry}");
             // A second registration is a no-op.
             assert_eq!(desktop_entry(&entry, Path::new("/opt/notes"), "notes"), entry);
+        }
+
+        #[test]
+        fn the_socket_fallback_directory_must_be_private() {
+            let directory =
+                std::env::temp_dir().join(format!("solo-open-urls-test-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&directory);
+            std::fs::create_dir(&directory).unwrap();
+            std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))
+                .unwrap();
+            assert!(is_private_directory(&directory));
+            std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o755))
+                .unwrap();
+            assert!(!is_private_directory(&directory));
+            let _ = std::fs::remove_dir_all(&directory);
         }
 
         #[test]
