@@ -2828,6 +2828,9 @@ impl SoloRenderer {
 
     /// Mark the window's document as having unsaved changes (the dot in the
     /// close button) or as saved.
+    ///
+    /// macOS draws the dot; Linux has no window property or protocol field for
+    /// it, so the title gains a `*` marker instead (`SoloView::native_title`).
     #[napi]
     pub fn set_window_document_edited(&self, edited: bool, window_id: Option<f64>) -> Result<()> {
         #[cfg(target_os = "macos")]
@@ -2835,15 +2838,28 @@ impl SoloRenderer {
             window.set_window_edited(edited)
         });
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(ui_thread)]
+        {
+            return self.post_to_window(WindowTarget::from_arg(window_id)?, move |view, window, cx| {
+                view.document_edited = edited;
+                refresh_view(window, cx);
+            });
+        }
+
+        #[cfg(not(any(target_os = "macos", ui_thread)))]
         {
             let _ = (edited, window_id);
-            Err(Error::from_reason("Document windows are supported only on macOS"))
+            Err(Error::from_reason(
+                "Document windows are supported only on macOS and Linux",
+            ))
         }
     }
 
     /// Show the file the window edits in its title bar, with its icon and
     /// path menu, or clear it with `None`. The path must be absolute.
+    ///
+    /// Off macOS the path is only kept and read back: no window protocol
+    /// carries it to the window manager.
     #[napi]
     pub fn set_window_document_path(&self, path: Option<String>, window_id: Option<f64>) -> Result<()> {
         let path = document_path(path)?;
@@ -2852,14 +2868,24 @@ impl SoloRenderer {
             window.set_document_path(path.as_deref())
         });
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(ui_thread)]
+        {
+            let path = path.map(|path| path.to_string_lossy().into_owned());
+            return self.post_to_window(WindowTarget::from_arg(window_id)?, move |view, _window, _cx| {
+                view.document_path = path;
+            });
+        }
+
+        #[cfg(not(any(target_os = "macos", ui_thread)))]
         {
             let _ = (path, window_id);
-            Err(Error::from_reason("Document windows are supported only on macOS"))
+            Err(Error::from_reason(
+                "Document windows are supported only on macOS and Linux",
+            ))
         }
     }
 
-    /// Whether AppKit marks the window's document as edited.
+    /// Whether the window's document is marked as edited.
     #[napi]
     pub fn is_window_document_edited(&self, window_id: Option<f64>) -> Result<bool> {
         #[cfg(target_os = "macos")]
@@ -2867,14 +2893,25 @@ impl SoloRenderer {
             Ok(window.isDocumentEdited())
         });
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(ui_thread)]
+        {
+            return self.query_window(
+                WindowTarget::from_arg(window_id)?,
+                Some("the document edited state"),
+                |view, _window, _cx| view.document_edited,
+            );
+        }
+
+        #[cfg(not(any(target_os = "macos", ui_thread)))]
         {
             let _ = window_id;
-            Err(Error::from_reason("Document windows are supported only on macOS"))
+            Err(Error::from_reason(
+                "Document windows are supported only on macOS and Linux",
+            ))
         }
     }
 
-    /// The document path AppKit shows for the window, `None` when unset.
+    /// The file the window edits, `None` when unset.
     #[napi]
     pub fn get_window_document_path(&self, window_id: Option<f64>) -> Result<Option<String>> {
         #[cfg(target_os = "macos")]
@@ -2882,10 +2919,21 @@ impl SoloRenderer {
             Ok(represented_filename(window))
         });
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(ui_thread)]
+        {
+            return self.query_window(
+                WindowTarget::from_arg(window_id)?,
+                Some("the document path"),
+                |view, _window, _cx| view.document_path.clone(),
+            );
+        }
+
+        #[cfg(not(any(target_os = "macos", ui_thread)))]
         {
             let _ = window_id;
-            Err(Error::from_reason("Document windows are supported only on macOS"))
+            Err(Error::from_reason(
+                "Document windows are supported only on macOS and Linux",
+            ))
         }
     }
 

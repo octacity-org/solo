@@ -63,12 +63,12 @@ export interface Root {
   toggleTabOverview: () => void
   /**
    * Mark the window's document as having unsaved changes, shown as a dot in
-   * the close button, or as saved.
+   * the close button on macOS and as a `*` title prefix elsewhere.
    */
   setDocumentEdited: (edited: boolean) => void
   /**
    * Show the file the window edits in the title bar, with its icon and path
-   * menu. The path must be absolute; null clears it.
+   * menu. The path must be absolute; null clears it. Only macOS draws it.
    */
   setDocumentPath: (path: string | null) => void
   /** Explicitly terminate the native application. */
@@ -117,12 +117,12 @@ export interface AppWindow {
   toggleTabOverview: () => void
   /**
    * Mark the window's document as having unsaved changes, shown as a dot in
-   * the close button, or as saved.
+   * the close button on macOS and as a `*` title prefix elsewhere.
    */
   setDocumentEdited: (edited: boolean) => void
   /**
    * Show the file the window edits in the title bar, with its icon and path
-   * menu. The path must be absolute; null clears it.
+   * menu. The path must be absolute; null clears it. Only macOS draws it.
    */
   setDocumentPath: (path: string | null) => void
 }

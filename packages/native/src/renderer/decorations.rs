@@ -96,7 +96,7 @@ fn titlebar(
             .text_color(theme.text_muted)
             .text_size(px(12.5))
             .child(crate::text::chrome_text(
-                SharedString::from(view.window_title.clone()),
+                SharedString::from(view.native_title()),
                 None,
             )),
         DRAG_ID,
