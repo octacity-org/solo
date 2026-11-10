@@ -46,7 +46,7 @@ The returned `AppWindow` controls that window:
 | `size()` | the content size in logical pixels, read from the live window |
 | `resize({ width, height })` | sets the content size `size()` reports |
 | `setTabbingIdentifier(identifier)`, `toggleTabOverview()` | native window tabs; see [Window tabs](#window-tabs) |
-| `setDocumentEdited(edited)`, `setDocumentPath(path)` | unsaved-changes dot and title-bar file icon; see [Document windows](#document-windows) |
+| `setDocumentEdited(edited)`, `setDocumentPath(path)` | unsaved-changes marker and title-bar file icon; see [Document windows](#document-windows) |
 
 Calls other than `close()` throw after the window has closed. The render root
 has the same controls for the main window; see [Window state](#window-state).
@@ -214,14 +214,18 @@ editor.setDocumentPath(null)    // clear the file
 
 The render root has the same two methods for the main window.
 
-- `setDocumentEdited(true)` puts a dot in the close button, as in other
-  macOS editors. It only shows the state: closing still follows
-  `onCloseRequest`, so pair it with a [close request](#close-requests) that
-  asks before discarding changes.
+- `setDocumentEdited(true)` marks unsaved changes. macOS puts a dot in the
+  close button; Linux has no window property or protocol field for it, so the
+  window's title gains a `*` prefix (`*notes.txt`) instead, in the window
+  manager's titlebar and in Solo's own. The marker follows `setTitle`, so the
+  app keeps setting its plain title. It only shows the state: closing still
+  follows `onCloseRequest`, so pair it with a [close request](#close-requests)
+  that asks before discarding changes.
 - `setDocumentPath(path)` shows the file's icon beside the title. Cmd-clicking
   the title opens a menu of the folders that contain it. The path must be
   absolute, or it throws; `null` clears it. The title stays whatever `title`
-  says.
+  says. Off macOS no window protocol carries the path, so it is only kept for
+  `getWindowDocumentPath()`.
 - A custom `trafficLightX`/`trafficLightY` position is kept when either
   changes.
 
@@ -360,8 +364,10 @@ as it does on macOS, with these differences:
   reopens the main window while another window keeps the app running.
 - `setBackground("transparent" | "blurred")` sets the appearance, but GPUI
   paints the app opaque, so both look like `opaque`.
-- `setDocumentEdited` and `setDocumentPath` throw until document windows
-  land on Linux (#100); window tabs and the menu bar are still macOS-only.
+- `setDocumentEdited` marks the title with a `*` (see
+  [Document windows](#document-windows)), and `setDocumentPath` validates and
+  stores the path without drawing anything. Window tabs and the menu bar are
+  still macOS-only.
 
 ## Limits
 

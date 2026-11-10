@@ -151,7 +151,7 @@ renders as plain text.
 | Screens, and opening a window on one | `getScreens()`, `onScreensChanged()`, the `screen` window option | [multiple-windows.md](docs/multiple-windows.md#screens) |
 | Fullscreen, minimize, background and size of an open window | `toggleFullscreen()`, `minimize()`, `setBackground()`, `resize()` | [multiple-windows.md](docs/multiple-windows.md#window-state) |
 | Confirm before a window closes | `onCloseRequest`, `requestClose()` | [multiple-windows.md](docs/multiple-windows.md#close-requests) |
-| Unsaved-changes dot and title-bar file icon | `setDocumentEdited()`, `setDocumentPath()` | [multiple-windows.md](docs/multiple-windows.md#document-windows) |
+| Unsaved-changes marker and title-bar file icon | `setDocumentEdited()`, `setDocumentPath()` | [multiple-windows.md](docs/multiple-windows.md#document-windows) |
 | Native window tabs | `tabbingIdentifier`, `setTabbingIdentifier()`, `toggleTabOverview()` | [multiple-windows.md](docs/multiple-windows.md#window-tabs) |
 | App-drawn titlebars that drag and double-click like the system one | `windowDragRegion`, `appOwnsTitlebarDrag` | [multiple-windows.md](docs/multiple-windows.md#custom-titlebars) |
 | Context menus | `createContextMenu()` | [context-menus.md](docs/context-menus.md) |
