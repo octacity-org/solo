@@ -1,7 +1,7 @@
 # System appearance
 
 `createSystemAppearance()` from `@solo/solid` returns a reactive accessor with
-the current macOS appearance: `"light"` or `"dark"`. Call it inside a mounted
+the system's current appearance: `"light"` or `"dark"`. Call it inside a mounted
 Solid component or owner. The initial value is available synchronously;
 subsequent values come from native GPUI appearance notifications, without polling.
 
@@ -37,9 +37,14 @@ each consumer; disposing the last consumer removes the native observer. Remounti
 reads a fresh snapshot, and events queued for an earlier observer are ignored.
 Light/vibrant-light and dark/vibrant-dark normalize to light and dark respectively.
 
-This API currently requires macOS. Other platforms throw an explicit unsupported
-error; a renderer without the native capability throws as well. It never returns
-a fabricated light-mode fallback and does not change macOS settings.
+On Linux, GPUI reads the desktop's `color-scheme` from xdg-desktop-portal
+through its Wayland backend and notifies subscribers when it changes. The X11
+backend has no appearance feed yet, so under X11 the accessor reports `light`
+and never changes; use an explicit preference there. The Windows backend uses
+the same UI-thread path but is untested.
+
+A renderer without the native capability throws an explicit error. The accessor
+never changes the desktop's settings.
 
 ## Verification
 
