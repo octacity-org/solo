@@ -1775,6 +1775,13 @@ impl SoloRenderer {
         }
     }
 
+    /// The owner of the open context menu, if one is open. Used to route
+    /// menu keys and cancels to the window that paints the menu.
+    #[cfg(all(not(target_os = "macos"), ui_thread))]
+    fn context_menu_owner(&self) -> Option<u64> {
+        crate::context_menu_gpui::owner()
+    }
+
     /// `window_of` for an optional element; none means the main window.
     #[cfg(feature = "automation")]
     fn window_of_arg(&self, element_id: Option<f64>) -> Result<WindowTarget> {
@@ -3371,8 +3378,13 @@ impl SoloRenderer {
             return Ok(false);
         }
         let keys = keys.to_vec();
+        // The menu belongs to the owner's window; notifying the main window
+        // would leave a menu in a secondary window stale.
+        let target = self
+            .context_menu_owner()
+            .map_or(WindowTarget::Main, |id| self.window_of(id));
         self.query_window(
-            WindowTarget::Main,
+            target,
             Some("routing keys to the context menu"),
             move |_view, _window, cx| {
                 let mut handled = false;
@@ -4181,8 +4193,11 @@ impl SoloRenderer {
     #[napi]
     pub fn cancel_context_menu(&self, request_id: f64) -> Result<()> {
         let request_id = to_element_id(request_id)?;
+        let target = self
+            .context_menu_owner()
+            .map_or(WindowTarget::Main, |id| self.window_of(id));
         self.query_window(
-            WindowTarget::Main,
+            target,
             Some("cancelling the context menu"),
             move |_view, window, cx| {
                 if crate::context_menu_gpui::cancel(request_id) {

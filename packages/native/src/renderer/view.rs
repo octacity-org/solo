@@ -605,7 +605,12 @@ impl gpui::Render for SoloView {
             gpui::div()
                 .size_full()
                 .child(result)
-                .children(crate::context_menu_gpui::overlay(&theme, viewport, cx))
+                .children(crate::context_menu_gpui::overlay(
+                    &theme,
+                    viewport,
+                    self.root,
+                    cx,
+                ))
                 .into_any_element()
         };
 
