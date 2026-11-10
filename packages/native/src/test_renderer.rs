@@ -774,7 +774,7 @@ impl TestSoloRenderer {
         &self,
         element_id: f64,
         script: String,
-    ) -> Result<AsyncTask<crate::native_view::webview::EvaluateJavaScriptTask>> {
+    ) -> Result<AsyncTask<crate::native_view::EvaluateJavaScriptTask>> {
         let element_id = to_element_id(element_id)?;
         let root = self.tree.lock().unwrap().window_root_of(element_id);
         let receiver = with_window(root, |cx, window, _view| {
@@ -787,14 +787,14 @@ impl TestSoloRenderer {
             })
             .map_err(|error| Error::from_reason(error.to_string()))?
         })?;
-        Ok(crate::native_view::webview::EvaluateJavaScriptTask::new(receiver))
+        Ok(crate::native_view::EvaluateJavaScriptTask::new(receiver))
     }
 
     #[napi]
     pub fn wait_webview_ready(
         &self,
         element_id: f64,
-    ) -> Result<AsyncTask<crate::native_view::webview::WebviewReadyTask>> {
+    ) -> Result<AsyncTask<crate::native_view::WebviewReadyTask>> {
         let element_id = to_element_id(element_id)?;
         let root = self.tree.lock().unwrap().window_root_of(element_id);
         let receiver = with_window(root, |cx, window, _view| {
@@ -807,7 +807,7 @@ impl TestSoloRenderer {
             })
             .map_err(|error| Error::from_reason(error.to_string()))?
         })?;
-        Ok(crate::native_view::webview::WebviewReadyTask::new(receiver))
+        Ok(crate::native_view::WebviewReadyTask::new(receiver))
     }
 
     #[napi]

@@ -1,9 +1,11 @@
-//! `<webview>` — a native WKWebView embedded in a Solo window.
+//! `<webview>` — a native web view embedded in a Solo window.
 //!
-//! This element does not paint web content. It returns a GPUI placeholder that
+//! The view does not paint web content. It returns a GPUI placeholder that
 //! takes part in normal layout, and hands its post-layout bounds to the
-//! native-view registry, which owns the real WKWebView. GPUI keeps ownership of
-//! layout; AppKit keeps ownership of pixels and input.
+//! native-view registry, which owns the real native view: a WKWebView (an
+//! AppKit NSView) on macOS, or a WebKitGTK child of the GPUI X11 window on
+//! Linux. GPUI keeps ownership of layout; AppKit/WebKit keep ownership of
+//! pixels and input.
 //!
 //! ```text
 //! <webview url=…>
@@ -11,9 +13,10 @@
 //!     → WebviewPlaceholder (gpui::Element: layout + bounds capture)
 //!       → prepaint(bounds)
 //!         → native_view::with_registry(… update_frame …)
-//!           → WKWebView.setFrame:
+//!           → NSView.setFrame: (macOS) / XMoveResizeWindow (Linux)
 //! ```
-//!
+use std::cell::RefCell;
+
 use gpui::prelude::*;
 use gpui::{
     App, Bounds, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement, LayoutId,
@@ -21,6 +24,7 @@ use gpui::{
 };
 
 use crate::custom_elements::{CustomElement, CustomElementFactory, CustomRenderContext};
+#[cfg(target_os = "macos")]
 use crate::native_view::to_native_frame;
 use crate::renderer::EventCallback;
 
@@ -40,6 +44,40 @@ fn placeholder_style() -> Style {
     style
 }
 
+thread_local! {
+    /// Elements that already reported their unsupported platform, so a
+    /// persistent Wayland window does not spam an event every frame.
+    static REPORTED_UNSUPPORTED: RefCell<std::collections::HashSet<u64>> =
+        RefCell::new(std::collections::HashSet::new());
+}
+
+/// The error for a Wayland window, delivered as the `loadError` event (once
+/// per element) and the log, since a placeholder cannot throw from inside a
+/// draw.
+pub(crate) const WAYLAND_ERROR: &str =
+    "<webview> is not supported on Wayland; it embeds a WebKitGTK window, which needs X11";
+
+/// The error for a Linux build without the opt-in `webview-linux` feature:
+/// WebKitGTK is not linked into the addon, so the element cannot mount.
+#[cfg(all(target_os = "linux", not(feature = "webview-linux")))]
+pub(crate) const WEBKIT_FEATURE_ERROR: &str =
+    "<webview> needs the webview-linux Cargo feature; rebuild the native addon with --features webview-linux";
+
+/// The unsupported-platform error, delivered as the `loadError` event (once
+/// per element) and the log, since a placeholder cannot throw from inside a
+/// draw.
+fn report_unsupported(element_id: u64, callback: &Option<EventCallback>, message: &str) {
+    let first = REPORTED_UNSUPPORTED.with(|reported| reported.borrow_mut().insert(element_id));
+    if !first {
+        return;
+    }
+    log::error!("webview: {message}");
+    let message = message.to_string();
+    crate::renderer::emit_event_full(callback, element_id, "loadError", move |payload| {
+        payload.value = Some(message);
+    });
+}
+
 /// The GPUI element that occupies layout space for a WKWebView.
 ///
 /// Created fresh by `WebviewElement::render` every frame and discarded after
@@ -54,26 +92,42 @@ struct WebviewPlaceholder {
     callback: Option<EventCallback>,
 }
 
+/// Which kind of host window GPUI gave this placeholder.
+///
+/// macOS mounts under the `GPUIView` (an `NSView *`) above GPUI's layer.
+/// Linux mounts a WebKitGTK child under the X window: its XID is server-wide,
+/// so the webview thread can parent a child under it on its own display —
+/// `mount` is handed it as an opaque pointer and copies the id straight out.
+/// A Wayland window has no such handle: embedding another toolkit's surface
+/// is impossible there, so the placeholder reports an error instead of
+/// mounting anything.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Host {
+    AppKit(*mut std::ffi::c_void),
+    X11(u64),
+    Wayland,
+    Unavailable,
+}
+
 impl WebviewPlaceholder {
-    /// Resolve the host NSView for Solo's GPUI window.
+    /// Resolve the host for Solo's GPUI window.
     ///
-    /// Uses the public `HasWindowHandle` impl rather than reaching into GPUI's
-    /// private `MacWindow`, so this needs no changes to the pinned GPUI fork.
-    /// The handle is `GPUIView`, GPUI's own NSView subclass.
-    ///
-    /// The trait method has to be called explicitly: `Window` has an inherent
-    /// `window_handle()` that returns GPUI's own `AnyWindowHandle` and would
-    /// otherwise shadow it.
-    fn host_view(window: &Window) -> *mut std::ffi::c_void {
+    /// Uses the public `HasWindowHandle` impl rather than reaching into
+    /// GPUI's private window types, so this needs no changes to the pinned
+    /// GPUI fork. The trait method has to be called explicitly: `Window` has
+    /// an inherent `window_handle()` that returns GPUI's own
+    /// `AnyWindowHandle` and would otherwise shadow it.
+    fn host(window: &Window) -> Host {
         use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
         let Ok(handle) = HasWindowHandle::window_handle(window) else {
-            log::warn!("webview: window has no native handle yet");
-            return std::ptr::null_mut();
+            return Host::Unavailable;
         };
         match handle.as_raw() {
-            RawWindowHandle::AppKit(appkit) => appkit.ns_view.as_ptr(),
-            _ => std::ptr::null_mut(),
+            RawWindowHandle::AppKit(appkit) => Host::AppKit(appkit.ns_view.as_ptr()),
+            RawWindowHandle::Xcb(xcb) => Host::X11(xcb.window.get() as u64),
+            RawWindowHandle::Wayland(_) => Host::Wayland,
+            _ => Host::Unavailable,
         }
     }
 }
@@ -115,38 +169,89 @@ impl Element for WebviewPlaceholder {
         window: &mut Window,
         _: &mut App,
     ) -> Self::PrepaintState {
-        // The WKWebView is an AppKit subview that swallows mouse events in its
-        // own rect. Claim the same rect in GPUI's hit-test bookkeeping so a
-        // click over the webview is not routed to an element underneath.
+        // The native view swallows mouse events in its own rect. Claim the
+        // same rect in GPUI's hit-test bookkeeping so a click over the
+        // webview is not routed to an element underneath.
         window.insert_hitbox(bounds, gpui::HitboxBehavior::Normal);
 
-        let content_height = window.viewport_size().height;
-        let frame = to_native_frame(
-            f32::from(bounds.origin.x),
-            f32::from(bounds.origin.y),
-            f32::from(bounds.size.width),
-            f32::from(bounds.size.height),
-            f32::from(content_height),
-        );
-
-        let host = Self::host_view(window);
-        if host.is_null() {
+        let host = Self::host(window);
+        let element_id = self.element_id;
+        let callback = self.callback.clone();
+        // A Linux addon built without WebKitGTK cannot embed a view at all;
+        // say so once instead of failing to link the app.
+        #[cfg(all(target_os = "linux", not(feature = "webview-linux")))]
+        if matches!(host, Host::X11(_)) {
+            report_unsupported(element_id, &callback, WEBKIT_FEATURE_ERROR);
             return;
         }
+        match host {
+            Host::Wayland => {
+                report_unsupported(element_id, &callback, WAYLAND_ERROR);
+                return;
+            }
+            Host::Unavailable => {
+                log::warn!("webview: window has no native handle yet");
+                return;
+            }
+            Host::AppKit(_) | Host::X11(_) => {}
+        }
 
-        let element_id = self.element_id;
+        // macOS: AppKit frames are bottom-left points, so flip. Linux: X is
+        // top-left physical pixels, so scale and keep the origin as is.
+        let frame = {
+            let x = f32::from(bounds.origin.x);
+            let y = f32::from(bounds.origin.y);
+            let width = f32::from(bounds.size.width);
+            let height = f32::from(bounds.size.height);
+            #[cfg(target_os = "macos")]
+            {
+                let content_height = window.viewport_size().height;
+                to_native_frame(x, y, width, height, f32::from(content_height))
+            }
+            #[cfg(target_os = "linux")]
+            {
+                let scale = window.scale_factor();
+                crate::native_view::NativeViewFrame {
+                    x: x * scale,
+                    y: y * scale,
+                    width: width * scale,
+                    height: height * scale,
+                }
+            }
+        };
+
+        // On Linux the host pointer carries the parent X window ID (see
+        // `native_view/webview_linux.rs`): the mount reads it immediately.
+        let host_ptr = match host {
+            Host::AppKit(ptr) => ptr,
+            Host::X11(id) => id as *mut std::ffi::c_void,
+            Host::Wayland | Host::Unavailable => std::ptr::null_mut(),
+        };
+
         let url = self.url.clone();
         let html = self.html.clone();
         let base_url = self.base_url.clone();
         let user_agent = self.user_agent.clone();
         let intercept_navigation = self.intercept_navigation;
-        let callback = self.callback.clone();
 
         crate::native_view::with_registry(|registry| {
-            registry.ensure_mounted(element_id, host, || {
-                Box::new(crate::native_view::webview::MacWebView::new(
-                    element_id, callback,
-                ))
+            registry.ensure_mounted(element_id, host_ptr, || {
+                #[cfg(target_os = "macos")]
+                {
+                    Box::new(crate::native_view::webview::MacWebView::new(
+                        element_id, callback,
+                    )) as Box<dyn crate::native_view::NativeViewInstance>
+                }
+                #[cfg(all(target_os = "linux", feature = "webview-linux"))]
+                {
+                    Box::new(crate::native_view::webview::LinuxWebView::new(
+                        element_id, callback,
+                    )) as Box<dyn crate::native_view::NativeViewInstance>
+                }
+                #[cfg(all(target_os = "linux", not(feature = "webview-linux")))]
+                {
+                    unreachable!("a webview without the webview-linux feature returned above")
+                }
             });
             registry.update_frame(element_id, frame);
             registry.set_navigation_interception(element_id, intercept_navigation);

@@ -103,7 +103,10 @@ jobs:
             libssl-dev \
             libzstd-dev \
             libvulkan1 \
-            vulkan-validationlayers
+            vulkan-validationlayers \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libjavascriptcoregtk-4.1-dev
 
       - name: Install dependencies
         working-directory: .
@@ -158,6 +161,8 @@ jobs:
             libzstd-dev \
             libvulkan1 \
             mesa-vulkan-drivers \
+            libwebkit2gtk-4.1-dev \
+            libjavascriptcoregtk-4.1-dev \
             libegl1 \
             libegl-mesa0 \
             xvfb

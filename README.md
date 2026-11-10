@@ -111,7 +111,8 @@ starts the native loop, and `index.app.js`, your app.
 **Elements.** `View`, `Text`, `Button` and `VirtualList` components, plus the
 native elements `div`, `text`, `img`, `svg`, `input`, `textarea`,
 `anchored`, `code`, `diff` (unified patches), `markdown` (GFM),
-`virtual-list` and `webview` (macOS only, a real WKWebView).
+`virtual-list` and `webview` (a real WKWebView on macOS, a WebKitGTK child
+window on Linux/X11).
 
 **Styling.** A CSS-like subset (`StyleDesc`) applied natively: flexbox,
 borders, opacity, hover and active states, scrolling, and text metrics.
@@ -258,7 +259,10 @@ cd packages/native && cargo test --features test-support --lib --test layout_pro
   multiple windows and the application controls that GPUI implements work on
   macOS and Linux; window tabs, document windows, menus and Dock integration
   are still macOS-only.
-- `<webview>` is macOS-only; there is no WebView2 or WebKitGTK backend.
+- `<webview>` is WKWebView on macOS and a WebKitGTK child window on
+  Linux/X11 only. There is no WebView2 backend, and embedding another
+  toolkit's surface is impossible on Wayland, so Linux on Wayland shows a
+  clear error instead.
 - Native code has no hot reload: Rust changes need a rebuild and restart.
 - Solid is the only supported frontend. React support was removed.
 
@@ -274,7 +278,7 @@ cd packages/native && cargo test --features test-support --lib --test layout_pro
 |---|---|
 | [`examples/solid-counter`](examples/solid-counter) | The smallest app |
 | [`examples/tasks`](examples/tasks) | A task manager: store state, keyed lists, scrolling, input, automation tests, packaging |
-| [`examples/webview-preview`](examples/webview-preview) | A WKWebView beside a native pane (macOS) |
+| [`examples/webview-preview`](examples/webview-preview) | A native web view beside a native pane (macOS, Linux/X11) |
 
 GPUI comes from a pinned revision of upstream `zed-industries/zed`; see
 [docs/gpui-dependency.md](docs/gpui-dependency.md).
