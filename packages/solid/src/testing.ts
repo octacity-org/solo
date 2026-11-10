@@ -1,9 +1,11 @@
-/// macOS-only GPU-backed test harness for @solo/solid.
+/// GPU-backed test harness for @solo/solid.
 ///
 /// Mounts Solid trees through the native TestSoloRenderer, so tests
-/// exercise the same GPUI pipeline as production. On non-macOS builds hasNativeTestRenderer is false and the
-/// suites using this harness skip themselves; headless coverage comes from
-/// MockNativeRenderer-based tests instead.
+/// exercise the same GPUI pipeline as production: Metal on macOS, wgpu
+/// (Vulkan) on Linux. Building the native module without `test-support`
+/// leaves hasNativeTestRenderer false, and the suites using this harness
+/// skip themselves; headless coverage then comes from MockNativeRenderer-
+/// based tests instead.
 
 import type { EventPayload } from "@solo/native"
 import { flush as flushSolid } from "solid-js"
@@ -106,6 +108,10 @@ export const hasNativeTestRenderer = NativeTestRenderer != null
  * Mounted Solid tree against the native GPU-backed renderer. While mounted,
  * openWindow() opens offscreen windows on it. Simulation methods that take an
  * `elementId` act in the window that element is painted in.
+ *
+ * Every window stays a window of its own here: unlike the live Linux renderer,
+ * the harness does not merge windows that share a `tabbingIdentifier` into
+ * tabs, so a passing tab test does not prove the live tab strip works.
  */
 export interface SolidNativeTestRoot {
   renderer: SolidNativeTestRendererApi

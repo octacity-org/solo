@@ -600,7 +600,10 @@ describeNative("events", () => {
   })
 
   describe("window drag regions", () => {
-    it("keeps the region's own mouse handlers working through a press and drag", () => {
+    // GPUI's test window leaves `start_window_move` unimplemented (it panics),
+    // and a Linux drag region does call it for an injected press-and-drag.
+    // Window drag regions themselves are covered on macOS (#89).
+    it.skipIf(process.platform === "linux")("keeps the region's own mouse handlers working through a press and drag", () => {
       const received: string[] = []
 
       testRoot.render(() => (
