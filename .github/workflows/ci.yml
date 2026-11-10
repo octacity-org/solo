@@ -158,6 +158,8 @@ jobs:
             libzstd-dev \
             libvulkan1 \
             mesa-vulkan-drivers \
+            libegl1 \
+            libegl-mesa0 \
             xvfb
 
       - name: Cache cargo
@@ -206,14 +208,6 @@ jobs:
           SOLO_SCREENSHOT_DIR: ${{ github.workspace }}/examples/tasks/screenshots
         working-directory: examples/tasks
         run: xvfb-run -a --server-args="-screen 0 1280x1024x24" bun run test
-
-      - name: Upload automation screenshots
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-automation-screenshots
-          path: examples/tasks/screenshots/
-          if-no-files-found: ignore
 
   test:
     name: test
