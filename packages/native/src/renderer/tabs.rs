@@ -75,6 +75,9 @@ fn entry(
     let close = cx.listener(move |view: &mut SoloView, _event: &ClickEvent, window, cx| {
         // The tab under the button would otherwise select it too.
         cx.stop_propagation();
+        // Closing one tab is not the window-level close a previous ✕ may have
+        // started, so do not let this confirmation finish that one.
+        view.clear_pending_close();
         // A tab that guards its close asks instead of closing, as its native
         // window would.
         if view.request_close(super::WindowTarget::Root(root)) {

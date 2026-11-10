@@ -225,8 +225,10 @@ openWindow(() => <Settings />, { title: "Settings" }) // its own window
   closing the last tab closes the native window.
 - The native window's own close button closes the window and all of its
   tabs, so it first asks every guarded tab's `onCloseRequest`, not only the
-  selected one. If any tab refuses, the window stays open. The strip's ✕
-  always closes just its own tab.
+  selected one. If any tab refuses, the window stays open. Confirming the
+  last prompt closes the whole window, including tabs that never asked, so
+  approving every prompt takes one click. The strip's ✕ always closes just
+  its own tab, and replaces a pending window close.
 - `setTabbingIdentifier` decides which windows join later; clearing it keeps
   the tabs the window already has, because moving a tab out into its own
   window is not implemented yet.

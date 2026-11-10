@@ -1881,7 +1881,10 @@ pub(super) fn close_tab_on_ui(
     };
     release_window_subtree(&ids);
     emit_event_full(&view.event_callback, root, WINDOW_CLOSED_EVENT, |_| {});
-    if view.tabs.is_empty() {
+    // The window's close button asked every guarded tab; confirming the last
+    // one closes the whole window, so any unguarded tabs it also hosts go with
+    // it instead of requiring a second click.
+    if view.tabs.is_empty() || view.pending_close_complete() {
         window.remove_window();
     } else {
         refresh_view(window, cx);

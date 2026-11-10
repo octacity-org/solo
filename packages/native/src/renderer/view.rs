@@ -155,6 +155,11 @@ pub(crate) struct SoloView {
     /// client-decoration titlebar stays off.
     #[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
     pub(super) titlebar_hidden: bool,
+    /// The window's close button asked its guarded tabs: the native window
+    /// closes once the last of them has, including any unguarded tabs it also
+    /// hosts. Cleared when a later close request replaces it.
+    #[cfg_attr(not(ui_thread), allow(dead_code))]
+    close_pending: std::cell::Cell<bool>,
 }
 
 impl SoloView {
@@ -182,6 +187,7 @@ impl SoloView {
             system_appearance_subscription: None,
             quit_hook: None,
             titlebar_hidden: false,
+            close_pending: std::cell::Cell::new(false),
         }
     }
 
@@ -282,7 +288,36 @@ impl SoloView {
                 |_| {},
             );
         }
+        // Remember the intent: confirming every prompt closes the window with
+        // whatever tabs it still hosts, not just the one whose prompt came
+        // last. A new request recomputes it.
+        self.close_pending.set(guarded);
         !guarded
+    }
+
+    /// Whether a window-level close is waiting for its guarded tabs.
+    #[cfg(any(ui_thread, test))]
+    pub(super) fn pending_close(&self) -> bool {
+        self.close_pending.get()
+    }
+
+    /// Drop a window-level close intent, e.g. when the user asks for one tab
+    /// specifically instead.
+    #[cfg(any(ui_thread, test))]
+    pub(super) fn clear_pending_close(&self) {
+        self.close_pending.set(false);
+    }
+
+    /// After a tab closed: whether this completes a pending window close,
+    /// because every tab the close asked is gone and only unguarded tabs
+    /// remain. The window must then close as a whole.
+    #[cfg(any(ui_thread, test))]
+    pub(super) fn pending_close_complete(&self) -> bool {
+        if !self.close_pending.get() || self.tabs.iter().any(|tab| tab.close_guarded) {
+            return false;
+        }
+        self.close_pending.set(false);
+        true
     }
 
     /// Ask the tab `target` addresses to close: a guarded tab stays open and
@@ -869,5 +904,28 @@ mod tests {
         view.tabs[1].close_guarded = true;
         // Beta is selected; Alpha guarding still keeps the window open.
         assert!(!view.allow_close());
+    }
+
+    /// Confirming the prompt closes the whole window once no guard is left,
+    /// even when it also hosts tabs that never asked.
+    #[test]
+    fn confirming_the_last_guard_completes_the_window_close() {
+        let mut view = SoloView::new(
+            Arc::new(std::sync::Mutex::new(RetainedTree::new())),
+            None,
+            "Alpha".to_string(),
+            Arc::new(parking_lot::Mutex::new(SelectionState::default())),
+        );
+        view.add_tab(9, "Alpha".to_string());
+        view.add_tab(10, "Beta".to_string());
+        view.tabs[1].close_guarded = true;
+        assert!(!view.allow_close());
+        assert!(view.pending_close());
+        // Beta never asked, so its remaining open tab keeps the window open.
+        assert!(view.remove_tab(10));
+        assert!(!view.pending_close_complete());
+        // Alpha confirmed and closed, the only guard is gone.
+        assert!(view.remove_tab(9));
+        assert!(view.pending_close_complete());
     }
 }
