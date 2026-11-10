@@ -1,6 +1,6 @@
 import * as native from "@solo/native"
 
-/** Receives the URLs of one open request, in the order macOS sent them. */
+/** Receives the URLs of one open request, in the order the system sent them. */
 export type OpenUrlsListener = (urls: string[]) => void
 
 const listeners = new Set<OpenUrlsListener>()
@@ -20,9 +20,9 @@ export function receiveOpenUrls(urls: readonly string[] | null | undefined): voi
 }
 
 /**
- * Receive the URLs macOS asks the app to open: links in a custom scheme the
- * app declares (`myapp://…`), and files opened with the app or chosen from
- * its recent documents, as `file://` URLs. Returns a function that stops
+ * Receive the URLs the system asks the app to open: links in a custom scheme
+ * the app declares (`myapp://…`), and files opened with the app or chosen
+ * from its recent documents, as `file://` URLs. Returns a function that stops
  * listening.
  *
  * URLs that arrived before the first listener, including the one that
@@ -45,11 +45,12 @@ export function onOpenUrls(listener: OpenUrlsListener): () => void {
 }
 
 /**
- * Make this app the default handler for `scheme`, given without `://`
- * (macOS 12+). The app must run from an installed bundle with an identifier,
- * and should also declare the scheme under `CFBundleURLTypes` in its
- * `Info.plist`, which is what lets macOS route the scheme to it at all.
- * Rejects an invalid scheme name or one the system owns, such as `https`.
+ * Make this app the default handler for `scheme`, given without `://`.
+ * macOS: needs 12+, an installed bundle with an identifier, and the scheme
+ * declared under `CFBundleURLTypes` in `Info.plist`. Linux: writes a
+ * freedesktop `.desktop` entry claiming the scheme and runs `xdg-mime
+ * default`. Rejects an invalid scheme name or one the system owns, such as
+ * `https`.
  */
 export async function registerUrlScheme(scheme: string): Promise<void> {
   if (typeof scheme !== "string") throw new TypeError("URL scheme must be a string")

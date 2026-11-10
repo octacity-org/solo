@@ -247,7 +247,7 @@ cd packages/native && cargo test --features test-support --lib --test layout_pro
 | Platform | Status |
 |---|---|
 | macOS | Primary. Windows, input, desktop APIs, `<webview>`, live automation and the GPU test renderer. |
-| Linux (Wayland, X11) | Windows, input, clipboard, browser/file actions, the freedesktop Trash and recent-document list, portal file dialogs, in-window alerts, keyboard layout, scroll-bar preference and compiled-binary restart work. System appearance follows the desktop on Wayland. Live automation works; screenshots need X11. Window state (maximize, fullscreen, minimize, resize, background), screens and in-window context menus work; window tabs, the menu bar and Dock integration still report that they are macOS-only. |
+| Linux (Wayland, X11) | Windows, input, clipboard, browser/file actions, the freedesktop Trash and recent-document list, portal file dialogs, in-window alerts, keyboard layout, scroll-bar preference and compiled-binary restart work. System appearance follows the desktop on Wayland. Live automation works; screenshots need X11. Window state (maximize, fullscreen, minimize, resize, background), screens and in-window context menus work, and deep links arrive through launch arguments, a Unix socket for a second launch, and a `.desktop` entry written by `registerUrlScheme`; window tabs, the menu bar and Dock integration still report that they are macOS-only. |
 | Windows | Builds in CI. Untested. |
 
 ## Current boundaries

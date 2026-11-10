@@ -1851,6 +1851,11 @@ impl SoloRenderer {
         if *self.initialized.lock().unwrap() {
             return Err(Error::from_reason("Renderer is already initialized"));
         }
+        // A second launch forwards its URLs and paths to the running app and
+        // exits, so there is never more than one window per app.
+        if !crate::open_urls::claim_single_instance()? {
+            std::process::exit(0);
+        }
 
         let title = options.title.clone().unwrap_or_else(|| "Solo".to_string());
         let window_options = options.clone();
@@ -1940,6 +1945,9 @@ impl SoloRenderer {
         *self.ui_commands.lock().unwrap() = Some(command_sender);
         *self.initialized.lock().unwrap() = true;
         self.event_callback.lock().unwrap().take();
+        // URLs that launched the app are queued behind init, so the JS side
+        // has finished `init` before they arrive.
+        crate::open_urls::deliver_pending();
         Ok(())
     }
 
