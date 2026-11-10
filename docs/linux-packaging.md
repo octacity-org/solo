@@ -72,12 +72,24 @@ split, and the addon must be the build for the target architecture
 
 ## Web views
 
-A Linux app that uses `<webview>` links against GTK 3 and WebKitGTK
-(libwebkit2gtk-4.1, which also pulls in JavaScriptCoreGTK). Host machines
-need those runtime libraries installed; development machines need the
-`-devel` packages (`webkit2gtk4.1-devel` on Fedora, `libwebkit2gtk-4.1-dev`
-on Debian/Ubuntu, `webkit2gtk4.1` on Arch). See
-[webview.md](webview.md#platform-support) for the X11/Wayland boundary.
+`<webview>` on Linux is behind the opt-in `webview-linux` Cargo feature, so
+an app that never renders one does not depend on GTK or WebKitGTK at all:
+those libraries become `DT_NEEDED` entries of the addon when the feature is
+on, and the addon fails to load on a machine without them. Build such an app
+with
+
+```sh
+cd packages/native
+bun run build:release -- --features webview-linux
+```
+
+(it links against GTK 3 and WebKitGTK, `libwebkit2gtk-4.1`, which also pulls
+in JavaScriptCoreGTK). Host machines need those runtime libraries installed;
+development machines need the `-devel` packages (`webkit2gtk4.1-devel` on
+Fedora, `libwebkit2gtk-4.1-dev` on Debian/Ubuntu, `webkit2gtk4.1` on Arch).
+Without the feature, `<webview>` reports a `loadError` naming the feature
+instead of mounting. See [webview.md](webview.md#platform-support) for the
+X11/Wayland boundary.
 
 ## Status item
 

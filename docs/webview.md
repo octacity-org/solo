@@ -38,9 +38,11 @@ on macOS. Solo's host installs a controller the app can also drive directly
 ## Platform support
 
 - macOS: WKWebView as an AppKit subview.
-- Linux (X11): a WebKitGTK child window. GTK runs on its own thread, so
-  `<webview>` adds the system libraries `gtk-3`, `libwebkit2gtk-4.1` and
-  the JavaScriptCore runtime (see [linux-packaging.md](linux-packaging.md)).
+- Linux (X11): a WebKitGTK child window. GTK runs on its own thread, so a
+  build that includes `<webview>` links the system libraries `gtk-3`,
+  `libwebkit2gtk-4.1` and the JavaScriptCore runtime; the `webview-linux`
+  Cargo feature is opt-in so other apps need none of them. Builds without
+  it report a `loadError` (see [linux-packaging.md](linux-packaging.md)).
 - Wayland: embedding another toolkit's surface is not possible, and WPE
   off-screen rendering is not implemented. The placeholder reports a clear
   error via `onLoadError` instead of painting nothing.

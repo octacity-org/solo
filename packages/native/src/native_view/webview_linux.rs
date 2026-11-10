@@ -65,14 +65,24 @@ const PROP_HTML: &str = "html";
 const PROP_BASE_URL: &str = "baseUrl";
 const PROP_USER_AGENT: &str = "userAgent";
 
+/// The isolated JavaScript world evaluations run in and the message handler
+/// listens in. Page scripts can read and post to `window.webkit.messageHandlers`
+/// in their own world, so a page could otherwise settle the app's pending
+/// evaluation (or receive its result) with a value of its choosing.
+const EVAL_WORLD: &str = "solo-eval";
+
 /// Wrap an expression so WebKitGTK returns its JSON without needing
 /// top-level await. There is no sync equivalent of macOS's top-level
 /// `await`, and `run_javascript` will not unwrap a Promise ("Unsupported
 /// result type"), so the result is delivered through a registered script
-/// message instead: `{ ok, value }` as JSON text.
-fn evaluation_script(script: &str) -> String {
+/// message instead: `{ id, nonce, ok, value }` as JSON text.
+///
+/// The envelope carries the evaluation id and a per-view nonce because
+/// results arrive in completion order, not submission order, and the handler
+/// must match a result to the call that produced it.
+fn evaluation_script(script: &str, id: u64, nonce: &str) -> String {
     format!(
-        "(async () => {{ try {{ const value = await ({script}); if (value === undefined) return \"null\"; const seen = new WeakSet(); return JSON.stringify(value, (_key, item) => {{ if (typeof item === \"number\" && !Number.isFinite(item)) throw new Error(\"unsupported non-finite number\"); if (typeof item === \"undefined\" || typeof item === \"function\" || typeof item === \"symbol\" || typeof item === \"bigint\") throw new Error(\"unsupported JavaScript result\"); if (item !== null && typeof item === \"object\") {{ if (seen.has(item)) throw new Error(\"unsupported cyclic result\"); seen.add(item); }} return item; }}); }} catch (error) {{ throw error; }} }})().then((value) => window.webkit.messageHandlers.soloEval.postMessage(JSON.stringify({{ ok: true, value }})), (error) => window.webkit.messageHandlers.soloEval.postMessage(JSON.stringify({{ ok: false, value: String(error && error.message ? error.message : error) }})));"
+        "(async () => {{ try {{ const value = await ({script}); if (value === undefined) return \"null\"; const seen = new WeakSet(); return JSON.stringify(value, (_key, item) => {{ if (typeof item === \"number\" && !Number.isFinite(item)) throw new Error(\"unsupported non-finite number\"); if (typeof item === \"undefined\" || typeof item === \"function\" || typeof item === \"symbol\" || typeof item === \"bigint\") throw new Error(\"unsupported JavaScript result\"); if (item !== null && typeof item === \"object\") {{ if (seen.has(item)) throw new Error(\"unsupported cyclic result\"); seen.add(item); }} return item; }}); }} catch (error) {{ throw error; }} }})().then((value) => window.webkit.messageHandlers.soloEval.postMessage(JSON.stringify({{ id: {id}, nonce: \"{nonce}\", ok: true, value }})), (error) => window.webkit.messageHandlers.soloEval.postMessage(JSON.stringify({{ id: {id}, nonce: \"{nonce}\", ok: false, value: String(error && error.message ? error.message : error) }})));"
     )
 }
 
@@ -490,6 +500,9 @@ struct ViewState {
     gtk_window: gtk::Window,
     xlib: Xlib,
     display: *mut c_void,
+    /// GDK's display, for error traps around X calls (GTK treats untrapped X
+    /// errors as fatal).
+    gdk_display: *mut gdkx11::ffi::GdkX11Display,
     container: u64,
     last_frame: Option<NativeViewFrame>,
     visible: bool,
@@ -499,6 +512,9 @@ struct ViewState {
     next_navigation_id: u64,
     evaluations: std::collections::BTreeMap<u64, PendingEvaluation>,
     next_evaluation_id: u64,
+    /// Random per-view token that a page cannot guess, checked against every
+    /// `soloEval` envelope.
+    nonce: String,
     generation: u64,
     ready: bool,
     waiters: HashMap<u64, Vec<ReadySender>>,
@@ -575,12 +591,15 @@ fn process(service: &SharedService, command: Command) {
             let pending: PendingEvaluation = Rc::new(RefCell::new(Some(reply)));
             view.evaluations.insert(id, pending.clone());
             let webview = view.webview.clone();
+            let body = evaluation_script(&script, id, &view.nonce);
             drop(service);
-            let body = evaluation_script(&script);
             #[allow(deprecated)] // The callback never carries the value; the
-            // result is delivered through `soloEval` script messages.
-            webview.run_javascript(
+            // result is delivered through `soloEval` script messages. The
+            // wrapper runs in its own world so page scripts cannot see or
+            // fake the handler.
+            webview.run_javascript_in_world(
                 &body,
+                EVAL_WORLD,
                 gtk::gio::Cancellable::NONE,
                 move |result| {
                     // The wrapper always returns a Promise, so `Ok` never
@@ -670,6 +689,10 @@ impl Service {
             log::error!("webview: Xlib could not be loaded");
             return;
         };
+        let Some(gdk_display) = gdk_x11_display() else {
+            log::error!("webview: the session display is not X11");
+            return;
+        };
         let container = create_container(&xlib, display, parent);
         let gtk_window = create_gtk_window(container);
         let webview = WebView::new();
@@ -685,6 +708,7 @@ impl Service {
             gtk_window,
             xlib,
             display,
+            gdk_display,
             container,
             last_frame: None,
             visible: false,
@@ -693,6 +717,7 @@ impl Service {
             next_navigation_id: 1,
             evaluations: std::collections::BTreeMap::new(),
             next_evaluation_id: 1,
+            nonce: new_nonce(),
             generation: 1,
             ready: true,
             waiters: HashMap::new(),
@@ -707,10 +732,18 @@ impl Service {
         };
         match event {
             LoadEvent::Started => {
-                // A navigation started: bump the generation and fail stale
-                // waiters/evaluations, as macOS does when a navigation
-                // starts. It also fires for link clicks inside the page.
-                view.begin_document();
+                // WebKitGTK reports `Started` asynchronously, after the load
+                // request reaches the web process. A controlled load already
+                // began its generation (and rejected the previous document's
+                // waiters) when Solo called load_url/load_html, so bumping it
+                // again here would reject a `ready()` issued right after the
+                // source change. Only a navigation Solo did not start — a
+                // link click — begins a document here. Redirects reuse the
+                // in-flight generation the same way macOS's navigation
+                // identity does.
+                if view.ready {
+                    view.begin_document();
+                }
                 view.emit(EVENT_NAVIGATION, view.current_url());
             }
             LoadEvent::Finished => {
@@ -721,31 +754,50 @@ impl Service {
         }
     }
 
-    fn on_load_failed(&mut self, element_id: u64, failing_url: String, error: String) {
+    fn on_load_failed(
+        &mut self,
+        element_id: u64,
+        failing_url: String,
+        error: String,
+        cancelled: bool,
+    ) {
         let Some(view) = self.views.get_mut(&element_id) else {
             return;
         };
+        // Changing `url` cancels the load in flight; WebKit reports that as a
+        // failure of the superseded load. It is not an error the app asked
+        // about, and its waiters belong to the newer generation.
+        if cancelled {
+            return;
+        }
         view.mark_failed(&error);
         view.emit(EVENT_LOAD_ERROR, Some(failing_url));
     }
 
-    /// A `soloEval` script message: resolve the oldest pending evaluation.
+    /// A `soloEval` script message: resolve the evaluation its envelope names.
+    /// Results arrive in completion order, so matching by id (and checking the
+    /// per-view nonce) is what keeps concurrent evaluations apart.
     fn on_eval_message(&mut self, element_id: u64, text: String) {
+        let Some(envelope) = EvaluationEnvelope::parse(&text) else {
+            log::warn!("webview: ignored a malformed evaluation result");
+            return;
+        };
         let pending = {
             let Some(view) = self.views.get_mut(&element_id) else {
                 return;
             };
-            let Some(id) = view.evaluations.keys().next().copied() else {
+            if envelope.nonce != view.nonce {
+                log::warn!("webview: ignored an evaluation result with a foreign nonce");
                 return;
-            };
-            view.evaluations.remove(&id)
+            }
+            view.evaluations.remove(&envelope.id)
         };
         let Some(pending) = pending else {
             return;
         };
         let sender = pending.borrow_mut().take();
         if let Some(sender) = sender {
-            let _ = sender.send(decode_evaluation_result(&text));
+            let _ = sender.send(envelope.into_result());
         }
     }
 
@@ -883,6 +935,10 @@ impl ViewState {
         }
         self.last_frame = Some(frame);
         let renderable = frame.is_renderable();
+        // The container may have gone with its parent window (a closed
+        // secondary window destroys its children); GDK treats an untrapped X
+        // error as fatal, so every X call runs under a trap.
+        self.trap_errors();
         unsafe {
             if renderable {
                 if !self.visible {
@@ -910,6 +966,7 @@ impl ViewState {
                 (self.xlib.XUnmapWindow)(self.display as _, self.container as _);
             }
         }
+        self.untrap_errors();
         self.visible = renderable;
     }
 
@@ -917,37 +974,85 @@ impl ViewState {
         self.begin_document();
         self.mark_failed("WebView was destroyed");
         self.cancel_pending();
+        // Destroy the GTK side first: it owns the foreign gdk window wrapped
+        // around the container. JS disposes a tree on `windowClosed`, after
+        // the X server already destroyed the children, so the X calls must
+        // tolerate a gone window instead of aborting the process.
+        self.gtk_window.close();
+        self.trap_errors();
         unsafe {
             (self.xlib.XDestroyWindow)(self.display as _, self.container as _);
         }
-        self.gtk_window.close();
+        self.untrap_errors();
         self.callback = None;
+    }
+
+    fn trap_errors(&self) {
+        unsafe { gdkx11::ffi::gdk_x11_display_error_trap_push(self.gdk_display) };
+    }
+
+    fn untrap_errors(&self) {
+        unsafe { gdkx11::ffi::gdk_x11_display_error_trap_pop_ignored(self.gdk_display) };
     }
 }
 
-/// Decode the `{ ok, value }` JSON envelope posted by the evaluation
+/// The `{ id, nonce, ok, value }` JSON envelope posted by the evaluation
 /// wrapper. On error the value is the script error's message.
-fn decode_evaluation_result(text: &str) -> Result<String> {
-    let parsed: serde_json::Value =
-        serde_json::from_str(text).map_err(|_| anyhow::anyhow!("malformed evaluation result"))?;
-    let ok = parsed.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
-    let value = parsed
-        .get("value")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default();
-    if ok {
-        Ok(value.to_string())
-    } else {
-        Err(anyhow::anyhow!(value.to_string()))
+struct EvaluationEnvelope {
+    id: u64,
+    nonce: String,
+    ok: bool,
+    value: String,
+}
+
+impl EvaluationEnvelope {
+    fn parse(text: &str) -> Option<Self> {
+        let parsed: serde_json::Value = serde_json::from_str(text).ok()?;
+        Some(Self {
+            id: parsed.get("id").and_then(|v| v.as_u64())?,
+            nonce: parsed.get("nonce").and_then(|v| v.as_str())?.to_string(),
+            ok: parsed.get("ok").and_then(|v| v.as_bool()).unwrap_or(false),
+            value: parsed
+                .get("value")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+        })
     }
+
+    fn into_result(self) -> Result<String> {
+        if self.ok {
+            Ok(self.value)
+        } else {
+            Err(anyhow::anyhow!(self.value))
+        }
+    }
+}
+
+/// An unguessable per-view token. `RandomState` is seeded randomly per
+/// instance, so hashing a constant yields unrelated keys rather than the
+/// fixed `DefaultHasher` output a page could compute.
+fn new_nonce() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    let mut nonce = String::new();
+    for _ in 0..2 {
+        let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+        hasher.write_u64(std::process::id() as u64);
+        nonce.push_str(&format!("{:016x}", hasher.finish()));
+    }
+    nonce
 }
 
 /// The X11 display `gtk::init` opened, as an opaque pointer for x11-dl.
 fn x11_display() -> Option<*mut c_void> {
+    let display = gdk_x11_display()?;
+    Some(unsafe { gdkx11::ffi::gdk_x11_display_get_xdisplay(display) } as *mut c_void)
+}
+
+fn gdk_x11_display() -> Option<*mut gdkx11::ffi::GdkX11Display> {
     let display = gtk::gdk::Display::default()?;
     let display = display.downcast_ref::<gdkx11::X11Display>()?;
-    let raw = display.as_ptr();
-    Some(unsafe { gdkx11::ffi::gdk_x11_display_get_xdisplay(raw) } as *mut c_void)
+    Some(display.as_ptr())
 }
 
 /// Create the container X window that hosts one webview: a child of GPUI's
@@ -1006,7 +1111,9 @@ fn connect_signals(
     // `WebView` owns its content manager, so no other view's handler can
     // leak a result across elements.
     if let Some(manager) = webview.user_content_manager() {
-        manager.register_script_message_handler("soloEval");
+        // Registered in the evaluation world only: a page's own world cannot
+        // reach it, so page scripts cannot settle the app's evaluations.
+        manager.register_script_message_handler_in_world("soloEval", EVAL_WORLD);
         let service = service.clone();
         manager.connect_script_message_received(Some("soloEval"), move |_manager, result| {
             let text = result
@@ -1032,10 +1139,12 @@ fn connect_signals(
     {
         let service = service.clone();
         webview.connect_load_failed(move |_webview, _event, failing_url, error| {
+            let cancelled = error.matches(webkit2gtk::NetworkError::Cancelled);
             service.borrow_mut().on_load_failed(
                 element_id,
                 failing_url.to_string(),
                 error.to_string(),
+                cancelled,
             );
             false
         });
@@ -1076,6 +1185,21 @@ mod tests {
     fn wayland_error_message_is_clear() {
         assert!(WAYLAND_ERROR.contains("Wayland"));
         assert!(WAYLAND_ERROR.contains("X11"));
+    }
+
+    #[test]
+    fn evaluation_envelopes_name_their_call() {
+        let envelope = EvaluationEnvelope::parse(
+            r#"{"id":7,"nonce":"0123456789abcdef","ok":true,"value":"1"}"#,
+        )
+        .unwrap();
+        assert_eq!(envelope.id, 7);
+        assert_eq!(envelope.nonce, "0123456789abcdef");
+        assert_eq!(envelope.into_result().unwrap(), "1");
+        // A page (or an older wrapper) cannot settle an evaluation without
+        // naming it.
+        assert!(EvaluationEnvelope::parse(r#"{"ok":true,"value":"1"}"#).is_none());
+        assert_eq!(new_nonce().len(), 32);
     }
 
     #[test]

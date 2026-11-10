@@ -57,16 +57,24 @@ thread_local! {
 pub(crate) const WAYLAND_ERROR: &str =
     "<webview> is not supported on Wayland; it embeds a WebKitGTK window, which needs X11";
 
-/// The Wayland error, delivered as the `loadError` event (once per element)
-/// and the log, since a placeholder cannot throw from inside a draw.
-fn report_unsupported(element_id: u64, callback: &Option<EventCallback>) {
+/// The error for a Linux build without the opt-in `webview-linux` feature:
+/// WebKitGTK is not linked into the addon, so the element cannot mount.
+#[cfg(all(target_os = "linux", not(feature = "webview-linux")))]
+pub(crate) const WEBKIT_FEATURE_ERROR: &str =
+    "<webview> needs the webview-linux Cargo feature; rebuild the native addon with --features webview-linux";
+
+/// The unsupported-platform error, delivered as the `loadError` event (once
+/// per element) and the log, since a placeholder cannot throw from inside a
+/// draw.
+fn report_unsupported(element_id: u64, callback: &Option<EventCallback>, message: &str) {
     let first = REPORTED_UNSUPPORTED.with(|reported| reported.borrow_mut().insert(element_id));
     if !first {
         return;
     }
-    log::error!("webview: {WAYLAND_ERROR}");
-    crate::renderer::emit_event_full(callback, element_id, "loadError", |payload| {
-        payload.value = Some(WAYLAND_ERROR.to_string());
+    log::error!("webview: {message}");
+    let message = message.to_string();
+    crate::renderer::emit_event_full(callback, element_id, "loadError", move |payload| {
+        payload.value = Some(message);
     });
 }
 
@@ -169,9 +177,16 @@ impl Element for WebviewPlaceholder {
         let host = Self::host(window);
         let element_id = self.element_id;
         let callback = self.callback.clone();
+        // A Linux addon built without WebKitGTK cannot embed a view at all;
+        // say so once instead of failing to link the app.
+        #[cfg(all(target_os = "linux", not(feature = "webview-linux")))]
+        if matches!(host, Host::X11(_)) {
+            report_unsupported(element_id, &callback, WEBKIT_FEATURE_ERROR);
+            return;
+        }
         match host {
             Host::Wayland => {
-                report_unsupported(element_id, &callback);
+                report_unsupported(element_id, &callback, WAYLAND_ERROR);
                 return;
             }
             Host::Unavailable => {
@@ -227,11 +242,15 @@ impl Element for WebviewPlaceholder {
                         element_id, callback,
                     )) as Box<dyn crate::native_view::NativeViewInstance>
                 }
-                #[cfg(target_os = "linux")]
+                #[cfg(all(target_os = "linux", feature = "webview-linux"))]
                 {
                     Box::new(crate::native_view::webview::LinuxWebView::new(
                         element_id, callback,
                     )) as Box<dyn crate::native_view::NativeViewInstance>
+                }
+                #[cfg(all(target_os = "linux", not(feature = "webview-linux")))]
+                {
+                    unreachable!("a webview without the webview-linux feature returned above")
                 }
             });
             registry.update_frame(element_id, frame);

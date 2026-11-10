@@ -35,7 +35,7 @@ use std::ffi::c_void;
 #[cfg(target_os = "macos")]
 #[path = "native_view/webview_macos.rs"]
 pub mod webview;
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "webview-linux"))]
 #[path = "native_view/webview_linux.rs"]
 pub mod webview;
 
