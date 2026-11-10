@@ -54,9 +54,9 @@ export interface Root {
   /** Resize the content to a size in logical pixels, as getWindowSize reports it. */
   resizeWindow: (size: { width: number; height: number }) => void
   /**
-   * Let the window merge into native tabs with windows that share
-   * `identifier`; undefined clears it. Switches automatic window tabbing on
-   * or off for the whole application.
+   * Let the window merge into tabs with windows that share `identifier`;
+   * undefined clears it. macOS uses AppKit's window tabs, Linux a tab strip
+   * Solo draws in the window.
    */
   setTabbingIdentifier: (identifier: string | undefined) => void
   /** Show or hide the native tab overview (Show All Tabs). */
@@ -108,9 +108,9 @@ export interface AppWindow {
   /** Resize the content to a size in logical pixels, as size() reports it. */
   resize: (size: { width: number; height: number }) => void
   /**
-   * Let the window merge into native tabs with windows that share
-   * `identifier`; undefined clears it. Switches automatic window tabbing on
-   * or off for the whole application.
+   * Let the window merge into tabs with windows that share `identifier`;
+   * undefined clears it. macOS uses AppKit's window tabs, Linux a tab strip
+   * Solo draws in the window.
    */
   setTabbingIdentifier: (identifier: string | undefined) => void
   /** Show or hide the native tab overview (Show All Tabs). */
@@ -187,8 +187,12 @@ function renderSlot(): RenderSlot {
 /** The native event a guarded window's close request arrives as. */
 const CLOSE_REQUESTED = "windowCloseRequested"
 
-/** Call `handler` per close request, ignoring requests while its promise is pending. */
-function closeRequestListener(handler: CloseRequestHandler): () => void {
+/**
+ * Call `handler` per close request, ignoring requests while its promise is
+ * pending. `settled` runs once the handler has returned or its promise has
+ * settled.
+ */
+function closeRequestListener(handler: CloseRequestHandler, settled?: () => void): () => void {
   let pending = false
   return () => {
     if (pending) return
@@ -198,7 +202,10 @@ function closeRequestListener(handler: CloseRequestHandler): () => void {
       // A rejection still surfaces as unhandled.
       void result.finally(() => {
         pending = false
+        settled?.()
       })
+    } else {
+      settled?.()
     }
   }
 }
@@ -411,7 +418,20 @@ export function openWindow(code: () => SolidElement, options: OpenWindowOptions 
   }
   // Native closed the window (the user, or close() below); its root carries the event.
   registerEventHandler(rootId, "windowClosed", finish)
-  if (onCloseRequest) registerEventHandler(rootId, CLOSE_REQUESTED, closeRequestListener(onCloseRequest))
+  // A handler that finishes with the window still open declined: native drops
+  // the whole-window close a close button may have left waiting on it, so a
+  // later close() of this tab closes only the tab.
+  const declined = (): void => {
+    if (closed) return
+    try {
+      host.declineWindowClose?.(rootId)
+    } catch {
+      // Already closed natively; its windowClosed event is still on its way.
+    }
+  }
+  if (onCloseRequest) {
+    registerEventHandler(rootId, CLOSE_REQUESTED, closeRequestListener(onCloseRequest, declined))
+  }
   const close = (): void => {
     if (closed) return
     // Closing first keeps the native window from painting a torn-down tree.

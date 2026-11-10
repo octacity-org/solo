@@ -31,6 +31,7 @@ interface NativeTestRendererApi {
   closeWindow(windowId?: number): void
   setWindowCloseGuard(guarded: boolean, windowId?: number): void
   requestWindowClose(windowId?: number): void
+  declineWindowClose(windowId?: number): void
   getWindowSize(windowId?: number): { width: number; height: number }
   resizeWindow(width: number, height: number, windowId?: number): void
   setWindowBackground(background: string, windowId?: number): void
