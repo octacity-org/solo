@@ -2,11 +2,12 @@
  * Solo WebView Preview
  *
  * Dogfood for `<webview>`: a native pane on the left (the part an app like
- * Newsprint keeps fully native) and a real WKWebView on the right, with the
- * three lifecycle events driving native status text.
+ * Newsprint keeps fully native) and a real native web view on the right —
+ * a WKWebView on macOS, a WebKitGTK child of the GPUI window on Linux/X11 —
+ * with the three lifecycle events driving native status text.
  *
- * `<webview>` is macOS-only. Off macOS the element renders nothing and the
- * native side logs "Unknown element type: webview" each frame.
+ * On Wayland (or any platform without the X11 bridge) the element renders
+ * nothing and reports the unsupported-platform error through `onLoadError`.
  *
  * Run:
  *   bun run build && bun dist/index.js   (or: bun run start)
