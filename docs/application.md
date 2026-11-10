@@ -64,6 +64,10 @@ Only a packaged `.app` can restart. Run any other way (`solo dev`, or
 On Linux the same rule is applied to the running executable: a compiled
 `bun build --compile` binary restarts into a new PID of itself, while an app
 started with `bun` or `node` throws instead of reopening the runtime.
+GPUI's Linux restart waits for this process to exit before re-executing it.
+Until the Linux quit path that ends the process lands, the old process can
+stay alive with no window after `restartApplication()`; this follows in the
+same stack.
 
 ## Platforms
 
@@ -80,7 +84,6 @@ macOS has a native feed for every control above. On Linux:
   than a clear error.
 
 Windows builds carry the same calls but are untested.
-
 ## Limits
 
 - Changing the keyboard layout or thermal state is up to the user and the

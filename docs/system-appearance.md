@@ -40,8 +40,8 @@ Light/vibrant-light and dark/vibrant-dark normalize to light and dark respective
 On Linux, GPUI reads the desktop's `color-scheme` from xdg-desktop-portal
 through its Wayland backend and notifies subscribers when it changes. The X11
 backend has no appearance feed yet, so under X11 the accessor reports `light`
-and never changes; use an explicit preference there. Windows builds reject the
-call.
+and never changes; use an explicit preference there. The Windows backend uses
+the same UI-thread path but is untested.
 
 A renderer without the native capability throws an explicit error. The accessor
 never changes the desktop's settings.

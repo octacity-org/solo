@@ -2,8 +2,9 @@
 //! the scroll-bar preference and restarting.
 //!
 //! Linux reports the keyboard layout and the scroll-bar preference, and can
-//! restart a compiled app. Hiding other apps and thermal state are macOS-only,
-//! because GPUI has no equivalent there; Solo throws instead of pretending.
+//! restart a compiled app. Hiding the app and other apps, and thermal state,
+//! are macOS-only: GPUI only logs the hide calls on Linux, so Solo throws
+//! instead of reporting success for a no-op.
 //!
 //! Thermal-state and keyboard-layout changes reach JS as element-0
 //! `thermalStateChange` and `keyboardLayoutChange` events. Their observers are
@@ -109,22 +110,50 @@ fn with_app<R>(action: &str, _f: impl FnOnce(&mut gpui::App) -> R) -> Result<R> 
     )))
 }
 
+// GPUI's Linux backend only logs `hide`, `hide_other_apps` and
+// `unhide_other_apps`, so calling them would report success while doing
+// nothing. Throw instead, as `getThermalState` does.
+fn unsupported_on_this_os(action: &str) -> Error {
+    Error::from_reason(format!("{action} is supported only on macOS"))
+}
+
 /// Hide the application, as its Hide menu command does (macOS).
 #[napi]
 pub fn hide_application() -> Result<()> {
-    with_app("hideApplication", |cx| cx.hide())
+    #[cfg(target_os = "macos")]
+    {
+        with_app("hideApplication", |cx| cx.hide())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err(unsupported_on_this_os("hideApplication"))
+    }
 }
 
 /// Hide every other application, as Hide Others does (macOS).
 #[napi]
 pub fn hide_other_applications() -> Result<()> {
-    with_app("hideOtherApplications", |cx| cx.hide_other_apps())
+    #[cfg(target_os = "macos")]
+    {
+        with_app("hideOtherApplications", |cx| cx.hide_other_apps())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err(unsupported_on_this_os("hideOtherApplications"))
+    }
 }
 
 /// Show the applications hidden by Hide Others, as Show All does (macOS).
 #[napi]
 pub fn show_all_applications() -> Result<()> {
-    with_app("showAllApplications", |cx| cx.unhide_other_apps())
+    #[cfg(target_os = "macos")]
+    {
+        with_app("showAllApplications", |cx| cx.unhide_other_apps())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err(unsupported_on_this_os("showAllApplications"))
+    }
 }
 
 /// `"nominal"`, `"fair"`, `"serious"` or `"critical"` (macOS).
@@ -158,6 +187,15 @@ pub fn should_auto_hide_scrollbars() -> Result<bool> {
     with_app("shouldAutoHideScrollbars", |cx| cx.should_auto_hide_scrollbars())
 }
 
+/// Whether `path` is a compiled Solo app rather than the `bun` or `node`
+/// runtime executing a script.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn is_compiled_app(path: &std::path::Path) -> bool {
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .is_some_and(|stem| !matches!(stem, "bun" | "node" | "nodejs"))
+}
+
 /// Quit, then open the app bundle again once this process has exited
 /// (macOS). Only a packaged `.app` can restart: run any other way, the
 /// executable is `bun` itself, which would reopen without the app.
@@ -185,16 +223,6 @@ pub fn restart_application() -> Result<()> {
     }
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
-        use std::path::Path;
-
-        /// Whether `path` is a compiled Solo app rather than the `bun` or
-        /// `node` runtime executing a script.
-        fn is_compiled_app(path: &Path) -> bool {
-            path.file_stem()
-                .and_then(|stem| stem.to_str())
-                .is_some_and(|stem| !matches!(stem, "bun" | "node" | "nodejs"))
-        }
-
         crate::renderer::with_ui_app("restartApplication", |cx| {
             let executable = std::env::current_exe().map_err(|error| {
                 Error::from_reason(format!("Unable to determine the running executable: {error}"))
@@ -230,14 +258,10 @@ mod tests {
 
     /// `restartApplication` re-executes the running binary. Under a JS runtime
     /// that would reopen `bun`, not the app, so only compiled apps qualify.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     #[test]
     fn only_compiled_apps_can_restart() {
         use std::path::Path;
-        fn is_compiled_app(path: &Path) -> bool {
-            path.file_stem()
-                .and_then(|stem| stem.to_str())
-                .is_some_and(|stem| !matches!(stem, "bun" | "node" | "nodejs"))
-        }
         assert!(!is_compiled_app(Path::new("/home/me/.bun/bin/bun")));
         assert!(!is_compiled_app(Path::new("/usr/bin/node")));
         assert!(is_compiled_app(Path::new("/opt/solo/SoloTasks")));
