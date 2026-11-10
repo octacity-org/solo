@@ -303,7 +303,7 @@ thread_local! {
 }
 
 /// Drop everything a closed window registered for the napi side.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", ui_thread))]
 pub(crate) fn forget_window_state(window: gpui::WindowId) {
     crate::text::forget_window(window);
     crate::automation::forget_window(window);
@@ -324,17 +324,6 @@ impl WindowTarget {
             .map(|id| to_element_id(id).map(Self::Root))
             .transpose()
             .map(|target| target.unwrap_or(Self::Main))
-    }
-
-    /// Off macOS there is one window; `openWindow` is macOS-only.
-    #[cfg(ui_thread)]
-    fn main_only(self) -> Result<()> {
-        match self {
-            Self::Main => Ok(()),
-            Self::Root(_) => Err(Error::from_reason(
-                "Multiple windows are supported only on macOS",
-            )),
-        }
     }
 
     #[cfg(target_os = "macos")]
@@ -366,6 +355,107 @@ fn all_window_handles() -> Vec<gpui::WindowHandle<SoloView>> {
             windows.borrow().iter().map(|(_, window)| *window).collect::<Vec<_>>()
         }))
         .collect()
+}
+
+// ── Windows on the `solo-ui` thread ─────────────────────────────────
+// GPUI runs on its own thread there, so the registry lives on that thread
+// and JS calls carry a `WindowTarget` that the thread resolves. The tree's
+// `window_roots` already tell the JS side which window paints an element.
+
+/// The windows the `solo-ui` thread has open.
+#[cfg(ui_thread)]
+#[derive(Default)]
+struct UiWindows {
+    /// The window `init` opened, painting `tree.root_id`.
+    main: Option<gpui::WindowHandle<SoloView>>,
+    /// Windows opened with `openWindow`, by root element, in opening order.
+    secondary: Vec<(u64, gpui::WindowHandle<SoloView>)>,
+}
+
+#[cfg(ui_thread)]
+impl UiWindows {
+    fn handle(&self, target: WindowTarget) -> Result<gpui::WindowHandle<SoloView>> {
+        match target {
+            WindowTarget::Main => self
+                .main
+                .ok_or_else(|| Error::from_reason("GPUI window is not initialized")),
+            WindowTarget::Root(root) => self
+                .secondary
+                .iter()
+                .find(|(id, _)| *id == root)
+                .map(|(_, window)| *window)
+                .ok_or_else(|| Error::from_reason(format!("Window {root} is not open"))),
+        }
+    }
+
+    fn all(&self) -> Vec<gpui::WindowHandle<SoloView>> {
+        self.main
+            .into_iter()
+            .chain(self.secondary.iter().map(|(_, window)| *window))
+            .collect()
+    }
+
+    /// The windows a mutation batch dirtied. A window that has closed is
+    /// skipped: its tree still receives mutations while the app drains.
+    fn matching(&self, dirty: &DirtyWindows) -> Vec<gpui::WindowHandle<SoloView>> {
+        self.main
+            .filter(|_| dirty.main)
+            .into_iter()
+            .chain(
+                dirty
+                    .roots
+                    .iter()
+                    .filter_map(|root| self.handle(WindowTarget::Root(*root)).ok()),
+            )
+            .collect()
+    }
+
+    /// Take a closed window out of the registry.
+    fn closed(&mut self, window_id: gpui::WindowId) -> ClosedWindow {
+        let window_id_of = |window: gpui::WindowHandle<SoloView>| {
+            gpui::AnyWindowHandle::from(window).window_id()
+        };
+        if self.main.is_some_and(|window| window_id_of(window) == window_id) {
+            self.main = None;
+            return ClosedWindow::Main;
+        }
+        if let Some(index) = self
+            .secondary
+            .iter()
+            .position(|(_, window)| window_id_of(*window) == window_id)
+        {
+            return ClosedWindow::Secondary(self.secondary.remove(index).0);
+        }
+        ClosedWindow::Unknown
+    }
+}
+
+/// The window a `windowClosed` callback describes.
+#[cfg(ui_thread)]
+enum ClosedWindow {
+    Main,
+    Secondary(u64),
+    Unknown,
+}
+
+/// What reopening the main window needs: `init` kept it for `showWindow`.
+#[cfg(ui_thread)]
+struct UiApplication {
+    options: WindowOptions,
+    tree: Arc<Mutex<RetainedTree>>,
+    callback: Option<EventCallback>,
+    selection: SharedSelection,
+}
+
+#[cfg(ui_thread)]
+thread_local! {
+    static UI_WINDOWS: RefCell<UiWindows> = const {
+        RefCell::new(UiWindows {
+            main: None,
+            secondary: Vec::new(),
+        })
+    };
+    static UI_APPLICATION: RefCell<Option<UiApplication>> = const { RefCell::new(None) };
 }
 
 // ── Worker mode (macOS) ─────────────────────────────────────────────
@@ -669,9 +759,12 @@ fn window_config() -> Option<MacWindowConfig> {
 
 /// Cancel the context menus and release the native child views of a closed
 /// window's elements. The elements themselves stay until JS destroys them.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", ui_thread))]
 pub(crate) fn release_window_subtree(ids: &[u64]) {
+    #[cfg(target_os = "macos")]
     crate::context_menu::cancel_destroyed(ids);
+    #[cfg(ui_thread)]
+    crate::context_menu_gpui::cancel_destroyed(ids);
     crate::native_view::with_registry(|registry| {
         for &id in ids {
             registry.destroy(id);
@@ -696,7 +789,7 @@ fn secondary_window_closed(root: u64) {
 }
 
 /// Event on a secondary window's root element after the window closed.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", ui_thread))]
 pub(crate) const WINDOW_CLOSED_EVENT: &str = "windowClosed";
 
 /// Open a window that paints the subtree under `root`, a parentless element
@@ -1167,13 +1260,13 @@ fn parse_window_background(name: &str) -> Option<gpui::WindowBackgroundAppearanc
 }
 
 /// A guarded window's close request; see `SoloView::allow_close`.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", ui_thread))]
 pub(crate) const WINDOW_CLOSE_REQUESTED_EVENT: &str = "windowCloseRequested";
 
-/// Let the window's `SoloView` answer AppKit's `windowShouldClose:`, asked by
+/// Let the window's `SoloView` answer the platform's close request, asked by
 /// the titlebar close button and by `performClose:`. Installed when the window
 /// is built, so it also covers a root view replaced by a dev reload.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", ui_thread))]
 fn install_close_guard(window: &gpui::Window, cx: &gpui::App) {
     window.on_window_should_close(cx, |window, cx| match window.root::<SoloView>() {
         Some(Some(view)) => view.read(cx).allow_close(),
@@ -1331,13 +1424,21 @@ fn request_appkit_display(window: &gpui::Window) {
 /// window operation needs no variant of its own.
 #[cfg(ui_thread)]
 pub(crate) enum UiCommand {
-    /// Repaint after a mutation batch; kept cheap because it is the hot one.
-    Invalidate,
-    /// Run against the root view.
-    View(Box<dyn FnOnce(&mut SoloView, &mut gpui::Window, &mut gpui::Context<SoloView>) + Send>),
+    /// Repaint the windows a mutation batch dirtied; the hot path.
+    Invalidate(DirtyWindows),
+    /// Draw every window now, for automation `flush`.
+    Flush,
+    /// Run against a window's root view.
+    View(
+        WindowTarget,
+        Box<dyn FnOnce(&mut SoloView, &mut gpui::Window, &mut gpui::Context<SoloView>) + Send>,
+    ),
     /// Run against the window without leasing the root view, as input
     /// dispatch needs: it can synchronously render that view.
-    Window(Box<dyn FnOnce(gpui::AnyView, &mut gpui::Window, &mut gpui::App) + Send>),
+    Window(
+        WindowTarget,
+        Box<dyn FnOnce(gpui::AnyView, &mut gpui::Window, &mut gpui::App) + Send>,
+    ),
     /// Run against the app, for calls that need no particular window.
     App(Box<dyn FnOnce(&mut gpui::App) + Send>),
 }
@@ -1420,14 +1521,52 @@ pub(crate) fn with_ui_app<R: Send + 'static>(
 #[cfg(ui_thread)]
 async fn run_ui_commands(
     mut commands: mpsc::UnboundedReceiver<UiCommand>,
-    window: gpui::WindowHandle<SoloView>,
     cx: &mut gpui::AsyncApp,
 ) {
     while let Some(command) = commands.next().await {
         let result = match command {
-            UiCommand::Invalidate => window.update(cx, |_view, window, cx| refresh_view(window, cx)),
-            UiCommand::View(update) => window.update(cx, update),
-            UiCommand::Window(update) => cx.update_window(window.into(), update),
+            UiCommand::Invalidate(dirty) => {
+                for window in UI_WINDOWS.with(|windows| windows.borrow().matching(&dirty)) {
+                    window
+                        .update(cx, |_view, window, cx| refresh_view(window, cx))
+                        .ok();
+                }
+                Ok(())
+            }
+            UiCommand::Flush => {
+                for window in UI_WINDOWS.with(|windows| windows.borrow().all()) {
+                    window
+                        .update(cx, |_view, window, cx| {
+                            cx.notify();
+                            window.refresh();
+                        })
+                        .ok();
+                    // Drawn through the untyped handle: rendering the view
+                    // needs it not to be leased by the update above.
+                    cx.update_window(window.into(), |_root, window, cx| {
+                        window.draw(cx).clear(cx);
+                    })
+                    .ok();
+                }
+                Ok(())
+            }
+            UiCommand::View(target, update) => {
+                UI_WINDOWS
+                    .with(|windows| windows.borrow().handle(target))
+                    .and_then(|window| {
+                        window
+                            .update(cx, update)
+                            .map_err(|error| Error::from_reason(error.to_string()))
+                    })
+            }
+            UiCommand::Window(target, update) => {
+                UI_WINDOWS
+                    .with(|windows| windows.borrow().handle(target))
+                    .and_then(|window| {
+                        cx.update_window(window.into(), update)
+                            .map_err(|error| Error::from_reason(error.to_string()))
+                    })
+            }
             UiCommand::App(update) => {
                 cx.update(update);
                 Ok(())
@@ -1438,6 +1577,135 @@ async fn run_ui_commands(
         }
     }
     cx.update(|cx| cx.quit());
+}
+
+/// Open a window on the `solo-ui` app: the main window when `root` is none,
+/// else the window painting `root`'s subtree.
+#[cfg(ui_thread)]
+#[allow(clippy::too_many_arguments)]
+fn open_window_in_app(
+    root: Option<u64>,
+    tree: Arc<Mutex<RetainedTree>>,
+    callback: Option<EventCallback>,
+    selection: SharedSelection,
+    title: String,
+    options: &WindowOptions,
+    clock: Option<crate::automation::AutomationClock>,
+    cx: &mut gpui::App,
+) -> Result<gpui::WindowHandle<SoloView>> {
+    let display = crate::screens::display_for(options.screen.as_deref(), cx)?;
+    let bounds = centered_window_bounds(options, display, cx);
+    let window = cx
+        .open_window(to_gpui_window_options(options, bounds, display), move |window, cx| {
+            install_close_guard(window, cx);
+            let view = SoloView::new(tree, callback, title, selection);
+            cx.new(move |_| match root {
+                Some(root) => view.for_window_root(root, clock),
+                None => view,
+            })
+        })
+        .map_err(|error| Error::from_reason(format!("Failed to open the GPUI window: {error}")))?;
+    UI_WINDOWS.with(|windows| {
+        let mut windows = windows.borrow_mut();
+        match root {
+            Some(root) => windows.secondary.push((root, window)),
+            None => windows.main = Some(window),
+        }
+    });
+    Ok(window)
+}
+
+/// Reopen the main window after it closed (a background app keeps the tree,
+/// so the new window paints its latest state).
+#[cfg(ui_thread)]
+fn reopen_main_window(cx: &mut gpui::App) -> Result<()> {
+    let config = UI_APPLICATION.with(|state| {
+        state.borrow().as_ref().map(|state| UiApplication {
+            options: state.options.clone(),
+            tree: state.tree.clone(),
+            callback: state.callback.clone(),
+            selection: state.selection.clone(),
+        })
+    });
+    let config = config.ok_or_else(|| Error::from_reason("GPUI application is not initialized"))?;
+    let title = config
+        .options
+        .title
+        .clone()
+        .unwrap_or_else(|| "Solo".to_string());
+    let window = open_window_in_app(
+        None,
+        config.tree,
+        config.callback,
+        config.selection,
+        title,
+        &config.options,
+        None,
+        cx,
+    )?;
+    window
+        .update(cx, |_view, window, _cx| window.activate_window())
+        .map_err(|error| Error::from_reason(error.to_string()))?;
+    cx.activate(true);
+    Ok(())
+}
+
+/// Window-close cleanup for the `solo-ui` thread: drop paint state, take the
+/// window out of the registry and tell JS when a window it opened has closed.
+#[cfg(ui_thread)]
+fn register_ui_lifecycle(cx: &mut gpui::App) {
+    cx.on_window_closed(|cx, window_id| {
+        forget_window_state(window_id);
+        match UI_WINDOWS.with(|windows| windows.borrow_mut().closed(window_id)) {
+            ClosedWindow::Unknown => {}
+            ClosedWindow::Secondary(root) => secondary_window_closed_on_ui(root, cx),
+            ClosedWindow::Main => main_window_closed_on_ui(cx),
+        }
+    })
+    .detach();
+}
+
+#[cfg(ui_thread)]
+fn app_tree() -> Option<Arc<Mutex<RetainedTree>>> {
+    UI_APPLICATION.with(|state| state.borrow().as_ref().map(|state| state.tree.clone()))
+}
+
+#[cfg(ui_thread)]
+fn app_event_callback_on_ui() -> Option<EventCallback> {
+    UI_APPLICATION.with(|state| state.borrow().as_ref().and_then(|state| state.callback.clone()))
+}
+
+/// A window opened with `openWindow` closed on the `solo-ui` thread.
+#[cfg(ui_thread)]
+fn secondary_window_closed_on_ui(root: u64, _cx: &mut gpui::App) {
+    let Some(tree) = app_tree() else {
+        return;
+    };
+    let ids = {
+        let mut tree = tree.lock().unwrap();
+        tree.window_roots.retain(|id| *id != root);
+        tree.subtree_ids(root)
+    };
+    release_window_subtree(&ids);
+    emit_event_full(&app_event_callback_on_ui(), root, WINDOW_CLOSED_EVENT, |_| {});
+}
+
+/// The main window closed on the `solo-ui` thread.
+#[cfg(ui_thread)]
+fn main_window_closed_on_ui(_cx: &mut gpui::App) {
+    let ids = app_tree()
+        .map(|tree| {
+            let tree = tree.lock().unwrap();
+            tree.root_id
+                .map(|root| tree.subtree_ids(root))
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
+    release_window_subtree(&ids);
+    if UI_WINDOWS.with(|windows| windows.borrow().secondary.is_empty()) {
+        crate::context_menu_gpui::cancel_all();
+        crate::native_view::with_registry(|registry| registry.destroy_all());
+    }
 }
 
 /// Wait for a reply from the `solo-ui` thread. `query` names what was asked
@@ -1507,6 +1775,13 @@ impl SoloRenderer {
         }
     }
 
+    /// The owner of the open context menu, if one is open. Used to route
+    /// menu keys and cancels to the window that paints the menu.
+    #[cfg(all(not(target_os = "macos"), ui_thread))]
+    fn context_menu_owner(&self) -> Option<u64> {
+        crate::context_menu_gpui::owner()
+    }
+
     /// `window_of` for an optional element; none means the main window.
     #[cfg(feature = "automation")]
     fn window_of_arg(&self, element_id: Option<f64>) -> Result<WindowTarget> {
@@ -1554,11 +1829,13 @@ impl SoloRenderer {
         }
         #[cfg(ui_thread)]
         {
-            target.main_only()?;
             let (response, receiver) = sync_channel(1);
-            self.send_ui_command(UiCommand::View(Box::new(move |view, window, cx| {
-                response.send(update(view, window, cx)).ok();
-            })))?;
+            self.send_ui_command(UiCommand::View(
+                target,
+                Box::new(move |view, window, cx| {
+                    response.send(update(view, window, cx)).ok();
+                }),
+            ))?;
             return wait_ui(receiver, query);
         }
         #[cfg(not(any(target_os = "macos", ui_thread)))]
@@ -1620,8 +1897,7 @@ impl SoloRenderer {
 
         #[cfg(ui_thread)]
         {
-            target.main_only()?;
-            return self.send_ui_command(UiCommand::View(Box::new(update)));
+            return self.send_ui_command(UiCommand::View(target, Box::new(update)));
         }
         #[cfg(not(any(target_os = "macos", ui_thread)))]
         {
@@ -1640,9 +1916,12 @@ impl SoloRenderer {
         #[cfg(ui_thread)]
         {
             let (response, receiver) = sync_channel(1);
-            self.send_ui_command(UiCommand::Window(Box::new(move |root, window, cx| {
-                response.send(f(root, window, cx)).ok();
-            })))?;
+            self.send_ui_command(UiCommand::Window(
+                WindowTarget::Main,
+                Box::new(move |root, window, cx| {
+                    response.send(f(root, window, cx)).ok();
+                }),
+            ))?;
             return wait_ui(receiver, None);
         }
         #[cfg(not(ui_thread))]
@@ -1682,8 +1961,21 @@ impl SoloRenderer {
         #[cfg(not(target_os = "macos"))]
         {
             #[cfg(ui_thread)]
-            target.main_only()?;
-            self.on_ui(move |_, window, cx| dispatch(window, cx))
+            {
+                let (response, receiver) = sync_channel(1);
+                self.send_ui_command(UiCommand::Window(
+                    target,
+                    Box::new(move |_, window, cx| {
+                        response.send(dispatch(window, cx)).ok();
+                    }),
+                ))?;
+                return wait_ui(receiver, None);
+            }
+            #[cfg(not(ui_thread))]
+            {
+                let _ = (target, dispatch);
+                Err(Error::from_reason("Unsupported operating system"))
+            }
         }
     }
 
@@ -1699,10 +1991,10 @@ impl SoloRenderer {
 
         #[cfg(ui_thread)]
         {
-            target.main_only()?;
-            return self.send_ui_command(UiCommand::Window(Box::new(move |_, window, cx| {
-                dispatch(window, cx)
-            })));
+            return self.send_ui_command(UiCommand::Window(
+                target,
+                Box::new(move |_, window, cx| dispatch(window, cx)),
+            ));
         }
         #[cfg(not(any(target_os = "macos", ui_thread)))]
         {
@@ -1716,13 +2008,12 @@ impl SoloRenderer {
         #[cfg(target_os = "macos")]
         return invalidate_windows(dirty);
 
-        // One window off macOS.
         #[cfg(ui_thread)]
         {
             if dirty.is_empty() {
                 return Ok(());
             }
-            return self.send_ui_command(UiCommand::Invalidate);
+            return self.send_ui_command(UiCommand::Invalidate(dirty));
         }
 
         #[cfg(not(any(target_os = "macos", ui_thread)))]
@@ -1863,6 +2154,14 @@ impl SoloRenderer {
         let selection = self.selection.clone();
         let callback = self.event_callback_for_view();
         *UI_EVENT_CALLBACK.lock().unwrap() = callback.clone();
+        // `showWindow` reopens this window after it closed, from the latest
+        // retained tree, so the UI thread keeps its options and view inputs.
+        let application = UiApplication {
+            options: options.clone(),
+            tree: tree.clone(),
+            callback: callback.clone(),
+            selection: selection.clone(),
+        };
         let (command_sender, command_receiver) = mpsc::unbounded();
         install_ui_commands(command_sender.clone());
         let (startup_sender, startup_receiver) = sync_channel(1);
@@ -1883,36 +2182,25 @@ impl SoloRenderer {
                         // Linux's PlatformWindow has no native prompts, and
                         // gpui's fallback ignores Enter/Escape.
                         cx.set_prompt_builder(crate::prompt::renderer);
-                        let display = match crate::screens::display_for(
-                            window_options.screen.as_deref(),
+                        UI_APPLICATION.with(|state| *state.borrow_mut() = Some(application));
+                        register_ui_lifecycle(cx);
+                        if let Err(error) = open_window_in_app(
+                            None,
+                            tree,
+                            callback,
+                            selection,
+                            title,
+                            &window_options,
+                            None,
                             cx,
                         ) {
-                            Ok(display) => display,
-                            Err(error) => {
-                                startup_sender.send(Err(error.reason.clone())).ok();
-                                cx.quit();
-                                return;
-                            }
-                        };
-                        let bounds = centered_window_bounds(&window_options, display, cx);
-                        let window = match cx.open_window(
-                            to_gpui_window_options(&window_options, bounds, display),
-                            |_window, cx| {
-                                cx.new(|_| SoloView::new(tree, callback, title, selection))
-                            },
-                        ) {
-                            Ok(window) => window,
-                            Err(error) => {
-                                startup_sender
-                                    .send(Err(format!("Failed to open the GPUI window: {error}")))
-                                    .ok();
-                                cx.quit();
-                                return;
-                            }
-                        };
+                            startup_sender.send(Err(error.reason.clone())).ok();
+                            cx.quit();
+                            return;
+                        }
 
                         cx.spawn(async move |cx| {
-                            run_ui_commands(command_receiver, window, cx).await;
+                            run_ui_commands(command_receiver, cx).await;
                         })
                         .detach();
                         if activate {
@@ -1944,7 +2232,8 @@ impl SoloRenderer {
 
         *self.ui_commands.lock().unwrap() = Some(command_sender);
         *self.initialized.lock().unwrap() = true;
-        self.event_callback.lock().unwrap().take();
+        // The callback stays: `openWindow` builds a view per window, and every
+        // one of them emits through this renderer's callback.
         // URLs that launched the app are queued behind init, so the JS side
         // has finished `init` before they arrive.
         crate::open_urls::deliver_pending();
@@ -2000,24 +2289,23 @@ impl SoloRenderer {
     /// Open another window painting the subtree under `root_id`, a parentless
     /// element already created through the mutation API. Its `windowId` is
     /// `root_id`. When it closes, `root_id` receives a `windowClosed` event.
-    /// macOS only.
     #[napi]
     pub fn open_window(&self, root_id: f64, options: Option<WindowOptions>) -> Result<()> {
         let root = to_element_id(root_id)?;
+        let options = options.unwrap_or_default();
+        if options.menu_bar.is_some() {
+            return Err(Error::from_reason(
+                "menuBar is an application option; set it on the main window",
+            ));
+        }
+        validate_window_options(&options)?;
+        if !*self.initialized.lock().unwrap() {
+            return Err(Error::from_reason(
+                "Renderer is not initialized. Call init() first.",
+            ));
+        }
         #[cfg(target_os = "macos")]
         {
-            let options = options.unwrap_or_default();
-            if options.menu_bar.is_some() {
-                return Err(Error::from_reason(
-                    "menuBar is an application option; set it on the main window",
-                ));
-            }
-            validate_window_options(&options)?;
-            if !*self.initialized.lock().unwrap() {
-                return Err(Error::from_reason(
-                    "Renderer is not initialized. Call init() first.",
-                ));
-            }
             self.tree
                 .lock()
                 .unwrap()
@@ -2030,10 +2318,39 @@ impl SoloRenderer {
             return opened;
         }
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(ui_thread)]
+        {
+            self.tree
+                .lock()
+                .unwrap()
+                .add_window_root(root)
+                .map_err(Error::from_reason)?;
+            let tree = self.tree.clone();
+            let callback = self.event_callback_for_view();
+            let selection = self.selection.clone();
+            let title = options.title.clone().unwrap_or_else(|| "Solo".to_string());
+            // One automation clock for the whole app: windows opened later
+            // share the clock the main window already uses.
+            let clock = self
+                .query_window(WindowTarget::Main, Some("opening a window"), |view, _, _| {
+                    view.clock.clone()
+                })
+                .ok();
+            let opened = self.query_app("opening a window", move |cx| {
+                open_window_in_app(
+                    Some(root), tree, callback, selection, title, &options, clock, cx,
+                )
+            });
+            if opened.is_err() {
+                self.tree.lock().unwrap().window_roots.retain(|id| *id != root);
+            }
+            return opened.map(drop);
+        }
+
+        #[cfg(not(any(target_os = "macos", ui_thread)))]
         {
             let _ = (root, options);
-            Err(Error::from_reason("Multiple windows are supported only on macOS"))
+            Err(Error::from_reason("Multiple windows are supported only on macOS and Linux"))
         }
     }
 
@@ -2047,11 +2364,39 @@ impl SoloRenderer {
             WindowTarget::Root(root) => activate_secondary_window(root),
         };
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(ui_thread)]
+        {
+            let target = WindowTarget::from_arg(window_id)?;
+            let activated = self.query_window(target, Some("showing the window"), {
+                |_view, window, _cx| window.activate_window()
+            });
+            if activated.is_ok() {
+                self.query_app("activating the application", |cx| cx.activate(true))?;
+                return Ok(());
+            }
+            match target {
+                WindowTarget::Root(root) => {
+                    return Err(Error::from_reason(format!("Window {root} is not open")))
+                }
+                WindowTarget::Main => {}
+            }
+            // The main window closed: a background app reopens it.
+            let (response, receiver) = sync_channel(1);
+            self.send_ui_command(UiCommand::App(Box::new(move |cx| {
+                response
+                    .send(reopen_main_window(cx).map_err(|error| error.reason.clone()))
+                    .ok();
+            })))?;
+            let reopened: std::result::Result<(), String> =
+                wait_ui(receiver, Some("showing the window"))?;
+            return reopened.map_err(Error::from_reason);
+        }
+
+        #[cfg(not(any(target_os = "macos", ui_thread)))]
         {
             let _ = window_id;
             Err(Error::from_reason(
-                "Background window lifecycle is supported only on macOS",
+                "Background window lifecycle is supported only on macOS and Linux",
             ))
         }
     }
@@ -2060,20 +2405,27 @@ impl SoloRenderer {
     /// applications keep running.
     #[napi]
     pub fn close_window(&self, window_id: Option<f64>) -> Result<()> {
+        let target = WindowTarget::from_arg(window_id)?;
         #[cfg(target_os = "macos")]
         {
-            let target = WindowTarget::from_arg(window_id)?;
             if worker_main::must_forward() {
                 return on_main(move || close_macos_window(target));
             }
             return close_macos_window(target);
         }
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(ui_thread)]
         {
-            let _ = window_id;
+            return self.query_window(target, Some("closing the window"), {
+                |_view, window, _cx| window.remove_window()
+            });
+        }
+
+        #[cfg(not(any(target_os = "macos", ui_thread)))]
+        {
+            let _ = target;
             Err(Error::from_reason(
-                "Background window lifecycle is supported only on macOS",
+                "Background window lifecycle is supported only on macOS and Linux",
             ))
         }
     }
@@ -2083,15 +2435,18 @@ impl SoloRenderer {
     /// `windowCloseRequested`. `closeWindow` always closes.
     #[napi]
     pub fn set_window_close_guard(&self, guarded: bool, window_id: Option<f64>) -> Result<()> {
-        #[cfg(target_os = "macos")]
-        return update_window_in(WindowTarget::from_arg(window_id)?, move |view, _window, _cx| {
-            view.close_guarded = guarded;
+        let target = WindowTarget::from_arg(window_id)?;
+        #[cfg(any(target_os = "macos", ui_thread))]
+        return self.query_window(target, Some("setting the window close guard"), {
+            move |view, _window, _cx| view.close_guarded = guarded
         });
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", ui_thread)))]
         {
-            let _ = (guarded, window_id);
-            Err(Error::from_reason("Close requests are supported only on macOS"))
+            let _ = (guarded, target);
+            Err(Error::from_reason(
+                "Close requests are supported only on macOS and Linux",
+            ))
         }
     }
 
@@ -2100,19 +2455,41 @@ impl SoloRenderer {
     /// `windowCloseRequested`; any other closes.
     #[napi]
     pub fn request_window_close(&self, window_id: Option<f64>) -> Result<()> {
+        let target = WindowTarget::from_arg(window_id)?;
         #[cfg(target_os = "macos")]
         {
-            let target = WindowTarget::from_arg(window_id)?;
             if worker_main::must_forward() {
                 return on_main(move || request_macos_window_close(target));
             }
             return request_macos_window_close(target);
         }
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(ui_thread)]
         {
-            let _ = window_id;
-            Err(Error::from_reason("Close requests are supported only on macOS"))
+            let close = self.query_window(
+                target,
+                Some("requesting the window close"),
+                |view, window, cx| {
+                    if !view.close_guarded {
+                        return true;
+                    }
+                    view.allow_close();
+                    refresh_view(window, cx);
+                    false
+                },
+            )?;
+            if close {
+                return self.post_to_window(target, |_view, window, _cx| window.remove_window());
+            }
+            return Ok(());
+        }
+
+        #[cfg(not(any(target_os = "macos", ui_thread)))]
+        {
+            let _ = target;
+            Err(Error::from_reason(
+                "Close requests are supported only on macOS and Linux",
+            ))
         }
     }
 
@@ -2179,9 +2556,15 @@ impl SoloRenderer {
         #[cfg(target_os = "macos")]
         return quit_macos_application();
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(ui_thread)]
+        {
+            self.query_app("quitting the application", |cx| cx.quit())?;
+            return Ok(());
+        }
+
+        #[cfg(not(any(target_os = "macos", ui_thread)))]
         Err(Error::from_reason(
-            "Explicit application quit is supported only on macOS",
+            "Explicit application quit is supported only on macOS and Linux",
         ))
     }
 
@@ -2759,7 +3142,13 @@ impl SoloRenderer {
         }
 
         #[cfg(ui_thread)]
-        return self.send_ui_command(UiCommand::Window(Box::new(|_, window, cx| window.blur(cx))));
+        {
+            return self.query_app("blurring the windows", |cx| {
+                for window in UI_WINDOWS.with(|windows| windows.borrow().all()) {
+                    window.update(cx, |_view, window, cx| window.blur(cx)).ok();
+                }
+            });
+        }
 
         #[cfg(not(any(target_os = "macos", ui_thread)))]
         Err(Error::from_reason("Unsupported operating system"))
@@ -2837,12 +3226,18 @@ impl SoloRenderer {
 
         // The frame is drawn but not yet shown; GPUI presents it on the
         // window's next frame request.
-        #[cfg(not(target_os = "macos"))]
-        self.on_ui(|root, window, cx| {
-            cx.notify(root.entity_id());
-            window.refresh();
-            window.draw(cx).clear(cx);
-        })
+        #[cfg(ui_thread)]
+        {
+            let (response, receiver) = sync_channel(1);
+            self.send_ui_command(UiCommand::Flush)?;
+            self.send_ui_command(UiCommand::App(Box::new(move |_cx| {
+                response.send(()).ok();
+            })))?;
+            return wait_ui(receiver, Some("drawing the windows"));
+        }
+
+        #[cfg(all(not(target_os = "macos"), not(ui_thread)))]
+        Err(Error::from_reason("Unsupported operating system"))
     }
 
     #[napi]
@@ -2983,8 +3378,13 @@ impl SoloRenderer {
             return Ok(false);
         }
         let keys = keys.to_vec();
+        // The menu belongs to the owner's window; notifying the main window
+        // would leave a menu in a secondary window stale.
+        let target = self
+            .context_menu_owner()
+            .map_or(WindowTarget::Main, |id| self.window_of(id));
         self.query_window(
-            WindowTarget::Main,
+            target,
             Some("routing keys to the context menu"),
             move |_view, _window, cx| {
                 let mut handled = false;
@@ -3119,15 +3519,18 @@ impl SoloRenderer {
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         {
             let (response, receiver) = sync_channel(1);
-            self.send_ui_command(UiCommand::Window(Box::new(move |root, window, cx| {
-                cx.notify(root.entity_id());
-                window.refresh();
-                window.on_next_frame(move |window, _cx| {
+            self.send_ui_command(UiCommand::Window(
+                WindowTarget::Main,
+                Box::new(move |root, window, cx| {
+                    cx.notify(root.entity_id());
+                    window.refresh();
                     window.on_next_frame(move |window, _cx| {
-                        response.send(capture_x11_window(window, &path)).ok();
+                        window.on_next_frame(move |window, _cx| {
+                            response.send(capture_x11_window(window, &path)).ok();
+                        });
                     });
-                });
-            })))?;
+                }),
+            ))?;
             return match receiver.recv_timeout(Duration::from_secs(2)) {
                 Ok(result) => result.map_err(Error::from_reason),
                 Err(RecvTimeoutError::Timeout) => Err(Error::from_reason(
@@ -3790,8 +4193,11 @@ impl SoloRenderer {
     #[napi]
     pub fn cancel_context_menu(&self, request_id: f64) -> Result<()> {
         let request_id = to_element_id(request_id)?;
+        let target = self
+            .context_menu_owner()
+            .map_or(WindowTarget::Main, |id| self.window_of(id));
         self.query_window(
-            WindowTarget::Main,
+            target,
             Some("cancelling the context menu"),
             move |_view, window, cx| {
                 if crate::context_menu_gpui::cancel(request_id) {

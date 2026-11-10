@@ -53,15 +53,17 @@ versions.
 
 - The menu opens at the pointer, or below the anchored element, and is clamped
 to the window's content area, including when the anchor sits in a corner.
-- The mouse selects an item; clicking anywhere else dismisses the menu, as
-does Escape.
+- The menu paints only in the window that owns the anchored element, and its
+  backdrop takes every mouse hit, so the click that dismisses it does not
+  also reach the content underneath. Any button dismisses; Escape does too.
+- The mouse selects an item.
 - Up and Down move the highlight, skipping disabled items and separators and
 stopping at the ends. Home and End jump to the first and last selectable
 item. Enter selects the highlighted item, and with nothing highlighted it
 dismisses, as AppKit does.
 - The menu takes focus while it is open, and keys also pass through an
   app-wide interceptor, so it works whether or not the owner element can take
-  focus. It is not a system-wide modal: unlike
+  focus. When it closes, focus returns to the element that had it before. It is not a system-wide modal: unlike
   an open `NSMenu`, it cannot be steered from outside the app, so there is no
   scripted mode and automation drives it like a person would.
 - Release builds need no extra file: everything is inside the addon.
