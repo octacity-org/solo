@@ -1,8 +1,9 @@
 # Dropping files onto elements
 
 Any element can accept files and folders dragged in from outside the app,
-for example from Finder. `onFileDrop` receives their absolute paths, and the
-`fileDragOver` style highlights the element while a drag hovers it.
+for example from Finder or Thunar. `onFileDrop` receives their absolute
+paths, and the `fileDragOver` style highlights the element while a drag
+hovers it.
 
 ```tsx
 <div
@@ -37,6 +38,21 @@ layout, so use properties that change how the element paints, such as
 `backgroundColor`, `borderColor` or `opacity`. Size and spacing properties in
 it have no effect.
 
+## Platforms
+
+macOS delivers drops through AppKit's dragging destination protocol. Linux
+uses the windowing backend's own protocol: X11's XDND (GPUI's X11 client
+handles `XdndEnter`/`XdndDrop` and turns the URIs into `ExternalPaths`), and
+Wayland's `wl_data_device` drag-and-drop on the compositor's side. Both paths
+produce the same `ExternalPaths` value, so `onFileDrop`, `event.paths` and
+`fileDragOver` behave identically. Windows builds carry the same wiring but
+are untested.
+
+Drops from some file managers arrive as plain text rather than `text/uri-list`.
+GPUI exposes only URI lists, so those drops are ignored; Solo does not guess
+a path from arbitrary text. Dragging from the desktop's file manager is the
+supported case.
+
 ## Current boundaries
 
 - A `<webview>` is a native view composited above GPUI, so files dragged over
@@ -50,4 +66,11 @@ it have no effect.
 `renderer.nativeSimulateFileDragOver(paths, x, y)` holds files over a point,
 and `renderer.nativeSimulateFileDrop(paths, x, y)` drops them. The live
 `SoloRenderer` has the same `simulateFileDragOver` and `simulateFileDrop`
-methods in automation builds.
+methods in automation builds, on every platform, so an automation suite can
+assert the listener, paths and highlight without a real drag.
+
+Real desktop delivery is a platform concern: verify it by dragging one file and
+then several from the file manager onto a painted drop target. Under X11 the
+window must accept XDND; under Wayland the compositor forwards the drag. Solo
+adds no filter of its own, so a failure there is in GPUI's backend, not in the
+Solid event wiring.
