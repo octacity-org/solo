@@ -23,7 +23,8 @@ TypeScript / TSX
   `apply_styles`), text selection registry, Tree-sitter syntax
   highlighting (opt-in `syntax-*` features, enabled by `test-support`;
   release builds ship without grammars), markdown/diff rendering, native input editors, motion,
-  automation host + GPU-backed test renderer (macOS), and the frame clock.
+  automation host + GPU-backed test renderer (macOS, Linux), and the frame
+  clock.
 - **`packages/core`** (`@solo/core`): private, framework-free TypeScript
   implementation. The
   mutation protocol vocabulary (`StyleDesc`, `NativeRenderer`), event-handler
@@ -136,9 +137,9 @@ resolves.
   `windowShouldClose:` on macOS and `install_close_guard` on both. Linux's
   WM close button goes through `PlatformWindow::on_should_close`, and a
   guarded window stays open.
-- `TestSoloRenderer` mirrors this with offscreen windows in
-  `VisualTestState::secondary`; `createSolidNativeTestRoot` registers it as
-  the `openWindow` host through `setWindowHost`.
+- `TestSoloRenderer` mirrors this with windows in `VisualTestState::secondary`
+  (offscreen on macOS, headless on Linux); `createSolidNativeTestRoot`
+  registers it as the `openWindow` host through `setWindowHost`.
 - A `menuBar` app sets `QuitMode::Explicit`, so closing every window leaves
   the process and Solid state alive and `showWindow`/`reopen_main_window`
   paints the retained tree into a new window. macOS hosts the status item in
@@ -235,14 +236,14 @@ token rather than being swallowed by the `UiCommand` channel.
 
 - Headless everywhere: `MockNativeRenderer` records each mutation op —
   assert protocol traffic directly (`lifecycle.test.tsx`).
-- macOS GPU-backed: `createSolidNativeTestRoot()` from `@solo/solid/testing`.
-  Gate with `hasNativeTestRenderer`.
+- GPU-backed: `createSolidNativeTestRoot()` from `@solo/solid/testing` — Metal
+  on macOS, wgpu (Vulkan) on Linux. Gate with `hasNativeTestRenderer`.
 - Layout ground-truth: `packages/native/tests/layout_probe.rs` draws the
   real builder chain headlessly and asserts ScrollHandle geometry.
 - Run: `bun run test` inside packages/solid or packages/core;
   `cargo test --features test-support --lib --test layout_probe` in
-  packages/native (plain `cargo test` skips the macOS GPU test-renderer
-  tests). Use `bun run test`, not `bun test` (vitest).
+  packages/native (plain `cargo test` skips the GPU test-renderer tests).
+  Use `bun run test`, not `bun test` (vitest).
 - Context-menu tests script their menus by default. Tests that open real
   AppKit menus are opt-in: run them with `SOLO_INTERACTIVE_MENUS=1` on an idle
   machine, since any click or key at the machine can dismiss or steer an open
@@ -250,29 +251,33 @@ token rather than being swallowed by the `UiCommand` channel.
 
 ## Native child views (`<webview>`)
 
-`<webview>` is the one element GPUI cannot paint. It is a real WKWebView, an
-AppKit NSView, so it lives in the window's NSView hierarchy and composites
-*above* GPUI — GPUI clears its Metal drawable opaquely every frame, so
-anything below it is invisible.
+`<webview>` is the one element GPUI cannot paint. The web engine owns its
+surface and composites *above* GPUI, which clears its (Metal) drawable opaquely
+every frame, so anything below it is invisible. On macOS it is a WKWebView
+subview in the window's NSView hierarchy; on Linux/X11 it is a WebKitGTK child
+X window under GPUI's X window, with GTK driven on its own thread. Wayland has
+no way to embed another toolkit's surface, so the placeholder reports an error
+there (WPE is not implemented).
 
 ```text
 <webview url=…>
   → WebviewElement        CustomElement: props, events, destroy
     → WebviewPlaceholder  gpui::Element: takes layout space
       → prepaint(bounds)  authoritative post-layout bounds
-        → native_view registry → WKWebView.setFrame:
+        → native_view registry → WKWebView.setFrame:  (macOS)
+                                X child resize        (Linux/X11)
 ```
 
-- GPUI owns layout, AppKit owns pixels and input. Nothing polls bounds from
-  JS: `prepaint` is inside the redraw that a resize triggers, so reflow is
-  automatic.
-- The host NSView comes from the public `Window::window_handle()`
+- GPUI owns layout; the platform view owns pixels and input (AppKit on macOS,
+  GTK on Linux). Nothing polls bounds from JS: `prepaint` is inside the
+  redraw that a resize triggers, so reflow is automatic.
+- macOS: the host NSView comes from the public `Window::window_handle()`
   (`raw-window-handle`), not from GPUI's private `MacWindow` — no fork change.
-- GPUI measures from the top-left, AppKit from the bottom-left; both in
-  logical points. Every frame goes through `to_native_frame`, which is unit
-  tested in `packages/native/src/native_view.rs`.
-- macOS only. There is no WebView2 or WebKitGTK implementation, so the factory
-  is `cfg`-gated and off macOS the type is simply not registered.
+- macOS measures window coordinates from the bottom-left and GPUI from the
+  top-left, both in logical points; every frame goes through `to_native_frame`,
+  which is unit tested in `packages/native/src/native_view.rs`. Linux/X11 uses
+  top-left logical pixels and scales to physical pixels for the X child window
+  in `native_view/webview_linux.rs`.
 - New child views implement `NativeViewInstance` and are keyed by Solo element
   ID, so `destroy` (unmount) and `destroy_all` (app quit) are the only two
   cleanup paths.
@@ -337,8 +342,9 @@ package.
 - `examples/tasks` — dogfood task manager: store state, keyed list,
   scrolling, input composer, automation regression suite, diagnose driver.
 - `examples/solid-counter` — minimal counter window.
-- `examples/webview-preview` — macOS-only embedded WKWebView beside a fully
-  native pane, driven by the three `<webview>` events.
+- `examples/webview-preview` — embedded WKWebView (macOS) or WebKitGTK child
+  window (Linux/X11) beside a fully native pane, driven by the three
+  `<webview>` events.
 
 ## Contributing
 

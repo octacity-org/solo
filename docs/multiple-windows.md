@@ -399,16 +399,19 @@ as it does on macOS, with these differences:
   close request reaches the window as `on_should_close`, so with
   `onCloseRequest` the window stays open and the handler runs, exactly as on
   macOS.
-- Closing the last window ends the process, because Linux has no menu-bar app
-  lifecycle yet. `showWindow()` still calls `activate` on an open window, and
-  reopens the main window while another window keeps the app running.
+- Closing the last window ends the process unless the app passes `menuBar`,
+  which keeps it alive behind a status item
+  ([menu-bar-apps.md](menu-bar-apps.md)). `showWindow()` still calls
+  `activate` on an open window, and reopens the main window while another
+  window keeps the app running.
 - `setBackground("transparent" | "blurred")` sets the appearance, but GPUI
   paints the app opaque, so both look like `opaque`.
 - `setDocumentEdited` marks the title with a `*` (see
   [Document windows](#document-windows)), and `setDocumentPath` validates and
   stores the path without drawing anything.
-- Window tabs are drawn by Solo (see [Window tabs](#window-tabs)); the menu
-  bar is still macOS-only.
+- Window tabs are drawn by Solo (see [Window tabs](#window-tabs)); a `menuBar`
+  app shows a status item instead of a menu bar
+  ([menu-bar-apps.md](menu-bar-apps.md)).
 
 ## Limits
 
@@ -420,9 +423,9 @@ as it does on macOS, with these differences:
   automation protocol use the main window.
 
 In tests, `createSolidNativeTestRoot()` from `@solo/solid/testing` hosts
-`openWindow` too: each window is an offscreen GPU-backed window, `findByType`
-and `getElement` include their elements, and simulation methods that take an
-`elementId` act in that element's window. The test renderer cannot close its
+`openWindow` too: each window is a GPU-backed test window (offscreen on macOS,
+headless on Linux), `findByType` and `getElement` include their elements, and
+simulation methods that take an `elementId` act in that element's window. The test renderer cannot close its
 main window. See `packages/solid/src/__tests__/native-windows.test.tsx`.
 
 Automation sees every window: `getByTestId` and the other locators search
