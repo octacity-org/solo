@@ -122,7 +122,13 @@ describeNative("openWindow on the test renderer", () => {
 
   it("reads the application's thermal state, keyboard layout and scroll-bar preference", () => {
     testRoot.render(() => <Text>Main</Text>)
-    expect(["nominal", "fair", "serious", "critical"]).toContain(getThermalState())
+    if (process.platform === "darwin") {
+      expect(["nominal", "fair", "serious", "critical"]).toContain(getThermalState())
+    } else {
+      // GPUI reports `Nominal` unconditionally on Linux, so the app says
+      // there is no thermal feed instead of inventing a reading (#92).
+      expect(() => getThermalState()).toThrow(/only on macOS/)
+    }
     const layout = getKeyboardLayout()
     expect(layout.id).not.toBe("")
     expect(layout.name).not.toBe("")

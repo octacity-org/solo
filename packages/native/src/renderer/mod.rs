@@ -4150,7 +4150,7 @@ macro_rules! tree_mutation_api {
         }
     };
 }
-#[cfg(all(feature = "test-support", target_os = "macos"))]
+#[cfg(all(feature = "test-support", any(target_os = "macos", target_os = "linux")))]
 pub(crate) use tree_mutation_api;
 
 tree_mutation_api!(SoloRenderer);
@@ -4206,7 +4206,7 @@ pub struct WindowSize {
 /// `PlatformWindow::resize` takes the same shape, so both platforms share the
 /// check.
 #[cfg_attr(target_os = "macos", allow(dead_code))]
-fn validated_window_size(width: f64, height: f64) -> Result<gpui::Size<gpui::Pixels>> {
+pub(crate) fn validated_window_size(width: f64, height: f64) -> Result<gpui::Size<gpui::Pixels>> {
     if !(width.is_finite() && width > 0.0 && height.is_finite() && height > 0.0) {
         return Err(Error::from_reason(format!(
             "Window size must be positive and finite, got {width}×{height}"

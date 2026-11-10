@@ -133,6 +133,13 @@ pub fn get_screens() -> Result<Vec<Screen>> {
     }
     #[cfg(ui_thread)]
     {
+        // Native Solid tests list the test app's displays, not the live UI
+        // thread's.
+        #[cfg(feature = "test-support")]
+        if crate::test_renderer::has_app() {
+            return crate::test_renderer::with_app(|cx| list(cx))
+                .ok_or_else(|| Error::from_reason("getScreens needs a running Solo app"));
+        }
         return crate::renderer::with_ui_app("getScreens", |cx: &mut gpui::App| list(cx));
     }
     #[cfg(all(not(target_os = "macos"), not(ui_thread)))]
