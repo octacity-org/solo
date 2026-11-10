@@ -2,7 +2,8 @@
 
 Register application commands through `@solo/solid`, inside a Solid component.
 Commands belong to that component's owner and are removed when it unmounts.
-They work on macOS and Linux. Windows builds reject registration.
+They work on macOS and Linux. Windows builds use the same UI-thread path but
+are untested.
 
 ```tsx
 import { createSignal } from "solid-js"
@@ -57,7 +58,11 @@ both emit the same application-command event to the Solid callback.
 
 - Use one chord: `space`, `s`, `h`, `o`, `cmd-r`, or `cmd-option-p`.
   Modifiers can be absent or combined in any order: `cmd`, `ctrl`, `alt`
-  (also spelled `option`), and `shift`. `super` and `win` alias `cmd`.
+  (also spelled `option`), and `shift`. `cmd` is the primary command modifier
+  of the platform — Command on macOS, Ctrl on Linux — so `cmd-r` keeps its
+  meaning in an app written for macOS. `super` and `win` name the Super key
+  explicitly; Linux desktops reserve most Super chords for the shell.
+  `secondary` is accepted as an explicit spelling of the same modifier.
   Use lowercase letters; uppercase `S` means `shift-s`, not plain `s`.
   Named keys include `space`, `enter`, `escape`, `up`, `down`, `left`, `right`,
   `home`, `end`, `pageup`, `pagedown`, `backspace`, `delete`, and `f1`–`f12`.
@@ -68,14 +73,15 @@ both emit the same application-command event to the Solid callback.
   destroyed scopes do not match. Use reactive `enabled` for application state
   such as the active reader mode. Scope does not restrict an explicit menu click.
 - Scoped shortcuts never intercept native inputs, textareas, or WebView focus.
-  Unscoped shortcuts without Command also require non-editable native focus.
+  Unscoped shortcuts without the primary command modifier (`cmd`, i.e. Command
+  on macOS and Ctrl on Linux) also require non-editable native focus.
   Space/Enter remain available to a focused clickable control. Use
   `<Button tabIndex={0}>` for Tab focus and GPUI's Space/Enter release activation.
 - `allowRepeat` defaults to `false`: holding a matching shortcut consumes repeats
   without repeatedly invoking the callback. Set it to `true` for repeatable actions.
 - Duplicate shortcuts are rejected even if one command is disabled. Existing
-  GPUI editing/navigation bindings and Cmd+Q are reserved; registration cannot
-  override them. Invalid replacements leave the previous bindings intact.
+  GPUI editing/navigation bindings and the quit shortcut (`cmd-q`: Cmd+Q on
+  macOS, Ctrl+Q on Linux) are reserved; registration cannot override them. Invalid replacements leave the previous bindings intact.
 - Enabled commands take precedence over an element's raw `onKeyDown` handler
   in GPUI controls. Disabled/disposed commands no longer consume that shortcut.
   Ordinary typing, editing bindings, and Tab navigation remain native.
@@ -95,7 +101,8 @@ both emit the same application-command event to the Solid callback.
 macOS installs the commands as menu items and key bindings; a menu click and a
 shortcut emit the same event. Linux installs the commands and their shortcuts
 as GPUI key bindings only, so `enabled` and focus scoping behave the same and
-`configureMenuBar` stays macOS-only. Windows rejects registration.
+`configureMenuBar` stays macOS-only. Windows shares that UI-thread path but is
+untested.
 
 ## Verification
 

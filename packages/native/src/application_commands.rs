@@ -32,12 +32,17 @@ pub(crate) struct ParsedApplicationCommand {
     pub shortcut: Option<Keystroke>,
 }
 
+/// Whether a shortcut uses the platform's primary command modifier: Command
+/// on macOS, Control elsewhere. GPUI calls this the `secondary` modifier.
+fn is_command_modified(modifiers: gpui::Modifiers) -> bool {
+    modifiers.secondary()
+}
+
 /// Parse and validate the complete command list before it is installed.
 ///
 /// Validation is deliberately performed on the full list so callers can keep
-/// the previous list active when a replacement is malformed. GPUI treats
-/// `cmd`, `super`, and `win` as the same platform modifier; using the parsed
-/// representation makes those aliases collide as expected.
+/// the previous list active when a replacement is malformed. Shortcuts are
+/// compared after parsing, so aliases of the same physical chord collide.
 pub(crate) fn parse_application_commands(json: &str) -> Result<Vec<ParsedApplicationCommand>> {
     let commands: Vec<ApplicationCommand> = serde_json::from_str(json).map_err(|error| {
         Error::from_reason(format!("Invalid application commands JSON: {error}"))
@@ -97,11 +102,18 @@ fn parse_application_shortcut(source: &str) -> Result<Keystroke> {
         )));
     }
 
+    // `cmd` is the portable spelling of the primary command modifier: Command
+    // on macOS and Control on Linux, like GPUI's `secondary`. Leaving it to
+    // GPUI's parser would make it mean the Super key on Linux, where desktops
+    // reserve most Super chords for the shell. `super` and `win` still name
+    // that key explicitly.
     let normalized = source
         .split('-')
         .map(|part| {
             if part.eq_ignore_ascii_case("option") {
                 "alt"
+            } else if !cfg!(target_os = "macos") && part.eq_ignore_ascii_case("cmd") {
+                "secondary"
             } else {
                 part
             }
@@ -167,7 +179,7 @@ fn accepts_focus(
     let Some(key) = &command.shortcut else {
         return false;
     };
-    let guarded = command.command.scope_element_id.is_some() || !key.modifiers.platform;
+    let guarded = command.command.scope_element_id.is_some() || !is_command_modified(key.modifiers);
     if !guarded {
         return true;
     }
@@ -186,7 +198,7 @@ fn accepts_focus(
         // Let focused controls handle activation, even inside an article scope.
         if Some(id) == focused
             && matches!(key.key.as_str(), "space" | "enter")
-            && !key.modifiers.platform
+            && !is_command_modified(key.modifiers)
             && !key.modifiers.control
             && !key.modifiers.alt
             && (element.events.contains("click")
@@ -226,7 +238,8 @@ pub(crate) fn dispatch_shortcut(
     }) else {
         return;
     };
-    if (entry.command.scope_element_id.is_some() || !event.keystroke.modifiers.platform)
+    if (entry.command.scope_element_id.is_some()
+        || !is_command_modified(event.keystroke.modifiers))
         && native_child_has_focus(window)
     {
         return;
@@ -350,7 +363,7 @@ pub(crate) fn replace_application_commands(
         .collect();
     for command in &commands {
         if let Some(key) = &command.shortcut {
-            if key.modifiers.platform && key.key == "q"
+            if is_command_modified(key.modifiers) && key.key == "q"
                 || retained
                     .iter()
                     .any(|binding| binding.match_keystrokes(&[key.clone()]).is_some())
@@ -370,7 +383,7 @@ pub(crate) fn replace_application_commands(
             if let Some(shortcut) = command
                 .shortcut
                 .as_ref()
-                .filter(|key| key.modifiers.platform)
+                .filter(|key| is_command_modified(key.modifiers))
             {
                 bindings.push(
                     gpui::KeyBinding::load(
@@ -422,7 +435,17 @@ pub(crate) fn replace_application_commands(
             }
         });
         cx.on_action(|_: &Quit, cx| cx.quit());
-        bindings.push(gpui::KeyBinding::new("cmd-q", Quit, None));
+        // The primary command modifier quits: Command on macOS, Control
+        // elsewhere, matching how command shortcuts are parsed above.
+        bindings.push(gpui::KeyBinding::new(
+            if cfg!(target_os = "macos") {
+                "cmd-q"
+            } else {
+                "secondary-q"
+            },
+            Quit,
+            None,
+        ));
     }
     let mut menus: Vec<_> = cx
         .global::<CommandState>()
@@ -534,15 +557,47 @@ mod tests {
         }
     }
 
+    /// `cmd` follows GPUI's `secondary` modifier: Command on macOS, Control
+    /// everywhere else. `super` and `win` still name that key explicitly.
+    #[test]
+    fn cmd_is_the_platform_command_modifier() {
+        let cmd = parse_application_shortcut("cmd-r").unwrap();
+        assert_eq!(
+            cmd,
+            parse_application_shortcut("secondary-r").unwrap()
+        );
+        #[cfg(target_os = "macos")]
+        {
+            assert!(cmd.modifiers.platform);
+            assert!(!cmd.modifiers.control);
+            assert_eq!(cmd, parse_application_shortcut("super-r").unwrap());
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            assert!(cmd.modifiers.control);
+            assert!(!cmd.modifiers.platform);
+            let super_r = parse_application_shortcut("super-r").unwrap();
+            assert!(super_r.modifiers.platform);
+            assert_ne!(cmd, super_r);
+        }
+    }
+
     #[test]
     fn normalizes_gpui_shortcut_aliases_when_checking_collisions() {
-        let error = parse_application_commands(
+        let (first, second) = if cfg!(target_os = "macos") {
+            ("cmd-r", "super-r")
+        } else {
+            // `cmd` is Control here, so it collides with the explicit spelling.
+            ("cmd-r", "ctrl-r")
+        };
+        let json = format!(
             r#"[
-                {"id":"first","label":"First","shortcut":"cmd-r","enabled":true},
-                {"id":"second","label":"Second","shortcut":"super-r","enabled":true}
-            ]"#,
-        )
-        .expect_err("cmd and super must represent the same platform shortcut");
+                {{"id":"first","label":"First","shortcut":"{first}","enabled":true}},
+                {{"id":"second","label":"Second","shortcut":"{second}","enabled":true}}
+            ]"#
+        );
+        let error = parse_application_commands(&json)
+            .expect_err("aliases of the same chord must collide");
 
         assert!(error.to_string().contains("shortcut"));
         assert!(error.to_string().contains("second"));
@@ -561,13 +616,14 @@ mod tests {
         ] {
             assert!(parse_application_shortcut(shortcut).is_ok(), "{shortcut}");
         }
+        // Option and alt are the same modifier on every platform.
         let first = parse_application_shortcut("cmd-option-p").unwrap();
-        let second = parse_application_shortcut("alt-super-p").unwrap();
+        let second = parse_application_shortcut("cmd-alt-p").unwrap();
         assert_eq!(first, second);
         assert!(parse_application_commands(
             r#"[
           {"id":"a","label":"A","shortcut":"cmd-option-p","enabled":true},
-          {"id":"b","label":"B","shortcut":"alt-super-p","enabled":false}
+          {"id":"b","label":"B","shortcut":"cmd-alt-p","enabled":false}
         ]"#
         )
         .is_err());
