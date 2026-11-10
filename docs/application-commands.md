@@ -100,9 +100,9 @@ both emit the same application-command event to the Solid callback.
 
 macOS installs the commands as menu items and key bindings; a menu click and a
 shortcut emit the same event. Linux installs the commands and their shortcuts
-as GPUI key bindings only, so `enabled` and focus scoping behave the same and
-`configureMenuBar` stays macOS-only. Windows shares that UI-thread path but is
-untested.
+as GPUI key bindings only, so `enabled` and focus scoping behave the same;
+application commands do not appear in the status-item menu. Windows shares
+that UI-thread path but is untested.
 
 ## Verification
 

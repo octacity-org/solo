@@ -237,9 +237,11 @@ cd packages/native && cargo test --features test-support --lib --test layout_pro
 
 - `MockNativeRenderer` records every mutation, so tests can assert protocol
   traffic on any platform.
-- On macOS, `createSolidNativeTestRoot()` from `@solo/solid/testing` drives a
-  GPU-backed offscreen renderer: real frames, hit testing, selection and
-  screenshots.
+- On macOS and Linux, `createSolidNativeTestRoot()` from `@solo/solid/testing`
+  drives a GPU-backed test renderer (Metal on macOS, wgpu/Vulkan on Linux):
+  real frames, hit testing, selection and screenshots. A few native tests are
+  skipped on Linux where GPUI's test platform cannot drive the behavior yet;
+  each skip names the reason.
 - Tests that open real, on-screen context menus are skipped unless
   `SOLO_INTERACTIVE_MENUS=1` is set. Run them on an idle machine, since a
   click or key at the computer can dismiss an open menu.
@@ -249,16 +251,22 @@ cd packages/native && cargo test --features test-support --lib --test layout_pro
 | Platform | Status |
 |---|---|
 | macOS | Primary. Windows, input, desktop APIs, `<webview>`, live automation and the GPU test renderer. |
-| Linux (Wayland, X11) | Windows, input, clipboard, browser/file actions, the freedesktop Trash and recent-document list, portal file dialogs, in-window alerts, keyboard layout, scroll-bar preference and compiled-binary restart work. System appearance follows the desktop on Wayland. Live automation works; screenshots need X11. Window state (maximize, fullscreen, minimize, resize, background), multiple windows with close requests, screens and in-window context menus work, and deep links arrive through launch arguments, a Unix socket for a second launch, and a `.desktop` entry written by `registerUrlScheme`; window tabs, document-window markers, the menu bar and Dock integration still report that they are macOS-only. |
+| Linux (Wayland, X11) | Windows and physical input, multiple windows (Solo-drawn tabs, document markers, close requests, window state, screens), client-side decorations, in-window context menus and alerts, status-item menu-bar apps, portal file dialogs, desktop actions and clipboard, freedesktop Trash and recent documents, system appearance, deep links and single-instance launches, `solo dev`, compiled production builds, live automation and the GPU test renderer. Platform limits are listed under [Current boundaries](#current-boundaries). |
 | Windows | Builds in CI. Untested. |
 
 ## Current boundaries
 
 - Not published to npm; there is no release pipeline yet.
-- Desktop integration is split: desktop actions, file dialogs, alerts,
-  multiple windows and the application controls that GPUI implements work on
-  macOS and Linux; window tabs, document windows, menus and Dock integration
-  are still macOS-only.
+- Desktop integration is the same on macOS and Linux: desktop actions, file
+  dialogs, alerts, multiple windows, window tabs, document windows, menus and
+  the application controls all work. Windows builds compile but are untested.
+  The macOS Dock menu and tab overview have no Linux counterpart:
+  `configureDockMenu` and `toggleTabOverview` throw, and
+  `onApplicationReopen` runs on a status-item click instead.
+- Linux platform limits: live automation screenshots need X11;
+  `createThermalState` throws because GPUI has no Linux thermal feed; CSS
+  generic font families (`monospace`, `sans-serif`, `serif`) are not resolved,
+  so set a concrete family name.
 - `<webview>` is WKWebView on macOS and a WebKitGTK child window on
   Linux/X11 only. There is no WebView2 backend, and embedding another
   toolkit's surface is impossible on Wayland, so Linux on Wayland shows a
