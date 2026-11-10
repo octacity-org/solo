@@ -49,6 +49,18 @@ pub(super) fn scroll_retained_child_into_view(
     true
 }
 
+/// `title`, prefixed with `*` while the document has unsaved changes. No Linux
+/// window protocol carries an edited flag, so the title is the only place the
+/// window manager can show one.
+#[cfg(not(target_os = "macos"))]
+fn marked_title(title: &str, edited: bool) -> String {
+    if edited {
+        format!("*{title}")
+    } else {
+        title.to_string()
+    }
+}
+
 pub(crate) struct SoloView {
     pub(crate) tree: Arc<Mutex<RetainedTree>>,
     pub(crate) event_callback: Option<EventCallback>,
@@ -96,6 +108,15 @@ pub(crate) struct SoloView {
     /// client-decoration titlebar stays off.
     #[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
     pub(super) titlebar_hidden: bool,
+    /// `setDocumentEdited`: the document has unsaved changes. macOS shows that
+    /// in the close button; elsewhere the title carries a `*`.
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    pub(crate) document_edited: bool,
+    /// `setDocumentPath`: the file this window edits, kept so it can be read
+    /// back. No Linux window protocol carries it to the window manager, so
+    /// unlike macOS it draws nothing.
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    pub(crate) document_path: Option<String>,
 }
 
 impl SoloView {
@@ -124,7 +145,22 @@ impl SoloView {
             root: None,
             close_guarded: false,
             titlebar_hidden: false,
+            document_edited: false,
+            document_path: None,
         }
+    }
+
+    /// The title the platform shows. macOS marks unsaved changes with the
+    /// close button's dot; the platforms that have no such affordance prefix
+    /// the app's title with `*`, so the marker follows `setTitle` too.
+    #[cfg(not(target_os = "macos"))]
+    pub(crate) fn native_title(&self) -> String {
+        marked_title(&self.window_title, self.document_edited)
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) fn native_title(&self) -> String {
+        self.window_title.clone()
     }
 
     /// `titlebarTransparent`: the app paints its own titlebar, so Solo draws
@@ -522,9 +558,12 @@ impl gpui::Render for SoloView {
             }));
         }
 
-        if self.applied_title.as_ref() != Some(&self.window_title) {
-            window.set_window_title(&self.window_title);
-            self.applied_title = Some(self.window_title.clone());
+        // The document marker and the app's title both feed this one, so a
+        // `setTitle` while the document is edited keeps the marker.
+        let title = self.native_title();
+        if self.applied_title.as_ref() != Some(&title) {
+            window.set_window_title(&title);
+            self.applied_title = Some(title);
         }
 
         // Clone Arc so we don't borrow self.tree — frees self for focus_handles access.
@@ -647,5 +686,19 @@ impl gpui::Render for SoloView {
         }
 
         result
+    }
+}
+
+#[cfg(all(test, not(target_os = "macos")))]
+mod tests {
+    use super::marked_title;
+
+    #[test]
+    fn unsaved_changes_mark_the_native_title() {
+        assert_eq!(marked_title("notes.txt", false), "notes.txt");
+        assert_eq!(marked_title("notes.txt", true), "*notes.txt");
+        // The marker is a prefix, so a title the app retitles keeps it at the
+        // front where window managers truncate last.
+        assert_eq!(marked_title("", true), "*");
     }
 }
