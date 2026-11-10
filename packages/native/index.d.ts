@@ -35,7 +35,6 @@ export declare class SoloRenderer {
    * Open another window painting the subtree under `root_id`, a parentless
    * element already created through the mutation API. Its `windowId` is
    * `root_id`. When it closes, `root_id` receives a `windowClosed` event.
-   * macOS only.
    */
   openWindow(rootId: number, options?: WindowOptions | undefined | null): void
   /**
@@ -60,6 +59,14 @@ export declare class SoloRenderer {
    * `windowCloseRequested`; any other closes.
    */
   requestWindowClose(windowId?: number | undefined | null): void
+  /**
+   * The close handler of the main window, or of the window `window_id`,
+   * kept it open. On Linux the window's close button asks every guarded
+   * tab and closes the whole window once the last of them closes; a
+   * declined tab drops that, so closing it later closes only the tab.
+   * AppKit asks each window on its own, so macOS has nothing to drop.
+   */
+  declineWindowClose(windowId?: number | undefined | null): void
   /**
    * Enter or leave the standard macOS zoomed state. AppKit owns the saved
    * normal frame, so restoring uses exactly the platform's previous frame.
@@ -94,34 +101,48 @@ export declare class SoloRenderer {
    */
   resizeWindow(width: number, height: number, windowId?: number | undefined | null): void
   /**
-   * Set the identifier that lets windows sharing it merge into native
-   * tabs, or clear it with `None`. AppKit then switches automatic window
-   * tabbing on (set) or off (clear) for the whole process, as opening a
-   * window does.
+   * Set the identifier that lets windows sharing it merge into tabs, or
+   * clear it with `None`. AppKit then switches automatic window tabbing on
+   * (set) or off (clear) for the whole process; on Linux the identifier
+   * decides which windows join this one's tab strip, and the tabs it already
+   * has stay (see docs/multiple-windows.md).
    */
   setWindowTabbingIdentifier(identifier?: string | undefined | null, windowId?: number | undefined | null): void
   /**
-   * The window's tabbing identifier as AppKit reports it. A window without
-   * one reports AppKit's default.
+   * The window's tabbing identifier. AppKit reports its own default for a
+   * window without one; Linux reports an empty string.
    */
   getWindowTabbingIdentifier(windowId?: number | undefined | null): string
-  /** Show or hide the tab overview (Show All Tabs) for the window's tabs. */
+  /**
+   * Show or hide the tab overview (Show All Tabs) for the window's tabs.
+   * Linux draws the tab strip in the window, so there is no overview.
+   */
   toggleWindowTabOverview(windowId?: number | undefined | null): void
   /**
    * Mark the window's document as having unsaved changes (the dot in the
    * close button) or as saved.
+   *
+   * macOS draws the dot; Linux has no window property or protocol field for
+   * it, so the title gains a `*` marker instead (`SoloView::native_title`).
    */
   setWindowDocumentEdited(edited: boolean, windowId?: number | undefined | null): void
   /**
    * Show the file the window edits in its title bar, with its icon and
    * path menu, or clear it with `None`. The path must be absolute.
+   *
+   * Off macOS the path is only kept and read back: no window protocol
+   * carries it to the window manager.
    */
   setWindowDocumentPath(path?: string | undefined | null, windowId?: number | undefined | null): void
-  /** Whether AppKit marks the window's document as edited. */
+  /** Whether the window's document is marked as edited. */
   isWindowDocumentEdited(windowId?: number | undefined | null): boolean
-  /** The document path AppKit shows for the window, `None` when unset. */
+  /** The file the window edits, `None` when unset. */
   getWindowDocumentPath(windowId?: number | undefined | null): string | null
-  /** Replace application commands atomically. macOS only for now. */
+  /**
+   * Replace application commands atomically. Linux has no global menu bar,
+   * so the commands are reachable through their shortcuts there; the menu
+   * names still validate, which keeps one app definition portable.
+   */
   setApplicationCommands(json: string): void
   /**
    * Replace the macOS status-item presentation, or restore the initial
@@ -148,9 +169,9 @@ export declare class SoloRenderer {
    */
   selectSavePath(optionsJson: string): Promise<string | null>
   /**
-   * Replace or remove the macOS system-appearance observer and return the
-   * current normalized appearance. The token is echoed in change events so
-   * the Solid layer can discard notifications queued for an old owner.
+   * Replace or remove the system-appearance observer and return the current
+   * normalized appearance. The token is echoed in change events so the Solid
+   * layer can discard notifications queued for an old owner.
    */
   setSystemAppearanceSubscription(token?: string | undefined | null): string
   /** `"hidden"` | `"minimal"` | `"full"`. Paints into the scene after layout. */
@@ -320,6 +341,11 @@ export declare class TestSoloRenderer {
    * windows left by earlier test renderers, whose GPUI app is gone.
    */
   requestWindowClose(windowId?: number | undefined | null): void
+  /**
+   * A window's close handler kept it open. As in the live renderer on
+   * macOS, each window is asked on its own, so there is nothing to drop.
+   */
+  declineWindowClose(windowId?: number | undefined | null): void
   /** Enter or leave native fullscreen, as the live renderer does. */
   setWindowFullscreen(fullscreen: boolean, windowId?: number | undefined | null): void
   isWindowFullscreen(windowId?: number | undefined | null): boolean
@@ -531,9 +557,11 @@ export declare class TestSoloRenderer {
 }
 
 /**
- * Add an existing file to the app's recent documents (macOS), shown in the
- * Dock menu and in `File > Open Recent`. Choosing one sends the app a
- * `file://` URL through the open-URLs event.
+ * Add an existing file to the app's recent documents. macOS records it with
+ * AppKit (Dock menu and `File > Open Recent`); Linux appends a bookmark to the
+ * freedesktop `recently-used.xbel`, which GTK file choosers and desktop menus
+ * read. Either way the app later receives a `file://` URL through the
+ * open-URLs event when the user picks it.
  */
 export declare function addRecentDocument(path: string): void
 
@@ -679,10 +707,13 @@ export interface EventPayload {
   modifiers?: EventModifiers
 }
 
-/** The keyboard layout currently selected (macOS). */
+/** The keyboard layout currently selected. */
 export declare function getKeyboardLayout(): KeyboardLayout
 
-/** The connected screens (macOS). Ids are stable display UUIDs. */
+/**
+ * The connected screens (macOS, Linux). Ids are stable display UUIDs, or
+ * `x11-<root index>` on X11, which has no per-screen UUID.
+ */
 export declare function getScreens(): Array<Screen>
 
 /** `"nominal"`, `"fair"`, `"serious"` or `"critical"` (macOS). */
@@ -791,10 +822,7 @@ export interface ScreenRect {
  */
 export declare function setDockMenu(itemsJson: string): void
 
-/**
- * Whether the system shows scroll bars only while scrolling: System
- * Settings → Appearance → "Show scroll bars" (macOS).
- */
+/** Whether the system shows scroll bars only while scrolling. */
 export declare function shouldAutoHideScrollbars(): boolean
 
 /** Show the applications hidden by Hide Others, as Show All does (macOS). */
@@ -809,6 +837,13 @@ export interface TrashResult {
 }
 
 export interface WindowOptions {
+  /**
+   * Application identifier the desktop groups the window under, such as
+   * `dev.solo.tasks`. On Linux it becomes X11 `WM_CLASS` and Wayland
+   * `xdg_toplevel.app_id`, and should match the `.desktop` entry's
+   * `StartupWMClass`. Ignored on macOS and Windows.
+   */
+  appId?: string
   title?: string
   width?: number
   height?: number

@@ -156,7 +156,7 @@ fn control_button(
         _ => theme.border,
     };
 
-    let guarded = view.close_guarded;
+    let guarded = view.tab().close_guarded;
     let callback = view.event_callback.clone();
     let root = view.root_for_events();
 

@@ -38,6 +38,8 @@ use crate::theme::Theme;
 mod batch;
 mod build;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+mod tabs;
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 mod decorations;
 mod styles;
 mod view;
@@ -313,7 +315,7 @@ pub(crate) fn forget_window_state(window: gpui::WindowId) {
 
 /// Which window a call acts on.
 #[derive(Clone, Copy, Debug)]
-enum WindowTarget {
+pub(crate) enum WindowTarget {
     Main,
     /// A window opened with `openWindow`, by its root element.
     Root(u64),
@@ -321,7 +323,7 @@ enum WindowTarget {
 
 impl WindowTarget {
     /// An explicit `windowId` argument: none means the main window.
-    fn from_arg(window_id: Option<f64>) -> Result<Self> {
+    pub(crate) fn from_arg(window_id: Option<f64>) -> Result<Self> {
         window_id
             .map(|id| to_element_id(id).map(Self::Root))
             .transpose()
@@ -364,6 +366,20 @@ fn all_window_handles() -> Vec<gpui::WindowHandle<SoloView>> {
 // and JS calls carry a `WindowTarget` that the thread resolves. The tree's
 // `window_roots` already tell the JS side which window paints an element.
 
+/// One window opened with `openWindow`.
+#[cfg(ui_thread)]
+struct SecondaryWindow {
+    /// Its root element, which is also its window id.
+    root: u64,
+    /// The native window painting it. Several roots share one: Linux has no
+    /// native tabs, so windows with the same `tabbingIdentifier` join the first
+    /// one and become tabs of it.
+    window: gpui::WindowHandle<SoloView>,
+    /// `tabbingIdentifier`, when the app set one. Windows with the same value
+    /// join, exactly as AppKit merges them on macOS.
+    identifier: Option<String>,
+}
+
 /// The windows the `solo-ui` thread has open.
 #[cfg(ui_thread)]
 #[derive(Default)]
@@ -371,7 +387,8 @@ struct UiWindows {
     /// The window `init` opened, painting `tree.root_id`.
     main: Option<gpui::WindowHandle<SoloView>>,
     /// Windows opened with `openWindow`, by root element, in opening order.
-    secondary: Vec<(u64, gpui::WindowHandle<SoloView>)>,
+    /// Several entries may share one native window (tabs).
+    secondary: Vec<SecondaryWindow>,
 }
 
 #[cfg(ui_thread)]
@@ -384,8 +401,8 @@ impl UiWindows {
             WindowTarget::Root(root) => self
                 .secondary
                 .iter()
-                .find(|(id, _)| *id == root)
-                .map(|(_, window)| *window)
+                .find(|entry| entry.root == root)
+                .map(|entry| entry.window)
                 .ok_or_else(|| Error::from_reason(format!("Window {root} is not open"))),
         }
     }
@@ -393,8 +410,68 @@ impl UiWindows {
     fn all(&self) -> Vec<gpui::WindowHandle<SoloView>> {
         self.main
             .into_iter()
-            .chain(self.secondary.iter().map(|(_, window)| *window))
+            .chain(self.secondary.iter().map(|entry| entry.window))
+            .collect::<WindowHandles>()
+            .into_iter()
             .collect()
+    }
+
+    /// The native window that hosts tabs with `identifier`, if one is open.
+    fn tab_host(&self, identifier: &str) -> Option<gpui::WindowHandle<SoloView>> {
+        self.secondary
+            .iter()
+            .find(|entry| entry.identifier.as_deref() == Some(identifier))
+            .map(|entry| entry.window)
+    }
+
+    /// Add a window that joined an existing native window as a tab.
+    fn push_tab(&mut self, root: u64, window: gpui::WindowHandle<SoloView>, identifier: String) {
+        self.secondary.push(SecondaryWindow {
+            root,
+            window,
+            identifier: Some(identifier),
+        });
+    }
+
+    /// Drop the entry for a root whose tab closed, leaving its host window.
+    fn forget_root(&mut self, root: u64) {
+        self.secondary.retain(|entry| entry.root != root);
+    }
+
+    /// The tabbing identifier of the window addressed by `target`, "" when it
+    /// has none. Linux reports an empty string where AppKit reports its default.
+    fn identifier(&self, target: WindowTarget) -> String {
+        match target {
+            WindowTarget::Main => String::new(),
+            WindowTarget::Root(root) => self
+                .secondary
+                .iter()
+                .find(|entry| entry.root == root)
+                .and_then(|entry| entry.identifier.clone())
+                .unwrap_or_default(),
+        }
+    }
+
+    /// Set the identifier of the native window hosting `target`, which decides
+    /// which windows join it later. AppKit moves the window between tab groups;
+    /// Linux keeps the tabs it already has (see docs/multiple-windows.md).
+    fn set_identifier(&mut self, target: WindowTarget, identifier: Option<String>) {
+        let window = match target {
+            WindowTarget::Main => self.main,
+            WindowTarget::Root(root) => self
+                .secondary
+                .iter()
+                .find(|entry| entry.root == root)
+                .map(|entry| entry.window),
+        };
+        let Some(window) = window else { return };
+        for entry in self
+            .secondary
+            .iter_mut()
+            .filter(|entry| entry.window == window)
+        {
+            entry.identifier = identifier.clone();
+        }
     }
 
     /// The windows a mutation batch dirtied. A window that has closed is
@@ -409,10 +486,12 @@ impl UiWindows {
                     .iter()
                     .filter_map(|root| self.handle(WindowTarget::Root(*root)).ok()),
             )
+            .collect::<WindowHandles>()
+            .into_iter()
             .collect()
     }
 
-    /// Take a closed window out of the registry.
+    /// Take a closed native window out of the registry.
     fn closed(&mut self, window_id: gpui::WindowId) -> ClosedWindow {
         let window_id_of = |window: gpui::WindowHandle<SoloView>| {
             gpui::AnyWindowHandle::from(window).window_id()
@@ -421,23 +500,65 @@ impl UiWindows {
             self.main = None;
             return ClosedWindow::Main;
         }
-        if let Some(index) = self
-            .secondary
-            .iter()
-            .position(|(_, window)| window_id_of(*window) == window_id)
-        {
-            return ClosedWindow::Secondary(self.secondary.remove(index).0);
+        // Every tab of the native window closed with it.
+        let before = self.secondary.len();
+        let mut roots = Vec::new();
+        self.secondary.retain(|entry| {
+            if window_id_of(entry.window) == window_id {
+                roots.push(entry.root);
+                false
+            } else {
+                true
+            }
+        });
+        if self.secondary.len() == before {
+            return ClosedWindow::Unknown;
         }
-        ClosedWindow::Unknown
+        ClosedWindow::Secondary(roots)
     }
 }
 
-/// The window a `windowClosed` callback describes.
+/// The windows a `windowClosed` callback describes: one per tab of the closed
+/// native window.
 #[cfg(ui_thread)]
 enum ClosedWindow {
     Main,
-    Secondary(u64),
+    Secondary(Vec<u64>),
     Unknown,
+}
+
+/// Handles collected for one command, at most one per native window: several
+/// tab roots share a window, and the command must reach it once.
+#[cfg(ui_thread)]
+#[derive(Default)]
+struct WindowHandles(Vec<gpui::WindowHandle<SoloView>>);
+
+#[cfg(ui_thread)]
+impl FromIterator<gpui::WindowHandle<SoloView>> for WindowHandles {
+    fn from_iter<I: IntoIterator<Item = gpui::WindowHandle<SoloView>>>(handles: I) -> Self {
+        let mut unique = Self::default();
+        for handle in handles {
+            let id = gpui::AnyWindowHandle::from(handle).window_id();
+            if !unique
+                .0
+                .iter()
+                .any(|existing| gpui::AnyWindowHandle::from(*existing).window_id() == id)
+            {
+                unique.0.push(handle);
+            }
+        }
+        unique
+    }
+}
+
+#[cfg(ui_thread)]
+impl IntoIterator for WindowHandles {
+    type Item = gpui::WindowHandle<SoloView>;
+    type IntoIter = std::vec::IntoIter<gpui::WindowHandle<SoloView>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
 }
 
 /// What reopening the main window needs: `init` kept it for `showWindow`.
@@ -1596,6 +1717,25 @@ fn open_window_in_app(
     clock: Option<crate::automation::AutomationClock>,
     cx: &mut gpui::App,
 ) -> Result<gpui::WindowHandle<SoloView>> {
+    // Windows sharing a tabbing identifier become tabs of the first one:
+    // Linux has no native tabs, so the host window paints them. The main
+    // window neither hosts nor joins tabs on Linux (docs/multiple-windows.md),
+    // and reopening it must not fail because its options carry an identifier.
+    if let (Some(root), Some(identifier)) = (root, options.tabbing_identifier.clone()) {
+        let host = UI_WINDOWS.with(|windows| windows.borrow().tab_host(&identifier));
+        if let Some(host) = host {
+            host.update(cx, |view, window, cx| {
+                view.add_tab(root, title.clone());
+                refresh_view(window, cx);
+            })
+            .map_err(|error| Error::from_reason(error.to_string()))?;
+            UI_WINDOWS.with(|windows| windows.borrow_mut().push_tab(root, host, identifier));
+            host.update(cx, |_view, window, _cx| window.activate_window())
+                .map_err(|error| Error::from_reason(error.to_string()))?;
+            return Ok(host);
+        }
+    }
+
     let display = crate::screens::display_for(options.screen.as_deref(), cx)?;
     let bounds = centered_window_bounds(options, display, cx);
     let titlebar_hidden = options.titlebar_transparent.unwrap_or(false);
@@ -1613,7 +1753,11 @@ fn open_window_in_app(
     UI_WINDOWS.with(|windows| {
         let mut windows = windows.borrow_mut();
         match root {
-            Some(root) => windows.secondary.push((root, window)),
+            Some(root) => windows.secondary.push(SecondaryWindow {
+                root,
+                window,
+                identifier: options.tabbing_identifier.clone(),
+            }),
             None => windows.main = Some(window),
         }
     });
@@ -1663,7 +1807,11 @@ fn register_ui_lifecycle(cx: &mut gpui::App) {
         forget_window_state(window_id);
         match UI_WINDOWS.with(|windows| windows.borrow_mut().closed(window_id)) {
             ClosedWindow::Unknown => {}
-            ClosedWindow::Secondary(root) => secondary_window_closed_on_ui(root, cx),
+            ClosedWindow::Secondary(roots) => {
+                for root in roots {
+                    secondary_window_closed_on_ui(root, cx);
+                }
+            }
             ClosedWindow::Main => main_window_closed_on_ui(cx),
         }
     })
@@ -1710,6 +1858,36 @@ fn main_window_closed_on_ui(_cx: &mut gpui::App) {
     if UI_WINDOWS.with(|windows| windows.borrow().secondary.is_empty()) {
         crate::context_menu_gpui::cancel_all();
         crate::native_view::with_registry(|registry| registry.destroy_all());
+    }
+}
+
+/// Close the tab painting `root`, leaving its host window and its other tabs.
+/// Called from the tab strip's close button and from `closeWindow`.
+#[cfg(ui_thread)]
+pub(super) fn close_tab_on_ui(
+    view: &mut SoloView,
+    root: u64,
+    window: &mut gpui::Window,
+    cx: &mut gpui::Context<SoloView>,
+) {
+    if !view.remove_tab(root) {
+        return;
+    }
+    UI_WINDOWS.with(|windows| windows.borrow_mut().forget_root(root));
+    let ids = {
+        let mut tree = view.tree.lock().unwrap();
+        tree.window_roots.retain(|id| *id != root);
+        tree.subtree_ids(root)
+    };
+    release_window_subtree(&ids);
+    emit_event_full(&view.event_callback, root, WINDOW_CLOSED_EVENT, |_| {});
+    // The window's close button asked every guarded tab; confirming the last
+    // one closes the whole window, so any unguarded tabs it also hosts go with
+    // it instead of requiring a second click.
+    if view.tabs.is_empty() || view.pending_close_complete() {
+        window.remove_window();
+    } else {
+        refresh_view(window, cx);
     }
 }
 
@@ -2457,8 +2635,15 @@ impl SoloRenderer {
 
         #[cfg(ui_thread)]
         {
+            // A window in a tab strip closes its tab; the last one closes the
+            // native window.
             return self.query_window(target, Some("closing the window"), {
-                |_view, window, _cx| window.remove_window()
+                move |view, window, cx| {
+                    match (view::tab_root(target), view.tabs.len()) {
+                        (Some(root), tabs) if tabs > 1 => close_tab_on_ui(view, root, window, cx),
+                        _ => window.remove_window(),
+                    }
+                }
             });
         }
 
@@ -2479,7 +2664,7 @@ impl SoloRenderer {
         let target = WindowTarget::from_arg(window_id)?;
         #[cfg(any(target_os = "macos", ui_thread))]
         return self.query_window(target, Some("setting the window close guard"), {
-            move |view, _window, _cx| view.close_guarded = guarded
+            move |view, _window, _cx| view.tab_for_mut(target).close_guarded = guarded
         });
 
         #[cfg(not(any(target_os = "macos", ui_thread)))]
@@ -2507,20 +2692,27 @@ impl SoloRenderer {
 
         #[cfg(ui_thread)]
         {
+            // As on macOS, a guarded window stays open and asks; any other
+            // closes through `closeWindow`'s path, so a tab closes its tab.
             let close = self.query_window(
                 target,
                 Some("requesting the window close"),
-                |view, window, cx| {
-                    if !view.close_guarded {
+                move |view, window, cx| {
+                    // A request for one tab replaces a window-level close the
+                    // window's ✕ may have left pending, as the strip's ✕ does:
+                    // otherwise confirming it (Ctrl+W after declining the
+                    // window close) would close the whole window.
+                    view.clear_pending_close();
+                    if !view.tab_for(target).close_guarded {
                         return true;
                     }
-                    view.allow_close();
+                    view.request_close(target);
                     refresh_view(window, cx);
                     false
                 },
             )?;
             if close {
-                return self.post_to_window(target, |_view, window, _cx| window.remove_window());
+                return self.close_window(window_id);
             }
             return Ok(());
         }
@@ -2531,6 +2723,26 @@ impl SoloRenderer {
             Err(Error::from_reason(
                 "Close requests are supported only on macOS and Linux",
             ))
+        }
+    }
+
+    /// The close handler of the main window, or of the window `window_id`,
+    /// kept it open. On Linux the window's close button asks every guarded
+    /// tab and closes the whole window once the last of them closes; a
+    /// declined tab drops that, so closing it later closes only the tab.
+    /// AppKit asks each window on its own, so macOS has nothing to drop.
+    #[napi]
+    pub fn decline_window_close(&self, window_id: Option<f64>) -> Result<()> {
+        let target = WindowTarget::from_arg(window_id)?;
+        #[cfg(ui_thread)]
+        return self.query_window(target, Some("declining the window close"), {
+            |view, _window, _cx| view.clear_pending_close()
+        });
+
+        #[cfg(not(ui_thread))]
+        {
+            let _ = target;
+            Ok(())
         }
     }
 
@@ -2772,45 +2984,74 @@ impl SoloRenderer {
         }
     }
 
-    /// Set the identifier that lets windows sharing it merge into native
-    /// tabs, or clear it with `None`. AppKit then switches automatic window
-    /// tabbing on (set) or off (clear) for the whole process, as opening a
-    /// window does.
+    /// Set the identifier that lets windows sharing it merge into tabs, or
+    /// clear it with `None`. AppKit then switches automatic window tabbing on
+    /// (set) or off (clear) for the whole process; on Linux the identifier
+    /// decides which windows join this one's tab strip, and the tabs it already
+    /// has stay (see docs/multiple-windows.md).
     #[napi]
     pub fn set_window_tabbing_identifier(
         &self,
         identifier: Option<String>,
         window_id: Option<f64>,
     ) -> Result<()> {
+        let target = WindowTarget::from_arg(window_id)?;
         #[cfg(target_os = "macos")]
-        return update_window_in(WindowTarget::from_arg(window_id)?, move |_view, window, _cx| {
+        return update_window_in(target, move |_view, window, _cx| {
             window.set_tabbing_identifier(identifier)
         });
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(ui_thread)]
         {
-            let _ = (identifier, window_id);
-            Err(Error::from_reason("Window tabs are supported only on macOS"))
+            // The main window paints the app's own tree and cannot take part
+            // in the tab strip; saying so beats a silent no-op.
+            if matches!(target, WindowTarget::Main) && identifier.is_some() {
+                return Err(Error::from_reason(
+                    "The main window cannot host window tabs on Linux; set the identifier on a window opened with openWindow()",
+                ));
+            }
+            return self.query_app("setting the window tabbing identifier", move |_cx| {
+                UI_WINDOWS.with(|windows| windows.borrow_mut().set_identifier(target, identifier));
+            });
+        }
+
+        #[cfg(not(any(target_os = "macos", ui_thread)))]
+        {
+            let _ = (identifier, target);
+            Err(Error::from_reason(
+                "Window tabs are supported only on macOS and Linux",
+            ))
         }
     }
 
-    /// The window's tabbing identifier as AppKit reports it. A window without
-    /// one reports AppKit's default.
+    /// The window's tabbing identifier. AppKit reports its own default for a
+    /// window without one; Linux reports an empty string.
     #[napi]
     pub fn get_window_tabbing_identifier(&self, window_id: Option<f64>) -> Result<String> {
+        let target = WindowTarget::from_arg(window_id)?;
         #[cfg(target_os = "macos")]
-        return with_appkit_window(WindowTarget::from_arg(window_id)?, |window| {
+        return with_appkit_window(target, |window| {
             Ok(window.tabbingIdentifier().to_string())
         });
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(ui_thread)]
         {
-            let _ = window_id;
-            Err(Error::from_reason("Window tabs are supported only on macOS"))
+            return self.query_app("reading the window tabbing identifier", move |_cx| {
+                UI_WINDOWS.with(|windows| windows.borrow().identifier(target))
+            });
+        }
+
+        #[cfg(not(any(target_os = "macos", ui_thread)))]
+        {
+            let _ = target;
+            Err(Error::from_reason(
+                "Window tabs are supported only on macOS and Linux",
+            ))
         }
     }
 
     /// Show or hide the tab overview (Show All Tabs) for the window's tabs.
+    /// Linux draws the tab strip in the window, so there is no overview.
     #[napi]
     pub fn toggle_window_tab_overview(&self, window_id: Option<f64>) -> Result<()> {
         #[cfg(target_os = "macos")]
@@ -2822,7 +3063,9 @@ impl SoloRenderer {
         #[cfg(not(target_os = "macos"))]
         {
             let _ = window_id;
-            Err(Error::from_reason("Window tabs are supported only on macOS"))
+            Err(Error::from_reason(
+                "The tab overview is macOS-only; on Linux the tabs are the window's tab strip",
+            ))
         }
     }
 
@@ -2840,8 +3083,9 @@ impl SoloRenderer {
 
         #[cfg(ui_thread)]
         {
-            return self.post_to_window(WindowTarget::from_arg(window_id)?, move |view, window, cx| {
-                view.document_edited = edited;
+            let target = WindowTarget::from_arg(window_id)?;
+            return self.post_to_window(target, move |view, window, cx| {
+                view.tab_for_mut(target).document_edited = edited;
                 refresh_view(window, cx);
             });
         }
@@ -2870,9 +3114,10 @@ impl SoloRenderer {
 
         #[cfg(ui_thread)]
         {
+            let target = WindowTarget::from_arg(window_id)?;
             let path = path.map(|path| path.to_string_lossy().into_owned());
-            return self.post_to_window(WindowTarget::from_arg(window_id)?, move |view, _window, _cx| {
-                view.document_path = path;
+            return self.post_to_window(target, move |view, _window, _cx| {
+                view.tab_for_mut(target).document_path = path;
             });
         }
 
@@ -2895,11 +3140,10 @@ impl SoloRenderer {
 
         #[cfg(ui_thread)]
         {
-            return self.query_window(
-                WindowTarget::from_arg(window_id)?,
-                Some("the document edited state"),
-                |view, _window, _cx| view.document_edited,
-            );
+            let target = WindowTarget::from_arg(window_id)?;
+            return self.query_window(target, Some("the document edited state"), {
+                move |view, _window, _cx| view.tab_for(target).document_edited
+            });
         }
 
         #[cfg(not(any(target_os = "macos", ui_thread)))]
@@ -2921,11 +3165,10 @@ impl SoloRenderer {
 
         #[cfg(ui_thread)]
         {
-            return self.query_window(
-                WindowTarget::from_arg(window_id)?,
-                Some("the document path"),
-                |view, _window, _cx| view.document_path.clone(),
-            );
+            let target = WindowTarget::from_arg(window_id)?;
+            return self.query_window(target, Some("the document path"), {
+                move |view, _window, _cx| view.tab_for(target).document_path.clone()
+            });
         }
 
         #[cfg(not(any(target_os = "macos", ui_thread)))]
@@ -3205,8 +3448,9 @@ impl SoloRenderer {
 
     #[napi]
     pub fn set_window_title(&self, title: String, window_id: Option<f64>) -> Result<()> {
-        self.post_to_window(WindowTarget::from_arg(window_id)?, move |view, window, cx| {
-            view.window_title = title;
+        let target = WindowTarget::from_arg(window_id)?;
+        self.post_to_window(target, move |view, window, cx| {
+            view.tab_for_mut(target).title = title;
             refresh_view(window, cx);
         })
     }
