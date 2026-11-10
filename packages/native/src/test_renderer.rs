@@ -1,25 +1,45 @@
 /// TestSoloRenderer — GPU-backed GPUI test renderer exposed to Node.js via napi.
 ///
-/// Uses gpui::VisualTestAppContext (real Metal rendering on macOS) with
-/// TestDispatcher for deterministic scheduling. Runs the SAME SoloView,
-/// build_element(), apply_styles(), and event handlers as production.
+/// Uses gpui::VisualTestAppContext on macOS (Metal) and
+/// gpui::HeadlessAppContext on Linux (wgpu/Vulkan), both with TestDispatcher
+/// for deterministic scheduling. Runs the SAME SoloView, build_element(),
+/// apply_styles(), and event handlers as production.
 ///
-/// Windows are positioned offscreen at (-10000, -10000) — invisible but
-/// fully rendered by Metal. This enables capture_screenshot() for visual
-/// test validation.
+/// macOS positions its windows offscreen at (-10000, -10000) — invisible but
+/// fully rendered. Linux windows are headless: GPUI's `TestPlatform` owns
+/// them and the wgpu headless renderer rasterizes their frames, so
+/// capture_screenshot() works on both platforms.
 ///
-/// VisualTestAppContext is !Send, so it is stored in thread-local state.
-/// All napi calls happen on the JS main thread.
+/// TestCx is !Send, so it is stored in thread-local state. All napi calls
+/// happen on the JS main thread.
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
+#[cfg(target_os = "macos")]
 use objc2::MainThreadMarker;
+#[cfg(target_os = "macos")]
 use objc2_app_kit::NSScreen;
 
 use gpui::AppContext as _;
+use gpui::{AnyWindowHandle, Entity};
+
+/// A unified handle over the two GPUI test contexts. macOS keeps its Metal
+/// rendering through `VisualTestAppContext`; Linux uses `HeadlessAppContext`
+/// with a wgpu headless renderer, so frames are rasterized on both.
+#[cfg(target_os = "macos")]
+type TestCx = gpui::VisualTestAppContext;
+#[cfg(not(target_os = "macos"))]
+type TestCx = gpui::HeadlessAppContext;
+
+/// The platform's context-menu task: an AppKit helper on macOS, the in-window
+/// GPUI menu on Linux.
+#[cfg(target_os = "macos")]
+use crate::context_menu::ContextMenuTask as NativeContextMenuTask;
+#[cfg(not(target_os = "macos"))]
+use crate::context_menu_gpui::MenuTask as NativeContextMenuTask;
 
 use crate::element_tree::EventPayload;
 use crate::renderer::{
@@ -29,21 +49,176 @@ use crate::renderer::{
 };
 use crate::retained_tree::RetainedTree;
 
+/// Simulate an input event on `window`, as GPUI's `VisualTestAppContext`
+/// does on macOS: dispatch through the window and settle the loop. The same
+/// path also runs under the Linux headless context, whose windows receive
+/// events exactly like a real GPUI window.
+fn simulate_event<E: gpui::InputEvent>(
+    cx: &mut TestCx,
+    window: AnyWindowHandle,
+    event: E,
+) {
+    cx.update_window(window, |_, window, cx| {
+        window.dispatch_event(event.to_platform_input(), cx);
+    })
+    .ok();
+    cx.run_until_parked();
+}
+
+fn simulate_mouse_down(
+    cx: &mut TestCx,
+    window: AnyWindowHandle,
+    position: gpui::Point<gpui::Pixels>,
+    button: gpui::MouseButton,
+    modifiers: gpui::Modifiers,
+) {
+    simulate_event(
+        cx,
+        window,
+        gpui::MouseDownEvent {
+            position,
+            modifiers,
+            button,
+            click_count: 1,
+            first_mouse: false,
+        },
+    );
+}
+
+fn simulate_mouse_up(
+    cx: &mut TestCx,
+    window: AnyWindowHandle,
+    position: gpui::Point<gpui::Pixels>,
+    button: gpui::MouseButton,
+    modifiers: gpui::Modifiers,
+) {
+    simulate_event(
+        cx,
+        window,
+        gpui::MouseUpEvent {
+            position,
+            modifiers,
+            button,
+            click_count: 1,
+        },
+    );
+}
+
+fn simulate_mouse_move(
+    cx: &mut TestCx,
+    window: AnyWindowHandle,
+    position: gpui::Point<gpui::Pixels>,
+    button: Option<gpui::MouseButton>,
+    modifiers: gpui::Modifiers,
+) {
+    simulate_event(
+        cx,
+        window,
+        gpui::MouseMoveEvent {
+            position,
+            modifiers,
+            pressed_button: button,
+        },
+    );
+}
+
+/// Park the pointer outside the window.
+///
+/// GPUI's `TestPlatform` starts every window's pointer at (0, 0), and a
+/// headless window has no cursor to move it. Left there, whatever sits in the
+/// top-left corner is hovered from the first frame, before a test simulates
+/// any input. macOS opens its test windows offscreen at (-10000, -10000), so
+/// the pointer never lands inside one.
+#[cfg(not(target_os = "macos"))]
+fn park_pointer_outside_window(cx: &mut TestCx, window: AnyWindowHandle) {
+    simulate_mouse_move(
+        cx,
+        window,
+        gpui::point(gpui::px(-10_000.0), gpui::px(-10_000.0)),
+        None,
+        gpui::Modifiers::default(),
+    );
+}
+
+#[cfg(target_os = "macos")]
+fn park_pointer_outside_window(_cx: &mut TestCx, _window: AnyWindowHandle) {}
+
+fn simulate_keystrokes(cx: &mut TestCx, window: AnyWindowHandle, keystrokes: &str) {
+    for keystroke_text in keystrokes.split_whitespace() {
+        let keystroke = gpui::Keystroke::parse(keystroke_text)
+            .unwrap_or_else(|_| panic!("Invalid keystroke: {}", keystroke_text));
+        cx.update_window(window, |_, window, cx| {
+            window.dispatch_keystroke(keystroke, cx);
+        })
+        .ok();
+    }
+    cx.run_until_parked();
+}
+
+/// The test app context, fresh for each renderer.
+#[cfg(target_os = "macos")]
+fn new_test_context() -> TestCx {
+    gpui::VisualTestAppContext::new(test_platform())
+}
+
+/// The headless app context on Linux: real text shaping and wgpu rendering
+/// (Vulkan; lavapipe on CI), with deterministic time. GPUI's
+/// `WgpuHeadlessRenderer` lets `capture_screenshot` read the same frame the
+/// app would paint, so the visual tests run here too.
+#[cfg(not(target_os = "macos"))]
+fn new_test_context() -> TestCx {
+    let text_system: Arc<dyn gpui::PlatformTextSystem> =
+        Arc::new(gpui_wgpu::CosmicTextSystem::new("fallback"));
+    gpui::HeadlessAppContext::with_platform(
+        text_system,
+        Arc::new(()),
+        gpui_platform::current_headless_renderer,
+    )
+}
+
+/// Open a window at the default test size (1280x800, offscreen on macOS).
+fn open_window_default<V: gpui::Render + 'static>(
+    cx: &mut TestCx,
+    build_root: impl FnOnce(&mut gpui::Window, &mut gpui::App) -> Entity<V>,
+) -> anyhow::Result<gpui::WindowHandle<V>> {
+    #[cfg(target_os = "macos")]
+    return cx.open_offscreen_window_default(build_root);
+    #[cfg(not(target_os = "macos"))]
+    return cx.open_window(gpui::size(gpui::px(1280.0), gpui::px(800.0)), build_root);
+}
+
+/// Open a window at an explicit size, offscreen on macOS, at the origin on
+/// headless Linux (position is invisible there, so it is harmless).
+fn open_window_at<V: gpui::Render + 'static>(
+    cx: &mut TestCx,
+    size: gpui::Size<gpui::Pixels>,
+    build_root: impl FnOnce(&mut gpui::Window, &mut gpui::App) -> Entity<V>,
+) -> anyhow::Result<gpui::WindowHandle<V>> {
+    #[cfg(target_os = "macos")]
+    return cx.open_offscreen_window(size, build_root);
+    #[cfg(not(target_os = "macos"))]
+    return cx.open_window(size, build_root);
+}
+
 // ── Thread-local storage for !Send GPUI types ────────────────────────
 
-/// Bundles VisualTestAppContext + window handle + view entity.
-/// Stored in thread_local because VisualTestAppContext is !Send (Rc<AppCell>).
+/// Bundles the test context + window handle + view entity.
+/// Stored in thread_local because the context is !Send (Rc<AppCell>).
 /// Field order is load-bearing: Rust drops fields in declaration order, and
 /// gpui panics at app teardown if an `Entity` handle outlives its `App`.
 /// `view` and `secondary` must therefore be declared before `cx`.
 struct VisualTestState {
-    view: gpui::Entity<SoloView>,
-    window: gpui::AnyWindowHandle,
+    view: Entity<SoloView>,
+    window: AnyWindowHandle,
     /// Windows opened with `openWindow`, in opening order.
     secondary: Vec<TestWindow>,
     /// The alert the prompt builder is showing, for `pendingAlert`.
     alert: Rc<RefCell<Option<PendingAlert>>>,
-    cx: gpui::VisualTestAppContext,
+    /// Linux keeps the tabbing identifier in the UI-thread window registry,
+    /// which the test renderer does not use; store it here instead so the JS
+    /// API round-trips.
+    main_tabbing_identifier: String,
+    cx: TestCx,
 }
 
 /// An alert shown through `TestAlert` instead of a real `NSAlert` sheet.
@@ -87,21 +262,19 @@ struct TestWindow {
     root: u64,
     view: gpui::Entity<SoloView>,
     window: gpui::AnyWindowHandle,
+    /// See [`VisualTestState::main_tabbing_identifier`].
+    tabbing_identifier: String,
 }
 
 thread_local! {
     static TEST_STATE: RefCell<Option<VisualTestState>> = const { RefCell::new(None) };
 }
 
-/// Access VisualTestAppContext + window + view mutably within thread_local.
+/// Access the test app context + window + view mutably within thread_local.
 /// The closure receives (&mut cx, window_handle, &view_entity).
 /// Returns Err if no TestSoloRenderer has been created on this thread.
 fn with_test_state<R>(
-    f: impl FnOnce(
-        &mut gpui::VisualTestAppContext,
-        gpui::AnyWindowHandle,
-        &gpui::Entity<SoloView>,
-    ) -> Result<R>,
+    f: impl FnOnce(&mut TestCx, AnyWindowHandle, &Entity<SoloView>) -> Result<R>,
 ) -> Result<R> {
     TEST_STATE.with(|cell| {
         let mut borrow = cell.borrow_mut();
@@ -110,6 +283,12 @@ fn with_test_state<R>(
             .ok_or_else(|| Error::from_reason("TestSoloRenderer not initialized"))?;
         f(&mut state.cx, state.window, &state.view)
     })
+}
+
+/// Whether a `TestSoloRenderer` exists on this thread. Free napi helpers use
+/// it to prefer the test app over the live UI thread.
+pub(crate) fn has_app() -> bool {
+    TEST_STATE.with(|cell| cell.borrow().is_some())
 }
 
 /// Run `f` against the test app, if a `TestSoloRenderer` exists on this
@@ -125,11 +304,7 @@ pub(crate) fn with_app<R>(f: impl FnOnce(&mut gpui::App) -> R) -> Option<R> {
 /// window for `Some`, the main window for `None`.
 fn with_window<R>(
     root: Option<u64>,
-    f: impl FnOnce(
-        &mut gpui::VisualTestAppContext,
-        gpui::AnyWindowHandle,
-        &gpui::Entity<SoloView>,
-    ) -> Result<R>,
+    f: impl FnOnce(&mut TestCx, AnyWindowHandle, &Entity<SoloView>) -> Result<R>,
 ) -> Result<R> {
     TEST_STATE.with(|cell| {
         let mut borrow = cell.borrow_mut();
@@ -165,6 +340,7 @@ fn in_view<R>(
 
 /// Run `f` on the NSWindow that paints `root`, outside the test state:
 /// AppKit calls back into GPUI synchronously. Then settle the app.
+#[cfg(target_os = "macos")]
 fn with_appkit_window<R>(
     root: Option<u64>,
     f: impl FnOnce(&objc2_app_kit::NSWindow) -> Result<R>,
@@ -181,6 +357,7 @@ fn with_appkit_window<R>(
     Ok(result)
 }
 
+#[cfg(target_os = "macos")]
 fn validate_display_count(display_count: usize) -> Result<()> {
     if display_count == 0 {
         return Err(Error::from_reason(
@@ -191,7 +368,8 @@ fn validate_display_count(display_count: usize) -> Result<()> {
     Ok(())
 }
 
-fn ensure_macos_display_available() -> Result<()> {
+#[cfg(target_os = "macos")]
+fn ensure_display_available() -> Result<()> {
     let mtm = MainThreadMarker::new().ok_or_else(|| {
         Error::from_reason("TestSoloRenderer must be created on the macOS main thread")
     })?;
@@ -199,20 +377,36 @@ fn ensure_macos_display_available() -> Result<()> {
     validate_display_count(NSScreen::screens(mtm).len())
 }
 
+/// A test renderer needs no display on Linux: the backing platform is
+/// headless, so nothing has to be on screen.
+#[cfg(not(target_os = "macos"))]
+fn ensure_display_available() -> Result<()> {
+    Ok(())
+}
+
+/// The GPUI platform backing the macOS test app: the real Metal platform, so
+/// screenshots reflect what apps see. Linux uses `HeadlessAppContext`
+/// instead, which brings its own `TestPlatform`.
+#[cfg(target_os = "macos")]
+fn test_platform() -> Rc<dyn gpui::Platform> {
+    Rc::new(gpui_macos::MacPlatform::new(false))
+}
+
 // ── TestSoloRenderer ────────────────────────────────────────────────
 
 crate::renderer::tree_mutation_api!(TestSoloRenderer);
 
-/// GPU-backed GPUI test renderer. Uses VisualTestAppContext (real Metal
-/// rendering on macOS) with TestDispatcher for deterministic scheduling.
-/// Same SoloView and rendering pipeline as production.
+/// GPU-backed GPUI test renderer. Uses VisualTestAppContext and Metal on
+/// macOS, HeadlessAppContext and wgpu on Linux, both with TestDispatcher for
+/// deterministic scheduling. Same SoloView and rendering pipeline as
+/// production.
 ///
 /// Usage from JS:
 ///   const r = new TestSoloRenderer()
 ///   r.createElement(1, "div")
 ///   r.setRoot(1)
 ///   r.commitMutations()
-///   r.flush()                  // triggers SoloView::render() via Metal
+///   r.flush()                  // triggers SoloView::render()
 ///   r.simulateClick(50, 50)    // dispatches through GPUI hit testing
 ///   const events = r.drainEvents()
 ///   r.captureScreenshot("/tmp/test.png")  // saves rendered UI as PNG
@@ -233,7 +427,7 @@ pub struct TestSoloRenderer {
 impl TestSoloRenderer {
     #[napi(constructor)]
     pub fn new() -> Result<Self> {
-        ensure_macos_display_available()?;
+        ensure_display_available()?;
 
         let tree = Arc::new(Mutex::new(RetainedTree::new()));
         let events: Arc<Mutex<Vec<EventPayload>>> = Arc::new(Mutex::new(Vec::new()));
@@ -250,10 +444,10 @@ impl TestSoloRenderer {
         let selection = crate::text::SharedSelection::default();
         let selection_clone = selection.clone();
 
-        // Create VisualTestAppContext with real macOS Metal rendering +
-        // TestDispatcher for deterministic scheduling.
-        let mac_platform = gpui_macos::MacPlatform::new(false);
-        let mut cx = gpui::VisualTestAppContext::new(Rc::new(mac_platform));
+        // Create the test context with deterministic scheduling. On macOS
+        // it is the Metal-backed visual context; on Linux the cross-platform
+        // headless context with real text shaping and no rasterizer.
+        let mut cx = new_test_context();
         let alert: Rc<RefCell<Option<PendingAlert>>> = Rc::default();
         let pending = alert.clone();
         cx.update(|cx| {
@@ -276,20 +470,21 @@ impl TestSoloRenderer {
             });
         });
 
-        // Open an offscreen window at (-10000, -10000) — invisible but fully
-        // rendered by Metal. Uses the same SoloView as production.
-        let window_handle = cx
-            .open_offscreen_window_default(|_window, app| {
-                app.new(|_cx| {
-                    SoloView::new(
-                        tree_clone,
-                        callback_clone,
-                        "Solo Test".to_string(),
-                        selection_clone,
-                    )
-                })
+        // Open the main window. macOS puts it offscreen at (-10000, -10000)
+        // (invisible but fully rendered by Metal); Linux uses a headless
+        // window that the wgpu headless renderer rasterizes. Both run the
+        // same SoloView as production.
+        let window_handle = open_window_default(&mut cx, |_window, app| {
+            app.new(|_cx| {
+                SoloView::new(
+                    tree_clone,
+                    callback_clone,
+                    "Solo Test".to_string(),
+                    selection_clone,
+                )
             })
-            .map_err(|e| Error::from_reason(format!("Failed to open test window: {}", e)))?;
+        })
+        .map_err(|e| Error::from_reason(format!("Failed to open test window: {}", e)))?;
 
         // Get the root entity (Entity<SoloView>) from the window.
         let view = window_handle
@@ -298,6 +493,7 @@ impl TestSoloRenderer {
 
         // Convert typed WindowHandle<SoloView> to AnyWindowHandle for simulation methods.
         let window: gpui::AnyWindowHandle = window_handle.into();
+        park_pointer_outside_window(&mut cx, window);
 
         // Store !Send types on the JS main thread.
         TEST_STATE.with(|cell| {
@@ -307,6 +503,7 @@ impl TestSoloRenderer {
                 view,
                 secondary: Vec::new(),
                 alert,
+                main_tabbing_identifier: String::new(),
             });
         });
 
@@ -360,22 +557,24 @@ impl TestSoloRenderer {
             let callback = self.event_callback.clone();
             let title = options.title.clone().unwrap_or_else(|| "Solo".to_string());
             let selection = self.selection.clone();
-            let handle = cx
-                .open_offscreen_window(size, |_window, app| {
-                    app.new(|_cx| {
-                        SoloView::new(tree, callback, title, selection)
-                            .for_window_root(root, Some(clock))
-                    })
+            let handle = open_window_at(cx, size, |_window, app| {
+                app.new(|_cx| {
+                    SoloView::new(tree, callback, title, selection)
+                        .for_window_root(root, Some(clock))
                 })
-                .map_err(|e| Error::from_reason(format!("Failed to open test window: {}", e)))?;
+            })
+            .map_err(|e| Error::from_reason(format!("Failed to open test window: {}", e)))?;
             let view = handle
                 .entity(cx)
                 .map_err(|e| Error::from_reason(format!("Failed to get root view: {}", e)))?;
+            let window: gpui::AnyWindowHandle = handle.into();
+            park_pointer_outside_window(cx, window);
             cx.run_until_parked();
             Ok(TestWindow {
                 root,
                 view,
-                window: handle.into(),
+                window,
+                tabbing_identifier: String::new(),
             })
         });
         match opened {
@@ -469,10 +668,19 @@ impl TestSoloRenderer {
     #[napi]
     pub fn set_window_fullscreen(&self, fullscreen: bool, window_id: Option<f64>) -> Result<()> {
         let root = window_id.map(to_element_id).transpose()?;
-        with_appkit_window(root, |window| {
+        #[cfg(target_os = "macos")]
+        return with_appkit_window(root, |window| {
             crate::renderer::set_appkit_fullscreen(window, fullscreen);
             Ok(())
-        })
+        });
+        #[cfg(not(target_os = "macos"))]
+        {
+            return in_view(root, move |_view, window, _cx| {
+                if window.is_fullscreen() != fullscreen {
+                    window.toggle_fullscreen();
+                }
+            });
+        }
     }
 
     #[napi]
@@ -484,10 +692,15 @@ impl TestSoloRenderer {
     #[napi]
     pub fn minimize_window(&self, window_id: Option<f64>) -> Result<()> {
         let root = window_id.map(to_element_id).transpose()?;
-        with_appkit_window(root, |window| {
+        #[cfg(target_os = "macos")]
+        return with_appkit_window(root, |window| {
             window.miniaturize(None);
             Ok(())
-        })
+        });
+        #[cfg(not(target_os = "macos"))]
+        {
+            return in_view(root, |_view, window, _cx| window.minimize_window());
+        }
     }
 
     #[napi]
@@ -504,9 +717,21 @@ impl TestSoloRenderer {
     #[napi]
     pub fn resize_window(&self, width: f64, height: f64, window_id: Option<f64>) -> Result<()> {
         let root = window_id.map(to_element_id).transpose()?;
-        with_appkit_window(root, |window| {
+        #[cfg(target_os = "macos")]
+        return with_appkit_window(root, |window| {
             crate::renderer::resize_appkit_window(window, width, height)
-        })
+        });
+        #[cfg(not(target_os = "macos"))]
+        {
+            let size = crate::renderer::validated_window_size(width, height)?;
+            return in_view(root, move |_view, window, cx| {
+                window.resize(size);
+                // `resize` only updates the platform window on Linux; the
+                // cached viewport size moves in `bounds_changed`, which the
+                // platform would normally call.
+                window.bounds_changed(cx);
+            });
+        }
     }
 
     #[napi]
@@ -515,48 +740,147 @@ impl TestSoloRenderer {
         identifier: Option<String>,
         window_id: Option<f64>,
     ) -> Result<()> {
-        let root = window_id.map(to_element_id).transpose()?;
-        in_view(root, move |_view, window, _cx| window.set_tabbing_identifier(identifier))
+        #[cfg(target_os = "macos")]
+        {
+            let root = window_id.map(to_element_id).transpose()?;
+            return in_view(root, move |_view, window, _cx| {
+                window.set_tabbing_identifier(identifier)
+            });
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let target = crate::renderer::WindowTarget::from_arg(window_id)?;
+            TEST_STATE.with(|cell| {
+                let mut borrow = cell.borrow_mut();
+                let state = borrow
+                    .as_mut()
+                    .ok_or_else(|| Error::from_reason("TestSoloRenderer not initialized"))?;
+                let identifier = identifier.unwrap_or_default();
+                match target {
+                    crate::renderer::WindowTarget::Main => {
+                        state.main_tabbing_identifier = identifier;
+                    }
+                    crate::renderer::WindowTarget::Root(root) => {
+                        let window = state
+                            .secondary
+                            .iter_mut()
+                            .find(|window| window.root == root)
+                            .ok_or_else(|| {
+                                Error::from_reason(format!("Window {root} is not open"))
+                            })?;
+                        window.tabbing_identifier = identifier;
+                    }
+                }
+                Ok(())
+            })
+        }
     }
 
     #[napi]
     pub fn get_window_tabbing_identifier(&self, window_id: Option<f64>) -> Result<String> {
-        let root = window_id.map(to_element_id).transpose()?;
-        with_appkit_window(root, |window| Ok(window.tabbingIdentifier().to_string()))
+        #[cfg(target_os = "macos")]
+        {
+            let root = window_id.map(to_element_id).transpose()?;
+            return with_appkit_window(root, |window| Ok(window.tabbingIdentifier().to_string()));
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let target = crate::renderer::WindowTarget::from_arg(window_id)?;
+            TEST_STATE.with(|cell| {
+                let borrow = cell.borrow();
+                let state = borrow
+                    .as_ref()
+                    .ok_or_else(|| Error::from_reason("TestSoloRenderer not initialized"))?;
+                match target {
+                    crate::renderer::WindowTarget::Main => {
+                        Ok(state.main_tabbing_identifier.clone())
+                    }
+                    crate::renderer::WindowTarget::Root(root) => state
+                        .secondary
+                        .iter()
+                        .find(|window| window.root == root)
+                        .map(|window| window.tabbing_identifier.clone())
+                        .ok_or_else(|| Error::from_reason(format!("Window {root} is not open"))),
+                }
+            })
+        }
     }
 
     #[napi]
     pub fn toggle_window_tab_overview(&self, window_id: Option<f64>) -> Result<()> {
         let root = window_id.map(to_element_id).transpose()?;
-        with_appkit_window(root, |window| {
+        #[cfg(target_os = "macos")]
+        return with_appkit_window(root, |window| {
             window.toggleTabOverview(None);
             Ok(())
-        })
+        });
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = root;
+            Err(Error::from_reason(
+                "The tab overview is macOS-only; on Linux the tabs are the window's tab strip",
+            ))
+        }
     }
 
     #[napi]
     pub fn set_window_document_edited(&self, edited: bool, window_id: Option<f64>) -> Result<()> {
         let root = window_id.map(to_element_id).transpose()?;
-        in_view(root, move |_view, window, _cx| window.set_window_edited(edited))
+        #[cfg(target_os = "macos")]
+        return in_view(root, move |_view, window, _cx| window.set_window_edited(edited));
+        #[cfg(not(target_os = "macos"))]
+        {
+            let target = crate::renderer::WindowTarget::from_arg(window_id)?;
+            return in_view(root, move |view, _window, _cx| {
+                view.tab_for_mut(target).document_edited = edited;
+            });
+        }
     }
 
     #[napi]
     pub fn set_window_document_path(&self, path: Option<String>, window_id: Option<f64>) -> Result<()> {
-        let path = crate::renderer::document_path(path)?;
-        let root = window_id.map(to_element_id).transpose()?;
-        in_view(root, move |_view, window, _cx| window.set_document_path(path.as_deref()))
+        #[cfg(target_os = "macos")]
+        {
+            let path = crate::renderer::document_path(path)?;
+            let root = window_id.map(to_element_id).transpose()?;
+            return in_view(root, move |_view, window, _cx| window.set_document_path(path.as_deref()));
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let path = crate::renderer::document_path(path)?;
+            let target = crate::renderer::WindowTarget::from_arg(window_id)?;
+            let root = window_id.map(to_element_id).transpose()?;
+            let path = path.map(|path| path.to_string_lossy().into_owned());
+            return in_view(root, move |view, _window, _cx| {
+                view.tab_for_mut(target).document_path = path;
+            });
+        }
     }
 
     #[napi]
     pub fn is_window_document_edited(&self, window_id: Option<f64>) -> Result<bool> {
         let root = window_id.map(to_element_id).transpose()?;
-        with_appkit_window(root, |window| Ok(window.isDocumentEdited()))
+        #[cfg(target_os = "macos")]
+        return with_appkit_window(root, |window| Ok(window.isDocumentEdited()));
+        #[cfg(not(target_os = "macos"))]
+        {
+            let target = crate::renderer::WindowTarget::from_arg(window_id)?;
+            return in_view(root, move |view, _window, _cx| view.tab_for(target).document_edited);
+        }
     }
 
     #[napi]
     pub fn get_window_document_path(&self, window_id: Option<f64>) -> Result<Option<String>> {
         let root = window_id.map(to_element_id).transpose()?;
-        with_appkit_window(root, |window| Ok(crate::renderer::represented_filename(window)))
+        #[cfg(target_os = "macos")]
+        return with_appkit_window(root, |window| Ok(crate::renderer::represented_filename(window)));
+        #[cfg(not(target_os = "macos"))]
+        {
+            let target = crate::renderer::WindowTarget::from_arg(window_id)?;
+            return in_view(root, move |view, _window, _cx| {
+                view.tab_for(target).document_path.clone()
+            });
+        }
     }
 
     /// Content size of the main window, or of the window `window_id`.
@@ -746,26 +1070,75 @@ impl TestSoloRenderer {
     pub fn show_context_menu(
         &self,
         json: String,
-    ) -> Result<AsyncTask<crate::context_menu::ContextMenuTask>> {
+    ) -> Result<AsyncTask<NativeContextMenuTask>> {
         self.flush()?;
         // The menu opens in the window of the element it belongs to.
         let owner = serde_json::from_str::<serde_json::Value>(&json)
             .ok()
             .and_then(|value| value["elementId"].as_f64());
-        with_window(self.window_root_of(owner)?, |cx, window, _view| {
-            cx.update_window(window, |_, window, _app| {
-                // Every menu in this harness is automation's.
-                crate::context_menu::show(&json, &self.tree.lock().unwrap(), window, true)
+        let root = self.window_root_of(owner)?;
+        #[cfg(target_os = "macos")]
+        {
+            return with_window(root, |cx, window, _view| {
+                cx.update_window(window, |_, window, _app| {
+                    // Every menu in this harness is automation's.
+                    crate::context_menu::show(&json, &self.tree.lock().unwrap(), window, true)
+                })
+                .map_err(|error| Error::from_reason(error.to_string()))?
             })
-            .map_err(|error| Error::from_reason(error.to_string()))?
-        })
-        .map(AsyncTask::new)
+            .map(AsyncTask::new);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let tree = self.tree.clone();
+            let receiver = in_view(
+                root,
+                move |_view, window, cx| -> Result<std::sync::mpsc::Receiver<Option<String>>> {
+                    let focus = cx.focus_handle();
+                    let receiver = crate::context_menu_gpui::show(
+                        &json,
+                        &tree.lock().unwrap(),
+                        focus.clone(),
+                    )?;
+                    focus.focus(window, cx);
+                    // Physical keys reach the menu before any key binding or
+                    // focused input, whichever element currently has focus.
+                    let weak = cx.weak_entity();
+                    let subscription = cx.intercept_keystrokes(move |event, _window, cx| {
+                        if crate::context_menu_gpui::handle_key(&event.keystroke.key) {
+                            if let Some(view) = weak.upgrade() {
+                                view.update(cx, |_view, cx| cx.notify());
+                            }
+                            cx.stop_propagation();
+                        }
+                    });
+                    crate::context_menu_gpui::set_interceptor(subscription);
+                    cx.notify();
+                    Ok(receiver)
+                },
+            )??;
+            Ok(AsyncTask::new(crate::context_menu_gpui::MenuTask::new(
+                receiver,
+            )))
+        }
     }
 
     #[napi]
     pub fn cancel_context_menu(&self, request_id: f64) -> Result<()> {
-        crate::context_menu::cancel(to_element_id(request_id)?);
-        Ok(())
+        let request_id = to_element_id(request_id)?;
+        #[cfg(target_os = "macos")]
+        {
+            crate::context_menu::cancel(request_id);
+            Ok(())
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            in_view(None, move |_view, _window, cx| {
+                if crate::context_menu_gpui::cancel(request_id) {
+                    cx.notify();
+                }
+            })
+        }
     }
 
     /// Evaluate JavaScript in the mounted WebView through the native bridge.
@@ -916,8 +1289,8 @@ impl TestSoloRenderer {
         let button = crate::automation::mouse_button(button.unwrap_or(0));
         with_window(self.window_root_of(element_id)?, |cx, window, _view| {
             let position = gpui::point(gpui::px(x as f32), gpui::px(y as f32));
-            cx.simulate_mouse_down(window, position, button, gpui::Modifiers::default());
-            cx.simulate_mouse_up(window, position, button, gpui::Modifiers::default());
+            simulate_mouse_down(cx, window, position, button, gpui::Modifiers::default());
+            simulate_mouse_up(cx, window, position, button, gpui::Modifiers::default());
             Ok(())
         })
     }
@@ -928,11 +1301,14 @@ impl TestSoloRenderer {
     #[napi]
     pub fn simulate_keystrokes(&self, keystrokes: String, element_id: Option<f64>) -> Result<()> {
         let keys = crate::automation::parse_keystrokes(&keystrokes).map_err(Error::from_reason)?;
+        #[cfg(target_os = "macos")]
         if crate::context_menu::dispatch_keys(&keys) {
             return Ok(());
         }
+        #[cfg(not(target_os = "macos"))]
+        let _ = keys;
         with_window(self.window_root_of(element_id)?, |cx, window, _view| {
-            cx.simulate_keystrokes(window, &keystrokes);
+            simulate_keystrokes(cx, window, &keystrokes);
             Ok(())
         })
     }
@@ -950,15 +1326,19 @@ impl TestSoloRenderer {
         element_id: Option<f64>,
     ) -> Result<()> {
         let key = crate::automation::parse_keystroke(&keystroke).map_err(Error::from_reason)?;
+        #[cfg(target_os = "macos")]
         if crate::context_menu::dispatch_keys(std::slice::from_ref(&key)) {
             return Ok(());
         }
+        #[cfg(not(target_os = "macos"))]
+        let _ = key;
         with_window(self.window_root_of(element_id)?, |cx, window, _view| {
             let parsed = gpui::Keystroke::parse(&keystroke).map_err(|e| {
                 Error::from_reason(format!("Invalid keystroke '{}': {}", keystroke, e))
             })?;
 
-            cx.simulate_event(
+            simulate_event(
+                cx,
                 window,
                 gpui::KeyDownEvent {
                     keystroke: parsed,
@@ -981,7 +1361,7 @@ impl TestSoloRenderer {
                 Error::from_reason(format!("Invalid keystroke '{}': {}", keystroke, e))
             })?;
 
-            cx.simulate_event(window, gpui::KeyUpEvent { keystroke: parsed });
+            simulate_event(cx, window, gpui::KeyUpEvent { keystroke: parsed });
 
             Ok(())
         })
@@ -1001,7 +1381,8 @@ impl TestSoloRenderer {
         with_window(self.window_root_of(element_id)?, |cx, window, _view| {
             let button: Option<gpui::MouseButton> = pressed_button.map(crate::automation::mouse_button);
 
-            cx.simulate_mouse_move(
+            simulate_mouse_move(
+                cx,
                 window,
                 gpui::point(gpui::px(x as f32), gpui::px(y as f32)),
                 button,
@@ -1081,7 +1462,8 @@ impl TestSoloRenderer {
         element_id: Option<f64>,
     ) -> Result<()> {
         with_window(self.window_root_of(element_id)?, |cx, window, _view| {
-            cx.simulate_mouse_down(
+            simulate_mouse_down(
+                cx,
                 window,
                 gpui::point(gpui::px(x as f32), gpui::px(y as f32)),
                 crate::automation::mouse_button(button.unwrap_or(0)),
@@ -1102,7 +1484,8 @@ impl TestSoloRenderer {
         element_id: Option<f64>,
     ) -> Result<()> {
         with_window(self.window_root_of(element_id)?, |cx, window, _view| {
-            cx.simulate_mouse_up(
+            simulate_mouse_up(
+                cx,
                 window,
                 gpui::point(gpui::px(x as f32), gpui::px(y as f32)),
                 crate::automation::mouse_button(button.unwrap_or(0)),
@@ -1124,7 +1507,8 @@ impl TestSoloRenderer {
         element_id: Option<f64>,
     ) -> Result<()> {
         with_window(self.window_root_of(element_id)?, |cx, window, _view| {
-            cx.simulate_event(
+            simulate_event(
+                cx,
                 window,
                 gpui::ScrollEvent {
                     position: gpui::point(gpui::px(x as f32), gpui::px(y as f32)),
@@ -1281,7 +1665,7 @@ impl TestSoloRenderer {
     }
 
     /// Capture a screenshot of the current rendered state and save as PNG.
-    /// macOS only — requires Metal GPU rendering via VisualTestAppContext.
+    /// macOS renders through Metal, Linux through the wgpu headless renderer.
     #[napi]
     pub fn capture_screenshot(&self, path: String) -> Result<()> {
         with_test_state(|cx, window, view| {
@@ -1437,7 +1821,7 @@ impl TestSoloRenderer {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
 

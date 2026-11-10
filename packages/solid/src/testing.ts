@@ -1,9 +1,11 @@
-/// macOS-only GPU-backed test harness for @solo/solid.
+/// GPU-backed test harness for @solo/solid.
 ///
 /// Mounts Solid trees through the native TestSoloRenderer, so tests
-/// exercise the same GPUI pipeline as production. On non-macOS builds hasNativeTestRenderer is false and the
-/// suites using this harness skip themselves; headless coverage comes from
-/// MockNativeRenderer-based tests instead.
+/// exercise the same GPUI pipeline as production: Metal on macOS, wgpu
+/// (Vulkan) on Linux. Building the native module without `test-support`
+/// leaves hasNativeTestRenderer false, and the suites using this harness
+/// skip themselves; headless coverage then comes from MockNativeRenderer-
+/// based tests instead.
 
 import type { EventPayload } from "@solo/native"
 import { flush as flushSolid } from "solid-js"
