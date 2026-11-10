@@ -30,9 +30,12 @@ pub(crate) struct MenuBar {
 }
 
 impl MenuBar {
+    /// The icon click emits `applicationReopen` through `callback` without
+    /// waiting for a `configureMenuBar` call, as the macOS status item does.
     pub(crate) fn new(
         options: &crate::renderer::MenuBarOptions,
         application_title: &str,
+        callback: Option<EventCallback>,
     ) -> Result<Self> {
         let icon = load_icon(&options.icon_path)?;
         let tray = SoloTray {
@@ -41,7 +44,7 @@ impl MenuBar {
             icon,
             tooltip: options.tooltip.clone(),
             items: Vec::new(),
-            callback: None,
+            callback,
         };
         // Without a host the icon would be invisible, and a background app
         // with no window and no icon is unreachable; fail where the app can
@@ -83,7 +86,12 @@ impl MenuBar {
             tray.icon = icon;
             tray.tooltip = tooltip;
             tray.items = items;
-            tray.callback = callback;
+            // Keep the callback an earlier update installed when this call
+            // does not carry one: `init` sets it from the renderer, and a
+            // later update must not disable the reopen event.
+            if callback.is_some() {
+                tray.callback = callback;
+            }
         });
         Ok(())
     }

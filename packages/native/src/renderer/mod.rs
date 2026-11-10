@@ -1869,11 +1869,15 @@ fn main_window_closed_on_ui(_cx: &mut gpui::App) {
 /// window exists, so a session without a status-notifier host fails `init`
 /// rather than leaving an app that can only be killed.
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-fn create_ui_menu_bar(options: &WindowOptions, title: &str) -> Result<()> {
+fn create_ui_menu_bar(
+    options: &WindowOptions,
+    title: &str,
+    callback: Option<EventCallback>,
+) -> Result<()> {
     let Some(menu_options) = options.menu_bar.as_ref() else {
         return Ok(());
     };
-    let menu_bar = crate::menu_bar::MenuBar::new(menu_options, title)?;
+    let menu_bar = crate::menu_bar::MenuBar::new(menu_options, title, callback)?;
     MENU_BAR.with(|slot| *slot.borrow_mut() = Some(menu_bar));
     Ok(())
 }
@@ -2449,7 +2453,7 @@ impl SoloRenderer {
                         if let Err(error) = open_window_in_app(
                             None,
                             tree,
-                            callback,
+                            callback.clone(),
                             selection,
                             title.clone(),
                             &window_options,
@@ -2465,7 +2469,9 @@ impl SoloRenderer {
                         // item's Open) brings the window back.
                         cx.set_quit_mode(quit_mode_for_options(&window_options));
                         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-                        if let Err(error) = create_ui_menu_bar(&window_options, &title) {
+                        if let Err(error) =
+                            create_ui_menu_bar(&window_options, &title, callback)
+                        {
                             startup_sender.send(Err(error.reason.clone())).ok();
                             cx.quit();
                             return;
