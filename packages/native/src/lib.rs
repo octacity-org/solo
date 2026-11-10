@@ -12,6 +12,8 @@ mod element_tree;
 mod file_dialogs;
 #[cfg(target_os = "macos")]
 mod context_menu;
+#[cfg(all(not(target_os = "macos"), ui_thread))]
+mod context_menu_gpui;
 #[cfg(target_os = "macos")]
 mod macos_shutdown;
 #[cfg(target_os = "macos")]
