@@ -489,6 +489,8 @@ impl gpui::Render for SoloView {
 
         if self.quit_hook.is_none() {
             self.quit_hook = Some(cx.on_app_quit(|view, _cx| {
+                #[cfg(all(not(target_os = "macos"), ui_thread))]
+                crate::context_menu_gpui::cancel_all();
                 view.system_appearance_subscription.take();
                 view.custom_registry.destroy_all();
                 // Native child views (WKWebView) outlive the retained tree, so
@@ -578,6 +580,13 @@ impl gpui::Render for SoloView {
             gpui::div()
                 .size_full()
                 .capture_key_down(cx.listener(|view, event, window, cx| {
+                    // An open context menu owns navigation keys before any
+                    // shortcut or focused input sees them.
+                    #[cfg(all(not(target_os = "macos"), ui_thread))]
+                    if crate::context_menu_gpui::key_down(event) {
+                        cx.notify();
+                        return;
+                    }
                     crate::application_commands::dispatch_shortcut(event, view, window, cx);
                 }))
                 .on_action(|_: &FocusNext, window, cx| window.focus_next(cx))
@@ -585,6 +594,18 @@ impl gpui::Render for SoloView {
                 .child(selection_frame_reset(self.selection.clone()))
                 .child(crate::automation::bounds_frame_reset())
                 .child(result)
+                .into_any_element()
+        };
+
+        // Context menus paint above the tree, in the window's content space.
+        #[cfg(all(not(target_os = "macos"), ui_thread))]
+        let result = {
+            use gpui::prelude::*;
+            let viewport = window.viewport_size();
+            gpui::div()
+                .size_full()
+                .child(result)
+                .children(crate::context_menu_gpui::overlay(&theme, viewport, cx))
                 .into_any_element()
         };
 
