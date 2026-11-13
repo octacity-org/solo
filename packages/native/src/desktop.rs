@@ -143,6 +143,15 @@ fn validate_absolute_path(path: &str) -> Result<()> {
     Ok(())
 }
 
+/// Create a directory and any missing parents; succeeds when it already
+/// exists. Native so that shipped app code stays off `node:fs`.
+#[napi]
+pub fn create_directory(path: String) -> Result<()> {
+    validate_absolute_path(&path)?;
+    std::fs::create_dir_all(&path)
+        .map_err(|error| Error::from_reason(format!("{path:?}: {error}")))
+}
+
 /// Finder fails silently for a missing path, so report it before dispatch.
 pub(crate) fn validate_existing_path(path: &str) -> Result<()> {
     validate_absolute_path(path)?;
@@ -379,6 +388,29 @@ mod linux {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn creates_nested_directories_and_accepts_existing_ones() {
+        let root =
+            std::env::temp_dir().join(format!("solo-create-directory-{}", std::process::id()));
+        let nested = root.join("a b").join("c");
+        let path = nested.to_str().unwrap().to_string();
+        create_directory(path.clone()).unwrap();
+        assert!(nested.is_dir());
+        create_directory(path).unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn create_directory_rejects_relative_paths_and_files() {
+        assert!(create_directory("relative/dir".into()).is_err());
+        let file = std::env::temp_dir()
+            .join(format!("solo-create-directory-file-{}", std::process::id()));
+        std::fs::write(&file, b"").unwrap();
+        let error = create_directory(file.to_str().unwrap().into()).unwrap_err();
+        assert!(error.reason.contains(file.to_str().unwrap()), "{}", error.reason);
+        std::fs::remove_file(&file).unwrap();
+    }
 
     #[test]
     fn browser_urls_are_absolute_http_or_https_and_canonicalized() {

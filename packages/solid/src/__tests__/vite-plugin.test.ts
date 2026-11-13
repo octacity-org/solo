@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { mkdtempSync, rmSync, symlinkSync } from "node:fs"
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
 import { solidUniversal } from "../vite.js"
@@ -67,7 +67,53 @@ describe("solidUniversal worker-mode split", () => {
       [{ build: { ssr: "src/index.tsx", rollupOptions: { input: "src/index.tsx" } } }, env],
     ] as const) {
       const plugin = solidUniversal()
-      expect((plugin.config as (config: object, e: object) => unknown)(config, e)).toBeUndefined()
+      const result = (plugin.config as (config: object, e: object) => { build?: unknown })(config, e)
+      expect(result.build).toBeUndefined()
+    }
+  })
+})
+
+describe("solidUniversal app info", () => {
+  type Define = { define: Record<string, string> }
+  const injected = (root: string, env = { command: "build", mode: "production" }) => {
+    const result = (solidUniversal().config as (config: object, e: object) => Define)({ root }, env)
+    return JSON.parse(result.define.__SOLO_APP_INFO__)
+  }
+  const project = (manifest?: object) => {
+    const root = mkdtempSync(join(tmpdir(), "solo-app-info-"))
+    if (manifest) writeFileSync(join(root, "package.json"), JSON.stringify(manifest))
+    return root
+  }
+
+  it("injects the app's name, version, identifier and project directory", () => {
+    const root = project({ name: "tasks", version: "1.2.3", solo: { identifier: "dev.solo.tasks" } })
+    try {
+      for (const env of [{ command: "build", mode: "production" }, { command: "serve", mode: "test" }])
+        expect(injected(root, env)).toEqual({ name: "tasks", version: "1.2.3", identifier: "dev.solo.tasks", root })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it("leaves missing fields null", () => {
+    for (const manifest of [undefined, { name: "tasks" }]) {
+      const root = project(manifest)
+      try {
+        expect(injected(root)).toEqual({ name: manifest ? "tasks" : null, version: null, identifier: null, root })
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    }
+  })
+
+  it("fails the build for an identifier that cannot name a directory", () => {
+    for (const identifier of ["", "tasks", "dev/solo.tasks", "../escape", "dev..tasks", 42]) {
+      const root = project({ name: "tasks", solo: { identifier } })
+      try {
+        expect(() => injected(root)).toThrow("solo.identifier")
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
     }
   })
 })

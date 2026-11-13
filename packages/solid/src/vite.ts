@@ -1,6 +1,6 @@
 import { transformSync } from "@babel/core"
 import type { ParserPlugin } from "@babel/parser"
-import { existsSync, realpathSync } from "node:fs"
+import { existsSync, readFileSync, realpathSync } from "node:fs"
 import { createRequire } from "node:module"
 import { basename, dirname, extname, posix, relative, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -54,6 +54,7 @@ const NATIVE_ID = "\0solo:native"
 const NATIVE_EXPORTS = [
   "SoloRenderer",
   "addRecentDocument",
+  "createDirectory",
   "enableWorkerMainThread",
   "getKeyboardLayout",
   "getScreens",
@@ -119,6 +120,27 @@ function realDir(dir: string): string {
   return parent === dir ? dir : resolve(realDir(parent), basename(dir))
 }
 
+// A reverse-DNS app identifier, safe to use as one directory name.
+const IDENTIFIER = /^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/
+
+/**
+ * `define` entry that gives app.ts the app's package.json identity and the
+ * project directory (its resources while running under bun or node).
+ */
+function appInfoDefine(root: string): Record<string, string> {
+  const file = resolve(root, "package.json")
+  const manifest = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {}
+  const identifier = manifest.solo?.identifier
+  if (identifier !== undefined && (typeof identifier !== "string" || !IDENTIFIER.test(identifier))) {
+    throw new Error(
+      `${file}: solo.identifier must be a reverse-DNS name such as "com.example.app", got ${JSON.stringify(identifier)}`,
+    )
+  }
+  const text = (value: unknown) => (typeof value === "string" ? value : null)
+  const info = { name: text(manifest.name), version: text(manifest.version), identifier: identifier ?? null, root }
+  return { __SOLO_APP_INFO__: JSON.stringify(info) }
+}
+
 export interface SolidUniversalOptions {
   /**
    * Serve the automation protocol over stdio when a controller owns stdin, so
@@ -149,9 +171,11 @@ export function solidUniversal(options: SolidUniversalOptions = {}): Plugin {
       split = workerBuild(config, env.command)
       // Without a binary found here, the loader's other sources still apply.
       nativeBinary = production && split ? macosNativeBinary() : undefined
-      if (!split) return
+      const define = appInfoDefine(resolve(config.root ?? process.cwd()))
+      if (!split) return { define }
       const name = basename(split, extname(split))
       return {
+        define,
         build: {
           ssr: true,
           rollupOptions: { input: { [name]: BOOT_ID, [`${name}.app`]: APP_ID } },

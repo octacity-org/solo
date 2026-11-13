@@ -19,6 +19,8 @@ export {
   writeClipboardText,
 } from "./desktop.js"
 export type { TrashResult } from "./desktop.js"
+export { appInfo, appPaths, ensureDir } from "./app.js"
+export type { AppInfo, AppPaths } from "./app.js"
 export { getScreens, onScreensChanged } from "./screens.js"
 export type { Screen, ScreenRect } from "./screens.js"
 export {

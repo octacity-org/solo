@@ -287,16 +287,17 @@ export declare class SoloRenderer {
 }
 
 /**
- * GPU-backed GPUI test renderer. Uses VisualTestAppContext (real Metal
- * rendering on macOS) with TestDispatcher for deterministic scheduling.
- * Same SoloView and rendering pipeline as production.
+ * GPU-backed GPUI test renderer. Uses VisualTestAppContext and Metal on
+ * macOS, HeadlessAppContext and wgpu on Linux, both with TestDispatcher for
+ * deterministic scheduling. Same SoloView and rendering pipeline as
+ * production.
  *
  * Usage from JS:
  *   const r = new TestSoloRenderer()
  *   r.createElement(1, "div")
  *   r.setRoot(1)
  *   r.commitMutations()
- *   r.flush()                  // triggers SoloView::render() via Metal
+ *   r.flush()                  // triggers SoloView::render()
  *   r.simulateClick(50, 50)    // dispatches through GPUI hit testing
  *   const events = r.drainEvents()
  *   r.captureScreenshot("/tmp/test.png")  // saves rendered UI as PNG
@@ -381,7 +382,7 @@ export declare class TestSoloRenderer {
   answerAlert(index: number): void
   setSystemAppearanceSubscription(token?: string | undefined | null): string
   /** Present a lifecycle-managed native menu for an element in this renderer. */
-  showContextMenu(json: string): Promise<string | null>
+  showContextMenu(json: string): Promise<unknown>
   cancelContextMenu(requestId: number): void
   /** Evaluate JavaScript in the mounted WebView through the native bridge. */
   evaluateWebviewJavaScript(elementId: number, script: string): Promise<string>
@@ -526,7 +527,7 @@ export declare class TestSoloRenderer {
   getScrollOffset(elementId: number): Array<number> | null
   /**
    * Capture a screenshot of the current rendered state and save as PNG.
-   * macOS only — requires Metal GPU rendering via VisualTestAppContext.
+   * macOS renders through Metal, Linux through the wgpu headless renderer.
    */
   captureScreenshot(path: string): void
   /**
@@ -564,6 +565,12 @@ export declare class TestSoloRenderer {
  * open-URLs event when the user picks it.
  */
 export declare function addRecentDocument(path: string): void
+
+/**
+ * Create a directory and any missing parents; succeeds when it already
+ * exists. Native so that shipped app code stays off `node:fs`.
+ */
+export declare function createDirectory(path: string): void
 
 /**
  * Dev mode (`solo dev`): a later `init` from a new app Worker replaces the
@@ -734,7 +741,10 @@ export interface KeyboardLayout {
 }
 
 export interface MenuBarOptions {
-  /** Absolute path to a template image displayed in the macOS menu bar. */
+  /**
+   * Absolute path to the status item's icon: an AppKit template image on
+   * macOS, a PNG pixmap on Linux.
+   */
   iconPath: string
   tooltip?: string
 }
@@ -863,8 +873,9 @@ export interface WindowOptions {
   trafficLightX?: number
   trafficLightY?: number
   /**
-   * Keep the application alive after its window closes and install a macOS
-   * status item with built-in Open and Quit actions.
+   * Keep the application alive after its window closes and install a status
+   * item with built-in Open and Quit actions: a macOS menu-bar item, or a
+   * Linux StatusNotifierItem.
    */
   menuBar?: MenuBarOptions
   /**

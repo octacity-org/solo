@@ -1,6 +1,9 @@
 {
   "name": "tasks",
   "private": true,
+  "solo": {
+    "identifier": "dev.solo.tasks"
+  },
   "type": "module",
   "scripts": {
     "build": "vite build",

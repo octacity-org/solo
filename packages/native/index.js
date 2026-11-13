@@ -579,6 +579,7 @@ module.exports = nativeBinding
 module.exports.SoloRenderer = nativeBinding.SoloRenderer
 module.exports.TestSoloRenderer = nativeBinding.TestSoloRenderer
 module.exports.addRecentDocument = nativeBinding.addRecentDocument
+module.exports.createDirectory = nativeBinding.createDirectory
 module.exports.enableAppReload = nativeBinding.enableAppReload
 module.exports.enableWorkerMainThread = nativeBinding.enableWorkerMainThread
 module.exports.getKeyboardLayout = nativeBinding.getKeyboardLayout
