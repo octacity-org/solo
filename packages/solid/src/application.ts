@@ -31,6 +31,15 @@ export function showAllApplications(): void {
 }
 
 /**
+ * Play the system alert sound, for invalid input or a failed action. The user
+ * chooses the sound, or silences it, in System Settings. On Linux it rings
+ * the active window's bell, so it throws while no window is open.
+ */
+export function beep(): void {
+  native.beep()
+}
+
+/**
  * Whether the system shows scroll bars only while scrolling, the user's
  * System Settings → Appearance → "Show scroll bars" choice (macOS). There is
  * no change notification; read it again when it matters.

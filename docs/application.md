@@ -33,6 +33,7 @@ function Status() {
 | `createKeyboardLayout()` | accessor for the selected input source, `{ id, name }`, such as `{ id: "com.apple.keylayout.US", name: "U.S." }` | macOS, Linux |
 | `shouldAutoHideScrollbars()` | true when the desktop hides scroll bars until scrolling | macOS, Linux |
 | `restartApplication()` | quits, then opens the app again; see [Restart](#restart) | macOS, Linux |
+| `beep()` | plays the system alert sound, for invalid input or a failed action | macOS, Linux |
 
 ## Thermal state and keyboard layout
 
@@ -77,6 +78,8 @@ macOS has a native feed for every control above. On Linux:
 - `shouldAutoHideScrollbars()` reports the desktop's scroll-bar preference.
 - `restartApplication()` works only in a compiled app binary, as described
   above.
+- `beep()` rings the X11 or Wayland bell of the active window, so it throws
+  while no window is open. macOS plays the alert sound with or without one.
 - `createThermalState()` throws: GPUI always reports `Nominal` on Linux, and a
   value that never changes would look like a reading.
 - `hideApplication()`, `hideOtherApplications()` and `showAllApplications()`

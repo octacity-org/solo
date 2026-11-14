@@ -2,6 +2,7 @@ import { createRoot, flush } from "solid-js"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 const platform = vi.hoisted(() => ({
+  beep: vi.fn(),
   getKeyboardLayout: vi.fn(),
   getThermalState: vi.fn(),
   hideApplication: vi.fn(),
@@ -25,11 +26,13 @@ describe("application controls", () => {
     solo.hideApplication()
     solo.hideOtherApplications()
     solo.showAllApplications()
+    solo.beep()
     platform.shouldAutoHideScrollbars.mockReturnValueOnce(true)
     expect(solo.shouldAutoHideScrollbars()).toBe(true)
     expect(platform.hideApplication).toHaveBeenCalledOnce()
     expect(platform.hideOtherApplications).toHaveBeenCalledOnce()
     expect(platform.showAllApplications).toHaveBeenCalledOnce()
+    expect(platform.beep).toHaveBeenCalledOnce()
 
     const error = new Error("restartApplication works only in a packaged .app bundle")
     platform.restartApplication.mockImplementationOnce(() => { throw error })

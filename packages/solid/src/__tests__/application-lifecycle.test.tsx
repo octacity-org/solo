@@ -99,6 +99,9 @@ describe("application lifecycle", () => {
       setWindowDocumentPath(path: string | null, windowId?: number): void {
         this.calls.push(["document", path, windowId])
       }
+      showCharacterPalette(windowId?: number): void {
+        this.calls.push(["character palette", windowId])
+      }
     }
     const renderer = new StateRenderer()
     const root = render(() => <Text>main</Text>, { renderer })
@@ -117,6 +120,7 @@ describe("application lifecycle", () => {
     expect(() => root.setDocumentPath("notes.txt")).toThrow(TypeError)
     expect(() => root.setDocumentPath(undefined as never)).toThrow(TypeError)
     expect(() => root.setDocumentEdited("yes" as never)).toThrow(TypeError)
+    root.showCharacterPalette()
     expect(renderer.calls).toEqual([
       ["fullscreen", true, undefined],
       ["fullscreen", false, undefined],
@@ -129,6 +133,7 @@ describe("application lifecycle", () => {
       ["edited", true, undefined],
       ["document", "/Users/me/notes.txt", undefined],
       ["document", null, undefined],
+      ["character palette", undefined],
     ])
 
     renderer.calls = []
@@ -143,6 +148,7 @@ describe("application lifecycle", () => {
     window.toggleTabOverview()
     window.setDocumentEdited(false)
     window.setDocumentPath("/tmp/draft.md")
+    window.showCharacterPalette()
     expect(renderer.calls.slice(1)).toEqual([
       ["fullscreen", true, window.id],
       ["fullscreen", false, window.id],
@@ -153,6 +159,7 @@ describe("application lifecycle", () => {
       ["tab overview", window.id],
       ["edited", false, window.id],
       ["document", "/tmp/draft.md", window.id],
+      ["character palette", window.id],
     ])
 
     window.close()
@@ -160,6 +167,7 @@ describe("application lifecycle", () => {
     expect(() => window.isFullscreen()).toThrow("closed window")
     expect(() => window.toggleTabOverview()).toThrow("closed window")
     expect(() => window.setDocumentEdited(true)).toThrow("closed window")
+    expect(() => window.showCharacterPalette()).toThrow("closed window")
     root.unmount()
   })
 })

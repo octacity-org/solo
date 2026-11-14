@@ -135,6 +135,7 @@ controls its own:
 | `setWindowBackground(background)` | `setBackground(background)` |
 | `getWindowSize()`, `resizeWindow({ width, height })` | `size()`, `resize({ width, height })` |
 | `toggleWindowMaximized()`, `isWindowMaximized()` | `toggleMaximized()`, `maximize()`, `restore()`, `isMaximized()` |
+| `showCharacterPalette()` | the same name |
 
 ```ts
 const root = render(() => <App />, { title: "Editor", width: 800, height: 600 })
@@ -163,6 +164,10 @@ root.toggleFullscreen()
   once the window is on screen. `setBackground` sets the window's background
   appearance, but GPUI paints the app opaque, so `transparent` and `blurred`
   look like `opaque` there.
+- `showCharacterPalette()` opens the Emoji & Symbols picker (the Character
+  Viewer, Ctrl+Cmd+Space) beside the window. The character the user picks goes
+  to the window's focused text input, as typed text does. macOS only: GPUI has
+  no picker on Linux, so it throws there.
 
 ## Window tabs
 

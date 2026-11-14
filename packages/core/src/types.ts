@@ -343,6 +343,8 @@ export interface NativeRenderer {
   isWindowDocumentEdited?(windowId?: number): boolean
   /** The document path the title bar shows, null when unset. */
   getWindowDocumentPath?(windowId?: number): string | null
+  /** Open the Emoji & Symbols picker (the Character Viewer) for the window. */
+  showCharacterPalette?(windowId?: number): void
   quitApplication?(): void
   /** Content size in logical pixels. */
   getWindowSize?(windowId?: number): { width: number; height: number }

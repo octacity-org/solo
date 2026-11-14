@@ -3131,6 +3131,25 @@ impl SoloRenderer {
         }
     }
 
+    /// Open the Emoji & Symbols picker (the Character Viewer) for the window.
+    /// AppKit inserts the picked character into the focused text input.
+    #[napi]
+    pub fn show_character_palette(&self, window_id: Option<f64>) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        return update_window_in(WindowTarget::from_arg(window_id)?, |_view, window, _cx| {
+            window.show_character_palette()
+        });
+
+        // GPUI's Linux windows have no character palette and do nothing.
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = window_id;
+            Err(Error::from_reason(
+                "The character palette is supported only on macOS",
+            ))
+        }
+    }
+
     /// Mark the window's document as having unsaved changes (the dot in the
     /// close button) or as saved.
     ///
