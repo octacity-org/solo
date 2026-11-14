@@ -30,7 +30,8 @@ pub(crate) enum BatchOp {
     },
     SetStyle {
         id: u64,
-        style: StyleDesc,
+        /// Boxed: `StyleDesc` is about 1.4 KB, and every variant would pay it.
+        style: Box<StyleDesc>,
     },
     SetText {
         id: u64,
@@ -92,7 +93,7 @@ pub(crate) fn parse_batch(json: &str) -> Result<Vec<BatchOp>> {
                 before_id: batch_id(&arr, 3, i)?,
             },
             "setStyle" => {
-                let style: StyleDesc = batch_decode(&arr, 2, i).map_err(|e| {
+                let style: Box<StyleDesc> = batch_decode(&arr, 2, i).map_err(|e| {
                     Error::from_reason(format!("Batch op {} setStyle parse error: {}", i, e))
                 })?;
                 BatchOp::SetStyle {
@@ -195,7 +196,7 @@ pub(crate) fn apply_batch_to_tree(tree: &mut RetainedTree, ops: Vec<BatchOp>) ->
                 tree.insert_before(parent_id, child_id, before_id);
             }
             BatchOp::SetStyle { id, style } => {
-                tree.set_style(id, style);
+                tree.set_style(id, *style);
             }
             BatchOp::SetText { id, content } => {
                 tree.set_text(id, content);
@@ -282,4 +283,36 @@ pub(super) fn batch_str(arr: &RawOp, idx: usize, op_idx: usize) -> Result<String
                 op_idx, idx
             ))
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::style::DimensionValue;
+
+    /// An enum is as large as its largest variant, and `parse_batch` holds one
+    /// per op, so a large payload must stay boxed. Today the largest is
+    /// `SetCustomProp` (104 bytes): `preserve_order`, enabled by a dependency,
+    /// makes `serde_json::Value` 72 bytes.
+    #[test]
+    fn batch_ops_stay_small() {
+        assert!(
+            std::mem::size_of::<BatchOp>() <= 128,
+            "BatchOp is {} bytes",
+            std::mem::size_of::<BatchOp>()
+        );
+    }
+
+    #[test]
+    fn set_style_reaches_the_tree() {
+        let ops = parse_batch(
+            r#"[["createElement",1,"div"],["setStyle",1,{"display":"flex","width":24}],["setStyle",1,"{\"height\":5}"]]"#,
+        )
+        .unwrap();
+        let mut tree = RetainedTree::new();
+        apply_batch_to_tree(&mut tree, ops);
+        let style = tree.elements[&1].style.as_ref().unwrap();
+        assert_eq!(style.height, Some(DimensionValue::Pixels(5.0)));
+        assert_eq!(style.display, None);
+    }
 }
