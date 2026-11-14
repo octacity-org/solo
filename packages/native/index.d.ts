@@ -584,6 +584,9 @@ export declare function beep(): void
  */
 export declare function createDirectory(path: string): void
 
+/** Remove the notification posted with `tag`, shown or still pending. */
+export declare function dismissNotification(tag: string): void
+
 /**
  * Dev mode (`solo dev`): a later `init` from a new app Worker replaces the
  * running app's renderer in the same window instead of failing.
@@ -768,6 +771,26 @@ export interface MenuBarOptions {
  */
 export declare function moveToTrash(paths: Array<string>): Promise<Array<TrashResult>>
 
+/** A button offered on a notification. */
+export interface NotificationAction {
+  /** Reported back as the response's `actionId`. */
+  id: string
+  /** The button's label. */
+  label: string
+}
+
+/** What `showNotification` posts. */
+export interface NotificationOptions {
+  /**
+   * Identifies the notification: posting the same tag replaces it, and
+   * responses carry it back.
+   */
+  tag: string
+  title: string
+  body?: string
+  actions?: Array<NotificationAction>
+}
+
 /**
  * Ask macOS to open an absolute HTTP/HTTPS URL in its default browser.
  * Success means the OS accepted the request, not that the page loaded.
@@ -849,6 +872,13 @@ export declare function shouldAutoHideScrollbars(): boolean
 
 /** Show the applications hidden by Hide Others, as Show All does (macOS). */
 export declare function showAllApplications(): void
+
+/**
+ * Post a notification to the Notification Center. Posting a tag that is
+ * already shown replaces that notification. The first post asks the user for
+ * permission; once denied, nothing is shown.
+ */
+export declare function showNotification(options: NotificationOptions): void
 
 /** The outcome of moving one path to the Trash. */
 export interface TrashResult {

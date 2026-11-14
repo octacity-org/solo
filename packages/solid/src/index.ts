@@ -35,6 +35,13 @@ export {
 } from "./application.js"
 export type { KeyboardLayout, ThermalState } from "./application.js"
 export { onOpenUrls, registerUrlScheme } from "./open-urls.js"
+export { dismissNotification, onNotificationResponse, showNotification } from "./notifications.js"
+export type {
+  NotificationAction,
+  NotificationResponse,
+  NotificationResponseListener,
+  ShowNotificationOptions,
+} from "./notifications.js"
 export type { OpenUrlsListener } from "./open-urls.js"
 export { showAlert } from "./alert.js"
 export type { AlertLevel, ShowAlertOptions } from "./alert.js"

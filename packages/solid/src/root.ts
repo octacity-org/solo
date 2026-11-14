@@ -21,6 +21,7 @@ import { receiveApplicationReopen, receiveDockMenuAction } from "./dock.js"
 import { receiveScreensChanged } from "./screens.js"
 import { receiveKeyboardLayoutChange, receiveThermalStateChange } from "./application.js"
 import { receiveOpenUrls } from "./open-urls.js"
+import { receiveNotificationResponse } from "./notifications.js"
 
 export interface Root {
   unmount: () => void
@@ -313,6 +314,7 @@ function createNativeRenderer(
         else if (event.eventType === "screensChanged") receiveScreensChanged()
         else if (event.eventType === "thermalStateChange") receiveThermalStateChange(event.value)
         else if (event.eventType === "keyboardLayoutChange") receiveKeyboardLayoutChange(event.value)
+        else if (event.eventType === "notificationResponse") receiveNotificationResponse(event.value)
       }
       handleSoloEvent(event)
       onEvent?.(event)
