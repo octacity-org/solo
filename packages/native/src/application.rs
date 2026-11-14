@@ -1,5 +1,5 @@
 //! Application-level controls: hiding, thermal state, the keyboard layout,
-//! the scroll-bar preference and restarting.
+//! the scroll-bar preference, restarting and the alert sound.
 //!
 //! Linux reports the keyboard layout and the scroll-bar preference, and can
 //! restart a compiled app. Hiding the app and other apps, and thermal state,
@@ -160,6 +160,39 @@ pub fn show_all_applications() -> Result<()> {
     #[cfg(not(target_os = "macos"))]
     {
         Err(unsupported_on_this_os("showAllApplications"))
+    }
+}
+
+/// Play the system alert sound: `NSBeep` on macOS, the X11 or Wayland bell of
+/// an open window on Linux.
+#[napi]
+pub fn beep() -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        with_app("beep", |_cx| objc2_app_kit::NSBeep())
+    }
+    #[cfg(ui_thread)]
+    {
+        // The Linux bell belongs to a window's X11 connection or Wayland
+        // surface, so it needs one; prefer the window the user is in.
+        let rang = with_app("beep", |cx| {
+            let Some(window) = cx.active_window().or_else(|| cx.windows().into_iter().next())
+            else {
+                return false;
+            };
+            window
+                .update(cx, |_view, window, _cx| window.play_system_bell())
+                .is_ok()
+        })?;
+        if rang {
+            Ok(())
+        } else {
+            Err(Error::from_reason("beep needs an open window on Linux"))
+        }
+    }
+    #[cfg(not(any(target_os = "macos", ui_thread)))]
+    {
+        Err(unsupported_on_this_os("beep"))
     }
 }
 

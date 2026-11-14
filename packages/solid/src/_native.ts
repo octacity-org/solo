@@ -4,6 +4,7 @@
 export {
   SoloRenderer,
   addRecentDocument,
+  beep,
   createDirectory,
   enableWorkerMainThread,
   getKeyboardLayout,

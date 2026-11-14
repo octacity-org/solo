@@ -824,6 +824,20 @@ impl TestSoloRenderer {
     }
 
     #[napi]
+    pub fn show_character_palette(&self, window_id: Option<f64>) -> Result<()> {
+        let root = window_id.map(to_element_id).transpose()?;
+        #[cfg(target_os = "macos")]
+        return in_view(root, |_view, window, _cx| window.show_character_palette());
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = root;
+            Err(Error::from_reason(
+                "The character palette is supported only on macOS",
+            ))
+        }
+    }
+
+    #[napi]
     pub fn set_window_document_edited(&self, edited: bool, window_id: Option<f64>) -> Result<()> {
         let root = window_id.map(to_element_id).transpose()?;
         #[cfg(target_os = "macos")]

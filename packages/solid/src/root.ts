@@ -71,6 +71,11 @@ export interface Root {
    * menu. The path must be absolute; null clears it. Only macOS draws it.
    */
   setDocumentPath: (path: string | null) => void
+  /**
+   * Open the Emoji & Symbols picker (macOS Character Viewer). A picked
+   * character goes to the focused text input. macOS only; elsewhere it throws.
+   */
+  showCharacterPalette: () => void
   /** Explicitly terminate the native application. */
   quitApplication: () => void
 }
@@ -125,6 +130,11 @@ export interface AppWindow {
    * menu. The path must be absolute; null clears it. Only macOS draws it.
    */
   setDocumentPath: (path: string | null) => void
+  /**
+   * Open the Emoji & Symbols picker (macOS Character Viewer). A picked
+   * character goes to the focused text input. macOS only; elsewhere it throws.
+   */
+  showCharacterPalette: () => void
 }
 
 /** A window's background, as the `windowBackground` option takes it. */
@@ -254,6 +264,8 @@ function windowState(host: NativeRenderer, windowId?: number) {
       }
       requireCapability(host, "setWindowDocumentPath", "support document windows")(path, windowId)
     },
+    showCharacterPalette: () =>
+      requireCapability(host, "showCharacterPalette", "support the character palette")(windowId),
   }
 }
 
@@ -370,6 +382,7 @@ export function render(code: () => SolidElement, options: RenderOptions = {}): R
     toggleTabOverview: state.toggleTabOverview,
     setDocumentEdited: state.setDocumentEdited,
     setDocumentPath: state.setDocumentPath,
+    showCharacterPalette: state.showCharacterPalette,
     quitApplication: () =>
       requireCapability(host, "quitApplication", "support quitting applications")(),
   }
@@ -499,5 +512,6 @@ export function openWindow(code: () => SolidElement, options: OpenWindowOptions 
     toggleTabOverview: whileOpen("show the tabs of", state.toggleTabOverview),
     setDocumentEdited: whileOpen("change", state.setDocumentEdited),
     setDocumentPath: whileOpen("change", state.setDocumentPath),
+    showCharacterPalette: whileOpen("show the character palette of", state.showCharacterPalette),
   }
 }

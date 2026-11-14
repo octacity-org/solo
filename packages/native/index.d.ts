@@ -119,6 +119,11 @@ export declare class SoloRenderer {
    */
   toggleWindowTabOverview(windowId?: number | undefined | null): void
   /**
+   * Open the Emoji & Symbols picker (the Character Viewer) for the window.
+   * AppKit inserts the picked character into the focused text input.
+   */
+  showCharacterPalette(windowId?: number | undefined | null): void
+  /**
    * Mark the window's document as having unsaved changes (the dot in the
    * close button) or as saved.
    *
@@ -360,6 +365,7 @@ export declare class TestSoloRenderer {
   setWindowTabbingIdentifier(identifier?: string | undefined | null, windowId?: number | undefined | null): void
   getWindowTabbingIdentifier(windowId?: number | undefined | null): string
   toggleWindowTabOverview(windowId?: number | undefined | null): void
+  showCharacterPalette(windowId?: number | undefined | null): void
   setWindowDocumentEdited(edited: boolean, windowId?: number | undefined | null): void
   setWindowDocumentPath(path?: string | undefined | null, windowId?: number | undefined | null): void
   isWindowDocumentEdited(windowId?: number | undefined | null): boolean
@@ -565,6 +571,12 @@ export declare class TestSoloRenderer {
  * open-URLs event when the user picks it.
  */
 export declare function addRecentDocument(path: string): void
+
+/**
+ * Play the system alert sound: `NSBeep` on macOS, the X11 or Wayland bell of
+ * an open window on Linux.
+ */
+export declare function beep(): void
 
 /**
  * Create a directory and any missing parents; succeeds when it already

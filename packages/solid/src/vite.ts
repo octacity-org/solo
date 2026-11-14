@@ -54,6 +54,7 @@ const NATIVE_ID = "\0solo:native"
 const NATIVE_EXPORTS = [
   "SoloRenderer",
   "addRecentDocument",
+  "beep",
   "createDirectory",
   "enableWorkerMainThread",
   "getKeyboardLayout",

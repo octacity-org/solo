@@ -167,7 +167,7 @@ renders as plain text.
 | App data, config, cache and log directories; bundled resources; app name and version | `appPaths()`, `ensureDir()`, `appInfo()` | [app-directories.md](docs/app-directories.md) |
 | URLs, clipboard, Finder, Trash | `openExternalUrl()`, `readClipboardText()`, `writeClipboardText()`, `openPath()`, `revealPath()`, `moveToTrash()` | [desktop-actions.md](docs/desktop-actions.md) |
 | Light and dark mode | `createSystemAppearance()` | [system-appearance.md](docs/system-appearance.md) |
-| Hide, restart, thermal state, keyboard layout, scroll-bar preference | `hideApplication()`, `restartApplication()`, `createThermalState()`, `createKeyboardLayout()`, `shouldAutoHideScrollbars()` | [application.md](docs/application.md) |
+| Hide, restart, alert sound, thermal state, keyboard layout, scroll-bar preference | `hideApplication()`, `restartApplication()`, `beep()`, `createThermalState()`, `createKeyboardLayout()`, `shouldAutoHideScrollbars()` | [application.md](docs/application.md) |
 
 ## Development loop
 

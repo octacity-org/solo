@@ -24,6 +24,7 @@ export type { AppInfo, AppPaths } from "./app.js"
 export { getScreens, onScreensChanged } from "./screens.js"
 export type { Screen, ScreenRect } from "./screens.js"
 export {
+  beep,
   createKeyboardLayout,
   createThermalState,
   hideApplication,
