@@ -1,6 +1,9 @@
 //! Parses and applies `applyBatch` mutation batches.
 
 use super::*;
+use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
+use serde::{Deserialize, Deserializer};
+use std::cell::Cell;
 
 // ── Batch processing ─────────────────────────────────────────────
 
@@ -52,108 +55,254 @@ pub(crate) enum BatchOp {
     },
 }
 
-/// One batch tuple, its fields still raw JSON.
-pub(super) type RawOp<'a> = Vec<&'a serde_json::value::RawValue>;
-
-/// Parse a batch into typed ops. Fields deserialize straight from their
-/// slice of the JSON text, so nothing is parsed twice or cloned, and this runs
-/// before the tree is locked. Returns Err on the first invalid op.
+/// Parse a batch into typed ops in one pass over the JSON text: each op tuple
+/// is decoded field by field as it is read, with no intermediate values. This
+/// runs before the tree is locked, so a malformed batch changes nothing.
+/// Returns Err on the first invalid op, naming its index.
 pub(crate) fn parse_batch(json: &str) -> Result<Vec<BatchOp>> {
-    let ops: Vec<&serde_json::value::RawValue> = serde_json::from_str(json)
-        .map_err(|e| Error::from_reason(format!("Failed to parse batch: {}", e)))?;
-    let mut parsed = Vec::with_capacity(ops.len());
+    let current_op = Cell::new(None);
+    let mut deserializer = serde_json::Deserializer::from_str(json);
+    deserializer
+        .deserialize_seq(BatchVisitor(&current_op))
+        .and_then(|ops| deserializer.end().map(|()| ops))
+        .map_err(|e| {
+            Error::from_reason(match current_op.get() {
+                Some(i) => format!("Batch op {}: {}", i, e),
+                None => format!("Failed to parse batch: {}", e),
+            })
+        })
+}
 
-    for (i, op) in ops.iter().enumerate() {
-        let arr: RawOp = serde_json::from_str(op.get())
-            .map_err(|_| Error::from_reason(format!("Batch op {} is not an array", i)))?;
-        let op_name = arr
-            .first()
-            .and_then(|v| serde_json::from_str::<&str>(v.get()).ok())
-            .ok_or_else(|| Error::from_reason(format!("Batch op {} missing op name string", i)))?;
+/// Reads the batch array, recording which op it is in for error messages.
+struct BatchVisitor<'a>(&'a Cell<Option<usize>>);
 
-        let batch_op = match op_name {
-            "createElement" => BatchOp::CreateElement {
-                id: batch_id(&arr, 1, i)?,
-                element_type: batch_str(&arr, 2, i)?,
+impl<'de> Visitor<'de> for BatchVisitor<'_> {
+    type Value = Vec<BatchOp>;
+
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("an array of batch ops")
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> std::result::Result<Self::Value, A::Error> {
+        let mut ops = Vec::with_capacity(seq.size_hint().unwrap_or(0));
+        loop {
+            self.0.set(Some(ops.len()));
+            match seq.next_element_seed(OpSeed)? {
+                Some(op) => ops.push(op),
+                None => break,
+            }
+        }
+        self.0.set(None);
+        Ok(ops)
+    }
+}
+
+/// Decodes one `[opName, ...args]` tuple.
+struct OpSeed;
+
+impl<'de> DeserializeSeed<'de> for OpSeed {
+    type Value = BatchOp;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> std::result::Result<BatchOp, D::Error> {
+        deserializer.deserialize_seq(self)
+    }
+}
+
+impl<'de> Visitor<'de> for OpSeed {
+    type Value = BatchOp;
+
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("an [opName, ...args] array")
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> std::result::Result<BatchOp, A::Error> {
+        let name: OpKind = seq
+            .next_element()?
+            .ok_or_else(|| de::Error::custom("missing op name string"))?;
+        let mut field = 0;
+        // Reads the next field, naming its position when it is missing.
+        macro_rules! next {
+            ($what:literal) => {{
+                field += 1;
+                seq.next_element()?.ok_or_else(|| {
+                    de::Error::custom(format!("missing {} at index {}", $what, field))
+                })?
+            }};
+        }
+        macro_rules! id {
+            () => {
+                to_element_id(next!("id")).map_err(|e| de::Error::custom(&e.reason))?
+            };
+        }
+        let op = match name {
+            OpKind::CreateElement => BatchOp::CreateElement {
+                id: id!(),
+                element_type: next!("string"),
             },
-            "destroyElement" => BatchOp::DestroyElement {
-                id: batch_id(&arr, 1, i)?,
+            OpKind::DestroyElement => BatchOp::DestroyElement { id: id!() },
+            OpKind::AppendChild => BatchOp::AppendChild {
+                parent_id: id!(),
+                child_id: id!(),
             },
-            "appendChild" => BatchOp::AppendChild {
-                parent_id: batch_id(&arr, 1, i)?,
-                child_id: batch_id(&arr, 2, i)?,
+            OpKind::RemoveChild => BatchOp::RemoveChild {
+                parent_id: id!(),
+                child_id: id!(),
             },
-            "removeChild" => BatchOp::RemoveChild {
-                parent_id: batch_id(&arr, 1, i)?,
-                child_id: batch_id(&arr, 2, i)?,
+            OpKind::InsertBefore => BatchOp::InsertBefore {
+                parent_id: id!(),
+                child_id: id!(),
+                before_id: id!(),
             },
-            "insertBefore" => BatchOp::InsertBefore {
-                parent_id: batch_id(&arr, 1, i)?,
-                child_id: batch_id(&arr, 2, i)?,
-                before_id: batch_id(&arr, 3, i)?,
-            },
-            "setStyle" => {
-                let style: Box<StyleDesc> = batch_decode(&arr, 2, i).map_err(|e| {
-                    Error::from_reason(format!("Batch op {} setStyle parse error: {}", i, e))
-                })?;
+            OpKind::SetStyle => {
+                let id = id!();
+                let Legacy(style) = next!("style");
                 BatchOp::SetStyle {
-                    id: batch_id(&arr, 1, i)?,
-                    style,
+                    id,
+                    style: Box::new(style),
                 }
             }
-            "setText" => BatchOp::SetText {
-                id: batch_id(&arr, 1, i)?,
-                content: batch_str(&arr, 2, i)?,
+            OpKind::SetText => BatchOp::SetText {
+                id: id!(),
+                content: next!("string"),
             },
-            "setEventListener" => {
-                let has_handler = arr
-                    .get(3)
-                    .and_then(|v| {
-                        serde_json::from_str::<bool>(v.get())
-                            .ok()
-                            .or_else(|| serde_json::from_str::<u64>(v.get()).ok().map(|n| n != 0))
-                    })
-                    .ok_or_else(|| {
-                        Error::from_reason(format!(
-                            "Batch op {} setEventListener missing/invalid hasHandler at index 3",
-                            i
-                        ))
-                    })?;
+            OpKind::SetEventListener => {
+                let id = id!();
+                let event_type = next!("string");
+                let HasHandler(has_handler) = next!("hasHandler");
                 BatchOp::SetEventListener {
-                    id: batch_id(&arr, 1, i)?,
-                    event_type: batch_str(&arr, 2, i)?,
+                    id,
+                    event_type,
                     has_handler,
                 }
             }
-            "setRoot" => BatchOp::SetRoot {
-                id: batch_id(&arr, 1, i)?,
+            OpKind::SetRoot => BatchOp::SetRoot { id: id!() },
+            OpKind::SetCustomProp => {
+                let id = id!();
+                let key = next!("string");
+                // A legacy string payload that is not JSON stays a string.
+                let value = match next!("value") {
+                    serde_json::Value::String(encoded) => serde_json::from_str(&encoded)
+                        .unwrap_or(serde_json::Value::String(encoded)),
+                    value => value,
+                };
+                BatchOp::SetCustomProp { id, key, value }
+            }
+            OpKind::SetCustomPropValue => BatchOp::SetCustomProp {
+                id: id!(),
+                key: next!("string"),
+                value: next!("custom prop value"),
             },
-            "setCustomProp" => BatchOp::SetCustomProp {
-                id: batch_id(&arr, 1, i)?,
-                key: batch_str(&arr, 2, i)?,
-                value: batch_payload(&arr, 3, i)?,
-            },
-            "setCustomPropValue" => BatchOp::SetCustomProp {
-                id: batch_id(&arr, 1, i)?,
-                key: batch_str(&arr, 2, i)?,
-                value: arr
-                    .get(3)
-                    .and_then(|v| serde_json::from_str(v.get()).ok())
-                    .ok_or_else(|| {
-                        Error::from_reason(format!("Batch op {} missing custom prop value", i))
-                    })?,
-            },
-            _ => {
-                return Err(Error::from_reason(format!(
-                    "Batch op {} unknown operation: {:?}",
-                    i, op_name
-                )));
+            OpKind::Unknown(other) => {
+                return Err(de::Error::custom(format!("unknown operation: {:?}", other)));
             }
         };
-        parsed.push(batch_op);
+        // Extra trailing fields are ignored, as they always were.
+        while seq.next_element::<de::IgnoredAny>()?.is_some() {}
+        Ok(op)
     }
+}
 
-    Ok(parsed)
+/// Op names, matched while reading so the name is never copied.
+enum OpKind {
+    CreateElement,
+    DestroyElement,
+    AppendChild,
+    RemoveChild,
+    InsertBefore,
+    SetStyle,
+    SetText,
+    SetEventListener,
+    SetRoot,
+    SetCustomProp,
+    SetCustomPropValue,
+    Unknown(String),
+}
+
+impl<'de> Deserialize<'de> for OpKind {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        struct OpNameVisitor;
+
+        impl<'de> Visitor<'de> for OpNameVisitor {
+            type Value = OpKind;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("an op name string")
+            }
+
+            fn visit_str<E: de::Error>(self, name: &str) -> std::result::Result<OpKind, E> {
+                Ok(match name {
+                    "createElement" => OpKind::CreateElement,
+                    "destroyElement" => OpKind::DestroyElement,
+                    "appendChild" => OpKind::AppendChild,
+                    "removeChild" => OpKind::RemoveChild,
+                    "insertBefore" => OpKind::InsertBefore,
+                    "setStyle" => OpKind::SetStyle,
+                    "setText" => OpKind::SetText,
+                    "setEventListener" => OpKind::SetEventListener,
+                    "setRoot" => OpKind::SetRoot,
+                    "setCustomProp" => OpKind::SetCustomProp,
+                    "setCustomPropValue" => OpKind::SetCustomPropValue,
+                    other => OpKind::Unknown(other.to_owned()),
+                })
+            }
+        }
+
+        deserializer.deserialize_str(OpNameVisitor)
+    }
+}
+
+/// A payload sent either as JSON or, by older batches, as a JSON-encoded string.
+struct Legacy<T>(T);
+
+impl<'de, T: serde::de::DeserializeOwned> Deserialize<'de> for Legacy<T> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        struct LegacyVisitor<T>(std::marker::PhantomData<T>);
+
+        impl<'de, T: serde::de::DeserializeOwned> Visitor<'de> for LegacyVisitor<T> {
+            type Value = Legacy<T>;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("an object or a JSON-encoded string")
+            }
+
+            fn visit_str<E: de::Error>(self, encoded: &str) -> std::result::Result<Self::Value, E> {
+                serde_json::from_str(encoded).map(Legacy).map_err(E::custom)
+            }
+
+            fn visit_map<M: MapAccess<'de>>(self, map: M) -> std::result::Result<Self::Value, M::Error> {
+                T::deserialize(de::value::MapAccessDeserializer::new(map)).map(Legacy)
+            }
+        }
+
+        deserializer.deserialize_any(LegacyVisitor(std::marker::PhantomData))
+    }
+}
+
+/// `setEventListener`'s flag: a bool, or a non-negative integer (non-zero = true).
+struct HasHandler(bool);
+
+impl<'de> Deserialize<'de> for HasHandler {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        struct HasHandlerVisitor;
+
+        impl<'de> Visitor<'de> for HasHandlerVisitor {
+            type Value = HasHandler;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a boolean or a non-negative integer")
+            }
+
+            fn visit_bool<E: de::Error>(self, v: bool) -> std::result::Result<HasHandler, E> {
+                Ok(HasHandler(v))
+            }
+
+            fn visit_u64<E: de::Error>(self, v: u64) -> std::result::Result<HasHandler, E> {
+                Ok(HasHandler(v != 0))
+            }
+        }
+
+        deserializer.deserialize_any(HasHandlerVisitor)
+    }
 }
 
 /// Apply parsed batch ops to a RetainedTree. Shared between
@@ -219,72 +368,6 @@ pub(crate) fn apply_batch_to_tree(tree: &mut RetainedTree, ops: Vec<BatchOp>) ->
     destroyed_ids
 }
 
-/// Extract a u64 element ID from a batch tuple at the given index.
-pub(super) fn batch_id(arr: &RawOp, idx: usize, op_idx: usize) -> Result<u64> {
-    let v = arr
-        .get(idx)
-        .and_then(|v| serde_json::from_str::<f64>(v.get()).ok())
-        .ok_or_else(|| {
-            Error::from_reason(format!("Batch op {} missing id at index {}", op_idx, idx))
-        })?;
-    to_element_id(v)
-}
-
-pub(super) fn batch_field<'a>(
-    arr: &RawOp<'a>,
-    idx: usize,
-    op_idx: usize,
-) -> Result<&'a serde_json::value::RawValue> {
-    arr.get(idx).copied().ok_or_else(|| {
-        Error::from_reason(format!(
-            "Batch op {} missing value at index {}",
-            op_idx, idx
-        ))
-    })
-}
-
-/// A legacy batch sends a style or custom-prop payload as a JSON string.
-pub(super) fn legacy_payload(raw: &serde_json::value::RawValue) -> Option<String> {
-    raw.get()
-        .starts_with('"')
-        .then(|| serde_json::from_str(raw.get()).ok())
-        .flatten()
-}
-
-/// A custom-prop payload. A legacy string that is not JSON stays a string.
-pub(super) fn batch_payload(arr: &RawOp, idx: usize, op_idx: usize) -> Result<serde_json::Value> {
-    let raw = batch_field(arr, idx, op_idx)?;
-    if let Some(encoded) = legacy_payload(raw) {
-        return Ok(serde_json::from_str(&encoded).unwrap_or(serde_json::Value::String(encoded)));
-    }
-    serde_json::from_str(raw.get()).map_err(|e| Error::from_reason(e.to_string()))
-}
-
-pub(super) fn batch_decode<T: serde::de::DeserializeOwned>(
-    arr: &RawOp,
-    idx: usize,
-    op_idx: usize,
-) -> Result<T> {
-    let raw = batch_field(arr, idx, op_idx)?;
-    let decoded = match legacy_payload(raw) {
-        Some(encoded) => serde_json::from_str(&encoded),
-        None => serde_json::from_str(raw.get()),
-    };
-    decoded.map_err(|e| Error::from_reason(e.to_string()))
-}
-
-/// Extract a String from a batch tuple at the given index.
-pub(super) fn batch_str(arr: &RawOp, idx: usize, op_idx: usize) -> Result<String> {
-    arr.get(idx)
-        .and_then(|v| serde_json::from_str::<String>(v.get()).ok())
-        .ok_or_else(|| {
-            Error::from_reason(format!(
-                "Batch op {} missing string at index {}",
-                op_idx, idx
-            ))
-        })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,5 +397,101 @@ mod tests {
         let style = tree.elements[&1].style.as_ref().unwrap();
         assert_eq!(style.height, Some(DimensionValue::Pixels(5.0)));
         assert_eq!(style.display, None);
+    }
+
+    fn apply(json: &str) -> (RetainedTree, Vec<f64>) {
+        let mut tree = RetainedTree::new();
+        let destroyed = apply_batch_to_tree(&mut tree, parse_batch(json).unwrap());
+        (tree, destroyed)
+    }
+
+    fn parse_error(json: &str) -> String {
+        match parse_batch(json) {
+            Ok(_) => panic!("{json} parsed"),
+            Err(e) => e.reason.clone(),
+        }
+    }
+
+    #[test]
+    fn parses_every_op() {
+        let (tree, destroyed) = apply(
+            r#"[
+                ["createElement",1,"div"],["createElement",2,"div"],
+                ["createElement",3,"text"],["createElement",4,"div"],
+                ["createElement",5,"div"],
+                ["setRoot",1],
+                ["appendChild",1,2],["insertBefore",1,3,2],
+                ["appendChild",2,5],["removeChild",2,5],
+                ["setText",3,"hello \"world\""],
+                ["setStyle",2,{"display":"flex","width":24}],
+                ["setEventListener",2,"click",true],
+                ["setEventListener",2,"keyDown",1],
+                ["setEventListener",2,"mouseUp",0],
+                ["setCustomProp",2,"object",{"a":[1,2]}],
+                ["setCustomProp",2,"legacyJson","{\"b\":true}"],
+                ["setCustomProp",2,"legacyText","plain"],
+                ["setCustomPropValue",2,"value","{\"c\":1}"],
+                ["destroyElement",4]
+            ]"#,
+        );
+        assert_eq!(tree.root_id, Some(1));
+        assert_eq!(tree.elements[&1].children, vec![3, 2]);
+        assert!(tree.elements[&2].children.is_empty());
+        assert_eq!(tree.elements[&3].content.as_deref(), Some("hello \"world\""));
+        let element = &tree.elements[&2];
+        let style = element.style.as_ref().unwrap();
+        assert_eq!(style.display.as_deref(), Some("flex"));
+        assert_eq!(style.width, Some(DimensionValue::Pixels(24.0)));
+        let mut events: Vec<_> = element.events.iter().cloned().collect();
+        events.sort();
+        assert_eq!(events, ["click", "keyDown"]);
+        let props = &element.custom_props;
+        assert_eq!(props["object"], serde_json::json!({"a": [1, 2]}));
+        assert_eq!(props["legacyJson"], serde_json::json!({"b": true}));
+        assert_eq!(props["legacyText"], serde_json::json!("plain"));
+        // setCustomPropValue never decodes a string.
+        assert_eq!(props["value"], serde_json::json!("{\"c\":1}"));
+        assert_eq!(destroyed, vec![4.0]);
+        assert!(!tree.elements.contains_key(&4));
+    }
+
+    #[test]
+    fn ignores_extra_fields() {
+        let (tree, _) = apply(r#"[["createElement",1,"div","extra"],["setRoot",1,{}]]"#);
+        assert_eq!(tree.root_id, Some(1));
+    }
+
+    #[test]
+    fn rejects_malformed_batches() {
+        // Each error names what failed and, once the op is known, its index.
+        for (json, expected) in [
+            ("not json", &["Failed to parse batch"][..]),
+            ("{}", &["Failed to parse batch"]),
+            (r#"[["setRoot",1]] x"#, &["Failed to parse batch", "trailing characters"]),
+            (r#"[["setRoot",1]"#, &["EOF while parsing"]),
+            ("[42]", &["Batch op 0"]),
+            ("[[]]", &["Batch op 0", "missing op name string"]),
+            (r#"[["setRoot",1],["nope",1]]"#, &["Batch op 1", r#"unknown operation: "nope""#]),
+            (r#"[["appendChild",1]]"#, &["Batch op 0", "missing id at index 2"]),
+            (r#"[["createElement",1]]"#, &["Batch op 0", "missing string at index 2"]),
+            (r#"[["createElement",-1,"div"]]"#, &["Invalid element id: -1"]),
+            (r#"[["createElement",1.5,"div"]]"#, &["Invalid element id: 1.5"]),
+            (r#"[["setStyle",1,{"width":"wide"}]]"#, &["Batch op 0"]),
+            (r#"[["setStyle",1,"not json"]]"#, &["Batch op 0"]),
+            (r#"[["setEventListener",1,"click","yes"]]"#, &["Batch op 0"]),
+            (r#"[["setEventListener",1,"click"]]"#, &["Batch op 0", "hasHandler at index 3"]),
+            (r#"[["setCustomPropValue",1,"k"]]"#, &["Batch op 0", "missing custom prop value"]),
+        ] {
+            let error = parse_error(json);
+            for part in expected {
+                assert!(error.contains(part), "{json}: {error:?} lacks {part:?}");
+            }
+        }
+    }
+
+    /// One bad op rejects the whole batch, so nothing reaches the tree.
+    #[test]
+    fn rejects_a_batch_atomically() {
+        parse_error(r#"[["createElement",1,"div"],["setRoot",1],["appendChild",1]]"#);
     }
 }
