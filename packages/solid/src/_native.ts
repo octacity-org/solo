@@ -6,6 +6,7 @@ export {
   addRecentDocument,
   beep,
   createDirectory,
+  dismissNotification,
   enableWorkerMainThread,
   getKeyboardLayout,
   getScreens,
@@ -24,5 +25,6 @@ export {
   setDockMenu,
   shouldAutoHideScrollbars,
   showAllApplications,
+  showNotification,
   writeClipboardText,
 } from "@solo/native"

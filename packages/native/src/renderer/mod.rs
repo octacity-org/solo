@@ -804,6 +804,8 @@ pub fn run_main_loop() -> Result<()> {
         MAIN_APP.with(|app| *app.borrow_mut() = Some(cx.to_async()));
         crate::screens::observe(cx);
         crate::application::observe(cx);
+        // Before any Worker exists, so a click that launched the app is kept.
+        crate::notifications::observe(cx);
         match crate::macos_shutdown::install() {
             Ok(guard) => MAIN_SHUTDOWN.with(|slot| *slot.borrow_mut() = Some(guard)),
             Err(error) => log::error!("Failed to install the shutdown delegate: {error}"),
@@ -2392,6 +2394,7 @@ impl SoloRenderer {
         // swapped Workers. Queued behind init, so the JS side has finished
         // `init` before they arrive.
         on_main_async(crate::open_urls::deliver_pending)?;
+        on_main_async(crate::notifications::deliver_pending)?;
         *self.initialized.lock().unwrap() = true;
         Ok(())
     }

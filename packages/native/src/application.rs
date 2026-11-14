@@ -81,7 +81,7 @@ pub(crate) fn observe(cx: &mut gpui::App) {
 /// Run `f` with the running app: the live app's main thread, or the
 /// `TestSoloRenderer` app on this thread.
 #[cfg(target_os = "macos")]
-fn with_app<R: Send + 'static>(
+pub(crate) fn with_app<R: Send + 'static>(
     action: &str,
     f: impl FnOnce(&mut gpui::App) -> R + Send + 'static,
 ) -> Result<R> {

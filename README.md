@@ -160,6 +160,7 @@ renders as plain text.
 | Menu-bar apps that outlive their windows | `render(..., { menuBar })`, `configureMenuBar()` | [menu-bar-apps.md](docs/menu-bar-apps.md) |
 | Reopen on the app-icon click | `onApplicationReopen()` | [menu-bar-apps.md](docs/menu-bar-apps.md#getting-the-window-back) |
 | Alerts | `showAlert()` | [alerts.md](docs/alerts.md) |
+| Notification Center notifications and their buttons | `showNotification()`, `dismissNotification()`, `onNotificationResponse()` | [notifications.md](docs/notifications.md) |
 | Open, folder and save dialogs | `selectFiles()`, `selectSavePath()` | [file-dialogs.md](docs/file-dialogs.md) |
 | Files dropped from Finder | `onFileDrop`, `fileDragOver` style | [file-drop.md](docs/file-drop.md) |
 | Deep links and opened files | `onOpenUrls()`, `registerUrlScheme()` | [deep-links.md](docs/deep-links.md) |

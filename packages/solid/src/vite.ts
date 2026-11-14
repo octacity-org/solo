@@ -56,6 +56,7 @@ const NATIVE_EXPORTS = [
   "addRecentDocument",
   "beep",
   "createDirectory",
+  "dismissNotification",
   "enableWorkerMainThread",
   "getKeyboardLayout",
   "getScreens",
@@ -74,6 +75,7 @@ const NATIVE_EXPORTS = [
   "setDockMenu",
   "shouldAutoHideScrollbars",
   "showAllApplications",
+  "showNotification",
   "writeClipboardText",
 ]
 const BOOT_ID = "\0solo:boot"

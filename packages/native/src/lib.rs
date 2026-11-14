@@ -21,6 +21,7 @@ mod menu_bar;
 mod markdown;
 mod motion;
 mod native_view;
+mod notifications;
 mod open_urls;
 #[cfg(ui_thread)]
 mod prompt;
