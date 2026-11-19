@@ -2466,6 +2466,8 @@ impl SoloRenderer {
                         let app_id = window_options.app_id.as_deref().unwrap_or("dev.solo.app");
                         let app_name = window_options.app_name.as_deref().unwrap_or(&title);
                         cx.set_app_identity(app_id, app_name);
+                        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+                        crate::notifications::linux::set_app_name(app_name);
                         // Linux's PlatformWindow has no native prompts, and
                         // gpui's fallback ignores Enter/Escape.
                         cx.set_prompt_builder(crate::prompt::renderer);

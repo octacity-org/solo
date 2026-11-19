@@ -36,7 +36,7 @@ let pending: NotificationResponse[] = []
 /**
  * Post a notification to the Notification Center (macOS), desktop
  * notification daemon (Linux) or Action Center (Windows). Posting a tag that is
- * still shown replaces that notification where supported. The first post asks
+ * still shown replaces that notification. The first post asks
  * the user for permission on macOS; once denied, macOS shows nothing and nothing
  * throws. On Linux, fails if no notification daemon is available on the session
  * bus. Throws outside a packaged `.app` on macOS, and on unsupported platforms.
@@ -51,7 +51,7 @@ export function showNotification(options: ShowNotificationOptions): void {
   native.showNotification(options)
 }
 
-/** Remove the notification posted with `tag`, whether shown or still pending (macOS and Windows; throws on Linux). */
+/** Remove the notification posted with `tag`, whether shown or still pending. A tag that is not shown is ignored. */
 export function dismissNotification(tag: string): void {
   if (typeof tag !== "string") throw new TypeError("dismissNotification expects a string tag")
   native.dismissNotification(tag)

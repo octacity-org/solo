@@ -26,8 +26,8 @@ dismissNotification("export")
 
 | function | behavior |
 |---|---|
-| `showNotification({ tag, title, body?, actions? })` | posts a notification; on macOS a tag still shown is replaced |
-| `dismissNotification(tag)` | on macOS and Windows: removes the notification with that tag. Throws on Linux. |
+| `showNotification({ tag, title, body?, actions? })` | posts a notification; a tag still shown is replaced |
+| `dismissNotification(tag)` | removes the notification with that tag; a tag that is not shown is ignored |
 | `onNotificationResponse(listener)` | receives `{ tag, actionId }` for each click; returns a function that stops listening |
 
 `tag` and `title` must be non-empty. Each action needs a non-empty `id` and
@@ -64,10 +64,11 @@ No notification daemon available on the session bus: ...
 
 ### Platform differences
 
-On Linux, GPUI's Linux backend does not send notification replacement IDs or
-support dismissing notifications; notifications age out automatically.
-`dismissNotification` throws on Linux. Action buttons are supported if the
-server declares the `actions` capability.
+On Linux, Solo keeps the id the server assigns to each tag: posting the tag
+again passes it as the replacement id, and `dismissNotification` closes it.
+Action buttons are supported if the server declares the `actions` capability.
+Each notification reports one response; once a button or the body was
+clicked, a later click on the same notification is not reported.
 
 ## Permission
 
@@ -96,5 +97,5 @@ Notifications.
 Notifications work on macOS, Linux and Windows. On macOS outside a packaged
 app, `showNotification` and `dismissNotification` throw, because macOS delivers
 notifications only to app bundles with a `CFBundleIdentifier`. On Linux they go
-to the desktop notification daemon, and `dismissNotification` throws. On
-Windows they are Action Center toast notifications.
+to the desktop notification daemon. On Windows they are Action Center toast
+notifications.

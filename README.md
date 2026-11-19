@@ -272,8 +272,7 @@ other Windows features above are not covered by a test.
   have no Linux counterpart: `configureDockMenu` and `toggleTabOverview`
   throw, and `onApplicationReopen` runs on a status-item click instead.
 - Linux platform limits: live automation screenshots need X11;
-  `dismissNotification` and `createThermalState` throw (GPUI has no Linux
-  thermal feed).
+  `createThermalState` throws (GPUI has no Linux thermal feed).
 - Windows has no deep links, Dock calls, thermal state, hide/show
   applications, automation screenshots or GPU test renderer.
   Those APIs throw or reject, and `onOpenUrls` never fires.
