@@ -273,8 +273,7 @@ other Windows features above are not covered by a test.
   throw, and `onApplicationReopen` runs on a status-item click instead.
 - Linux platform limits: live automation screenshots need X11;
   `dismissNotification` and `createThermalState` throw (GPUI has no Linux
-  thermal feed); CSS generic font families (`monospace`, `sans-serif`,
-  `serif`) are not resolved, so set a concrete family name.
+  thermal feed).
 - Windows has no deep links, Dock calls, thermal state, hide/show
   applications, automation screenshots or GPU test renderer.
   Those APIs throw or reject, and `onOpenUrls` never fires.

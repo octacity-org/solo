@@ -11,6 +11,7 @@ mod diff;
 mod dock;
 mod element_tree;
 mod file_dialogs;
+mod font_family;
 #[cfg(target_os = "macos")]
 mod context_menu;
 #[cfg(all(not(target_os = "macos"), ui_thread))]

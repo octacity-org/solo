@@ -604,7 +604,7 @@ fn with_alpha(mut color: Hsla, alpha: f32) -> Hsla {
     color
 }
 
-fn system_sans() -> &'static str {
+pub(crate) fn system_sans() -> &'static str {
     if cfg!(target_os = "macos") {
         "Helvetica"
     } else if cfg!(target_os = "windows") {
@@ -614,7 +614,7 @@ fn system_sans() -> &'static str {
     }
 }
 
-fn system_mono() -> &'static str {
+pub(crate) fn system_mono() -> &'static str {
     if cfg!(target_os = "macos") {
         "Menlo"
     } else if cfg!(target_os = "windows") {

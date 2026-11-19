@@ -5549,6 +5549,7 @@ dependencies = [
  "windows 0.62.2",
  "x11-dl",
  "x11rb",
+ "yeslogic-fontconfig-sys",
 ]
 
 [[package]]

@@ -255,7 +255,7 @@ pub(crate) fn apply_styles<E: gpui::Styled>(mut el: E, style: &StyleDesc) -> E {
         el = el.text_size(gpui::px(size as f32));
     }
     if let Some(ref family) = style.font_family {
-        el = el.font_family(family.clone());
+        el = el.font_family(crate::font_family::resolve(family));
     }
     if let Some(ref weight) = style.font_weight {
         el = el.font_weight(parse_font_weight(weight));

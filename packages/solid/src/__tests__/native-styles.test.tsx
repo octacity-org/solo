@@ -157,11 +157,7 @@ describeNative("style properties", () => {
       expectShot(shot("solo-fonts-tokens"))
     })
 
-    // Linux text shaping matches literal family names only, so the CSS
-    // generic `monospace` falls back to the default face and both shots are
-    // identical. Resolving generic families is a separate, still-open Linux
-    // gap that this file only skips around.
-    it.skipIf(process.platform === "linux")("visually differs between default and monospace fonts", () => {
+    it("visually differs between default and monospace fonts", () => {
       const a = shot("font-default")
       const b = shot("font-mono")
       testRoot.render(() => (
@@ -179,6 +175,28 @@ describeNative("style properties", () => {
       expectShot(a)
       expectShot(b)
       expect(fs.readFileSync(a).equals(fs.readFileSync(b))).toBe(false)
+    })
+
+    // Linux text shaping matches literal family names only; Solo resolves
+    // the CSS generic families through fontconfig before handing them on.
+    it.runIf(process.platform === "linux")("resolves CSS generic families to system fonts", () => {
+      testRoot.render(() => (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", padding: 20 }}>
+          <Text style={{ fontFamily: "monospace", fontSize: 16 }}>iiiiiiiiii</Text>
+          <Text style={{ fontFamily: "monospace", fontSize: 16 }}>mmmmmmmmmm</Text>
+          <Text style={{ fontFamily: "sans-serif", fontSize: 16 }}>mmmmmmmmmm</Text>
+          <Text style={{ fontFamily: "serif", fontSize: 16 }}>mmmmmmmmmm</Text>
+        </div>
+      ))
+
+      const [monoI, monoM, sans, serif] = testRoot
+        .findByType("text")
+        .filter((text) => text.text == null)
+        .map((text) => testRoot.getElementBounds(text.id)![2])
+      // A monospace face gives `i` and `m` the same advance.
+      expect(monoI).toBeCloseTo(monoM!, 0)
+      // An unresolved name falls back to the same face for both.
+      expect(Math.abs(sans! - serif!)).toBeGreaterThan(1)
     })
   })
 
