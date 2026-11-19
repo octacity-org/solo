@@ -4,7 +4,8 @@
 //!   via the `oo7` crate (Issue #128). Every item is labeled with the app's identifier
 //!   and keyed with `solo-app` and `url` attributes so that separate Solo apps and
 //!   Zed credentials never collide or overwrite each other.
-//! - macOS: backed by the macOS Keychain (Issue #43).
+//! - macOS: backed by the macOS Keychain (Issue #43). Items are internet
+//!   passwords whose server is `solo:<app_id>:<url>`, partitioned like Windows.
 //!
 //! All operations run asynchronously off the UI thread via napi `AsyncTask`
 //! so the desktop stays responsive. Secrets are never logged or included in error
@@ -227,6 +228,65 @@ mod linux {
 }
 
 // ---------------------------------------------------------------------------
+// macOS (Keychain via gpui_apple)
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "macos")]
+mod macos {
+    use super::*;
+    use gpui_apple::keychain::{self, KeychainError};
+
+    const ERR_SEC_USER_CANCELED: i32 = -128;
+    const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
+
+    /// The Keychain server attribute. The app identifier partitions items the
+    /// way Windows' target name does, so two Solo apps, or Zed, storing the
+    /// same URL never overwrite each other.
+    pub(super) fn server(app_id: &str, url: &str) -> String {
+        format!("solo:{app_id}:{url}")
+    }
+
+    pub(super) fn map_error(err: KeychainError, url: &str) -> Error {
+        match err {
+            KeychainError::Security {
+                status: ERR_SEC_USER_CANCELED,
+                ..
+            } => Error::from_reason("Keychain access was denied"),
+            err => Error::from_reason(format!("Keychain operation failed for {url}: {err}")),
+        }
+    }
+
+    pub fn write(url: &str, username: &str, secret: &[u8], app_id: &str) -> Result<()> {
+        keychain::write_credentials(&server(app_id, url), username, secret)
+            .map_err(|err| map_error(err, url))
+    }
+
+    /// A missing item and a denied access prompt both read as `None`:
+    /// `gpui_apple` reports `errSecUserCanceled` on read as absence.
+    pub fn read(url: &str, app_id: &str) -> Result<Option<CredentialResult>> {
+        let Some((username, bytes)) =
+            keychain::read_credentials(&server(app_id, url)).map_err(|err| map_error(err, url))?
+        else {
+            return Ok(None);
+        };
+        let secret = String::from_utf8(bytes)
+            .map_err(|_| Error::from_reason("Stored credential secret is not valid UTF-8"))?;
+        Ok(Some(CredentialResult { username, secret }))
+    }
+
+    pub fn delete(url: &str, app_id: &str) -> Result<bool> {
+        match keychain::delete_credentials(&server(app_id, url)) {
+            Ok(()) => Ok(true),
+            Err(KeychainError::Security {
+                status: ERR_SEC_ITEM_NOT_FOUND,
+                ..
+            }) => Ok(false),
+            Err(err) => Err(map_error(err, url)),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Windows (Windows Credential Manager)
 // ---------------------------------------------------------------------------
 
@@ -420,8 +480,7 @@ impl Task for WriteCredentialsTask {
         }
         #[cfg(target_os = "macos")]
         {
-            gpui_apple::keychain::write_credentials(&self.url, &self.username, self.secret.as_bytes())
-                .map_err(|err| Error::from_reason(format!("Keychain write failed for {}: {err}", self.url)))
+            macos::write(&self.url, &self.username, self.secret.as_bytes(), &self.app_id)
         }
         #[cfg(target_os = "windows")]
         {
@@ -457,14 +516,7 @@ impl Task for ReadCredentialsTask {
         }
         #[cfg(target_os = "macos")]
         {
-            let result = gpui_apple::keychain::read_credentials(&self.url)
-                .map_err(|err| Error::from_reason(format!("Keychain read failed for {}: {err}", self.url)))?;
-            Ok(result.and_then(|(username, bytes)| {
-                String::from_utf8(bytes).ok().map(|secret| CredentialResult {
-                    username,
-                    secret,
-                })
-            }))
+            macos::read(&self.url, &self.app_id)
         }
         #[cfg(target_os = "windows")]
         {
@@ -500,11 +552,7 @@ impl Task for DeleteCredentialsTask {
         }
         #[cfg(target_os = "macos")]
         {
-            match gpui_apple::keychain::delete_credentials(&self.url) {
-                Ok(()) => Ok(true),
-                Err(gpui_apple::keychain::KeychainError::Security { status, .. }) if status == -25300 => Ok(false),
-                Err(err) => Err(Error::from_reason(format!("Keychain delete failed for {}: {err}", self.url))),
-            }
+            macos::delete(&self.url, &self.app_id)
         }
         #[cfg(target_os = "windows")]
         {
@@ -591,6 +639,28 @@ mod tests {
         assert!(resolve_app_id(None).is_err());
         assert!(resolve_app_id(Some("".into())).is_err());
         assert_eq!(resolve_app_id(Some("com.example.app".into())).unwrap(), "com.example.app");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_server_is_partitioned_by_app() {
+        assert_eq!(
+            macos::server("my.app", "https://api.github.com"),
+            "solo:my.app:https://api.github.com"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_denied_prompt_rejects_clearly() {
+        use gpui_apple::keychain::{KeychainError, KeychainOperation};
+        let denied = KeychainError::Security { operation: KeychainOperation::Update, status: -128 };
+        assert_eq!(macos::map_error(denied, "https://a.test").reason, "Keychain access was denied");
+        let failed = KeychainError::Security { operation: KeychainOperation::Create, status: -25293 };
+        assert_eq!(
+            macos::map_error(failed, "https://a.test").reason,
+            "Keychain operation failed for https://a.test: keychain Create failed with OSStatus -25293"
+        );
     }
 
     #[cfg(target_os = "windows")]
