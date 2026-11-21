@@ -745,7 +745,7 @@ export interface EventPayload {
 export declare function getKeyboardLayout(): KeyboardLayout
 
 /**
- * The connected screens (macOS, Linux). Ids are stable display UUIDs, or
+ * The connected screens (macOS, Linux, Windows). Ids are stable display UUIDs, or
  * `x11-<root index>` on X11, which has no per-screen UUID.
  */
 export declare function getScreens(): Array<Screen>
