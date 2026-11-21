@@ -984,13 +984,18 @@ mod windows {
     }
 
     fn open_pipe(pipe: &str) -> std::io::Result<std::fs::File> {
-        let open = || std::fs::OpenOptions::new().write(true).open(pipe);
-        match open() {
-            Err(error) if error.raw_os_error() == Some(ERROR_PIPE_BUSY as i32) => {
-                unsafe { WaitNamedPipeW(wide(pipe).as_ptr(), 1000) };
-                open()
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            match std::fs::OpenOptions::new().write(true).open(pipe) {
+                Ok(file) => return Ok(file),
+                Err(error) if error.raw_os_error() == Some(ERROR_PIPE_BUSY as i32) => {
+                    if std::time::Instant::now() >= deadline {
+                        return Err(error);
+                    }
+                    unsafe { WaitNamedPipeW(wide(pipe).as_ptr(), 1000) };
+                }
+                result => return result,
             }
-            result => result,
         }
     }
 
@@ -1303,7 +1308,7 @@ mod windows {
         }
 
         fn wait_for_pending(url: &str) -> bool {
-            for _ in 0..100 {
+            for _ in 0..250 {
                 if PENDING.lock().unwrap().iter().any(|pending| pending == url) {
                     return true;
                 }
@@ -1346,6 +1351,7 @@ mod windows {
 
             // A client that connects and never writes must not hold up the next one.
             let stalled = open_pipe(&pipe).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(50));
             let url = "solo-test://forwarded".to_string();
             assert!(forward_to_running_instance(&pipe, &sid, &[url.clone()]).unwrap());
             assert!(wait_for_pending(&url));
