@@ -1095,7 +1095,10 @@ mod windows {
                 loop {
                     let ok = unsafe { ConnectNamedPipe(server, std::ptr::null_mut()) } != 0;
                     let error = if ok { 0 } else { unsafe { GetLastError() } };
-                    let connected = ok || error == ERROR_PIPE_CONNECTED;
+                    // ERROR_NO_DATA is a client that already wrote and
+                    // closed: its request is still buffered, so read it.
+                    let connected =
+                        ok || error == ERROR_PIPE_CONNECTED || error == ERROR_NO_DATA;
                     // Create the next instance before giving this one away,
                     // so the pipe never has zero instances: that would
                     // delete the name and let anyone take it.
@@ -1119,11 +1122,7 @@ mod windows {
                         }
                     } else {
                         unsafe { CloseHandle(server) };
-                        // ERROR_NO_DATA is a client that left before we saw
-                        // it; anything else should not spin.
-                        if error != ERROR_NO_DATA {
-                            std::thread::sleep(std::time::Duration::from_millis(50));
-                        }
+                        std::thread::sleep(std::time::Duration::from_millis(50));
                     }
                     server = next;
                 }
@@ -1354,6 +1353,27 @@ mod windows {
             // LocalSystem stands in for another user: the pipe's owner does not match.
             let error = forward_to_running_instance(&pipe, "S-1-5-18", &[url]).unwrap_err();
             assert!(error.reason.contains("owned by another user"), "{}", error.reason);
+        }
+
+        #[test]
+        fn a_request_from_a_client_that_already_closed_is_still_readable() {
+            use std::io::{Read, Write};
+            use std::os::windows::io::FromRawHandle;
+            let sid = current_user_sid().unwrap();
+            let pipe = test_pipe("closed-client");
+            let server = create_pipe_instance(&pipe, &sid, true).unwrap();
+            {
+                let mut client = open_pipe(&pipe).unwrap();
+                client.write_all(b"[\"solo-test://early\"]").unwrap();
+            }
+            let ok = unsafe { ConnectNamedPipe(server, std::ptr::null_mut()) };
+            assert_eq!(ok, 0);
+            assert_eq!(unsafe { GetLastError() }, ERROR_NO_DATA);
+            let mut request = String::new();
+            unsafe { std::fs::File::from_raw_handle(server as _) }
+                .read_to_string(&mut request)
+                .unwrap();
+            assert_eq!(request, r#"["solo-test://early"]"#);
         }
 
         #[test]
