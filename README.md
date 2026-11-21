@@ -8,8 +8,8 @@ framework behind the Zed editor. There is no browser engine and no DOM: your
 JSX becomes native elements in a Rust tree, painted with Metal, Vulkan or
 DirectX.
 
-Solo's first release is
-[`0.1.0`](https://github.com/octacity-org/solo/releases/tag/v0.1.0). It
+Solo's current release is
+[`0.2.0`](https://github.com/octacity-org/solo/releases/tag/v0.2.0). It
 publishes prebuilt native bindings for six targets and the macOS menu
 helpers. There is no npm package, so you build Solo from source. macOS is the
 primary platform; see [Platform status](#platform-status).
