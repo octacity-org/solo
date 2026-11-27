@@ -162,6 +162,14 @@ export class MockNativeRenderer implements NativeRenderer {
     this.record("commitMutations")
   }
 
+  /** Answers `callElement`; the default returns null. */
+  elementCallHandler: (id: number, method: string, args: unknown) => unknown = () => null
+
+  callElement(elementId: number, method: string, argsJson: string): string {
+    this.record("callElement", elementId, method, argsJson)
+    return JSON.stringify(this.elementCallHandler(elementId, method, JSON.parse(argsJson)) ?? null)
+  }
+
   applyBatch(json: string): Array<number> {
     const ops = JSON.parse(json) as [string, ...unknown[]][]
     const destroyed: number[] = []

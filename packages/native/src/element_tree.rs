@@ -122,8 +122,51 @@ pub struct EventPayload {
     /// `file://` URLs, unvalidated. Populated for: openUrls (element 0).
     pub urls: Option<Vec<String>>,
 
+    // ── Text editing ─────────────────────────────────────────────────
+    /// The text's revision after the event. Populated for: `<input>` and
+    /// `<textarea>` change and selectionChange.
+    pub revision: Option<f64>,
+    /// The edits that produced this revision, in the order they were applied;
+    /// each one's offsets are in the text as the edits before it left it.
+    /// Populated for: `<input>` and `<textarea>` change.
+    pub edits: Option<Vec<TextEditPayload>>,
+    /// What caused a change: "user", "undo", "redo", "api" or "value".
+    /// Populated for: `<input>` and `<textarea>` change.
+    pub origin: Option<String>,
+    /// The selections, primary last. Populated for: selectionChange.
+    pub selections: Option<Vec<TextSelectionPayload>>,
+    /// Where the primary caret is drawn. Populated for: selectionChange.
+    pub caret: Option<TextCaretPayload>,
+
     // ── Modifiers ────────────────────────────────────────────────────
     pub modifiers: Option<EventModifiers>,
+}
+
+/// A replacement of `start..end` with `text`. Offsets are UTF-16 code units.
+#[derive(Debug, Clone, PartialEq)]
+#[napi(object)]
+pub struct TextEditPayload {
+    pub start: f64,
+    pub end: f64,
+    pub text: String,
+}
+
+/// A selection by UTF-16 offsets. `head` is where the caret is; it equals
+/// `anchor` when nothing is selected.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[napi(object)]
+pub struct TextSelectionPayload {
+    pub anchor: f64,
+    pub head: f64,
+}
+
+/// A caret's position and height in window coordinates (pixels).
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[napi(object)]
+pub struct TextCaretPayload {
+    pub x: f64,
+    pub y: f64,
+    pub height: f64,
 }
 
 impl Default for EventPayload {
@@ -157,6 +200,11 @@ impl Default for EventPayload {
             focused_index: None,
             paths: None,
             urls: None,
+            revision: None,
+            edits: None,
+            origin: None,
+            selections: None,
+            caret: None,
             modifiers: None,
         }
     }

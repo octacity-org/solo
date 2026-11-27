@@ -247,6 +247,52 @@ describe("tasks app automation", () => {
     }
   }, 30_000)
 
+  it("drives the SQL editor through its controller methods", async () => {
+    const app = await launchTasksApp()
+    try {
+      const editor = app.getByTestId("query-editor")
+      await editor.waitFor({ timeoutMs: 10_000 })
+      expect(await editor.callMethod("getText")).toBe(
+        "SELECT title FROM tasks WHERE completed = false"
+      )
+
+      if (!(await waitForPaint(app))) {
+        // Headless: no keystroke can land, but the controller still answers.
+        expect(typeof (await editor.callMethod("revision"))).toBe("number")
+        console.warn("[automation] headless: skipped paint-dependent assertions")
+        return
+      }
+
+      // Type, then edit from "JS" against the revision before the last key.
+      await editor.fill("SELECT 1")
+      const revision = (await editor.callMethod("revision")) as number
+      await editor.press("2")
+      expect(await editor.callMethod("getText")).toBe("SELECT 12")
+
+      const result = await editor.callMethod("applyEdits", {
+        revision,
+        edits: [{ start: 0, end: 6, text: "select" }],
+      })
+      expect(result).toEqual({ applied: true, revision: revision + 2 })
+      expect(await editor.callMethod("getText")).toBe("select 12")
+
+      // An edit into a range changed since is refused.
+      const stale = await editor.callMethod("applyEdits", {
+        revision,
+        edits: [{ start: 0, end: 3, text: "sel" }],
+      })
+      expect(stale).toEqual({ applied: false, reason: "conflict", revision: revision + 2 })
+
+      // A selection set from code reaches onSelectionChange.
+      await editor.callMethod("setSelections", { selections: [{ anchor: 0, head: 6 }] })
+      expect(await editor.callMethod("getSelections")).toEqual([{ anchor: 0, head: 6 }])
+      const text = await waitForText(app, "Selection 0-6")
+      expect(text).toContain("Selection 0-6")
+    } finally {
+      await app.close()
+    }
+  }, 30_000)
+
   it("rejects a malformed keystroke before it reaches the renderer", async () => {
     const app = await launchTasksApp()
     try {

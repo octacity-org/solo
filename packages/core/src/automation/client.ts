@@ -55,6 +55,8 @@ export interface TestAutomationRenderer {
   nativeSimulateKeyUp(elementId: number, keystroke: string): void
   scrollTo(elementId: number, x: number, y: number): void
   getScrollOffset(elementId: number): [number, number] | null
+  /** Call a custom element's method; JSON in and out. */
+  callElement?(elementId: number, method: string, argsJson: string): string
   getAllText(): string[]
   getPaintedText(): string[]
   getSelectedText(): string | null
@@ -179,6 +181,17 @@ export class InProcessBackend implements AutomationBackend {
     getScrollOffset: (params) => ({
       offset: this.renderer.getScrollOffset(params.elementId),
     }),
+    callElement: (params) => {
+      if (!this.renderer.callElement) {
+        throw new AutomationError("Unsupported", "This renderer cannot call element methods")
+      }
+      const json = this.renderer.callElement(
+        params.elementId,
+        params.method,
+        JSON.stringify(params.args ?? null)
+      )
+      return { result: JSON.parse(json) as unknown }
+    },
     getTree: () => {
       const raw = JSON.parse(this.renderer.getAutomationTree()) as unknown
       const windows = this.renderer.getWindowAutomationTrees
@@ -400,6 +413,18 @@ export class Locator {
 
   /** The node's own text followed by its descendants' text, in document
    *  order, as DOM and Playwright `textContent` do. */
+  /** Call a method of the matched custom element, such as a `<textarea>`'s
+   *  `applyEdits`, and return its result. */
+  async callMethod(method: string, args?: unknown): Promise<unknown> {
+    const node = await this.element()
+    const { result } = await this.app.call("callElement", {
+      elementId: node.id,
+      method,
+      args: args ?? null,
+    })
+    return result
+  }
+
   async textContent(): Promise<string> {
     const text = (node: TreeNode): string =>
       (node.text ?? "") + (node.children ?? []).map(text).join("")
@@ -514,6 +539,7 @@ export interface LiveAutomationRenderer {
   attachAutomation?(): void
   scrollTo(elementId: number, x: number, y: number): void
   getScrollOffset(elementId: number): number[] | null
+  callElement?(elementId: number, method: string, argsJson: string): string
   getAllText(): string[]
   getPaintedText(): string[]
   getSelectedText(): string | null
@@ -654,6 +680,9 @@ export function liveRendererAsTest(
       const offset = renderer.getScrollOffset(id)
       return offset ? [offset[0], offset[1]] : null
     },
+    callElement: renderer.callElement
+      ? (id, method, args) => renderer.callElement!(id, method, args)
+      : undefined,
     getAllText: () => renderer.getAllText(),
     getPaintedText: () => {
       flush()

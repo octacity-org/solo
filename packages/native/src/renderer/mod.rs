@@ -3714,6 +3714,35 @@ impl SoloRenderer {
         )?;
         Ok(offset.map(|[x, y]| vec![x, y]))
     }
+
+    /// Call `method` on a custom element, such as a `<textarea>` controller
+    /// method. `args_json` and the result are JSON; a failed call throws.
+    #[napi]
+    pub fn call_element(&self, element_id: f64, method: String, args_json: String) -> Result<String> {
+        let id = to_element_id(element_id)?;
+        let args = parse_call_args(&args_json)?;
+        let result = self.query_window(
+            self.window_of(id),
+            Some("GPUI element call"),
+            move |view, window, cx| view.call_element(id, &method, args, window, cx),
+        )?;
+        call_result_json(result)
+    }
+}
+
+/// The arguments of a `callElement`, which must be JSON.
+pub(crate) fn parse_call_args(args_json: &str) -> Result<serde_json::Value> {
+    serde_json::from_str(args_json)
+        .map_err(|error| Error::from_reason(format!("callElement arguments are not JSON: {error}")))
+}
+
+/// A `callElement` result as JSON, or its error as an exception.
+pub(crate) fn call_result_json(
+    result: std::result::Result<serde_json::Value, String>,
+) -> Result<String> {
+    result
+        .map(|value| value.to_string())
+        .map_err(Error::from_reason)
 }
 
 #[cfg(not(feature = "profiling"))]

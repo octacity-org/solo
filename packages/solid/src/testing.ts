@@ -45,6 +45,7 @@ interface NativeTestRendererApi {
   scrollToItem(elementId: number, index: number): void
   scrollTo(elementId: number, x: number, y: number): void
   getScrollOffset(elementId: number): number[] | null
+  callElement(elementId: number, method: string, argsJson: string): string
   clearSelection(): void
   getElementBounds(elementId: number): number[] | null
   getAllText(): string[]
@@ -142,6 +143,9 @@ export interface SolidNativeTestRoot {
   scrollToItem(elementId: number, index: number): void
   scrollTo(elementId: number, x: number, y: number): void
   getScrollOffset(elementId: number): number[] | null
+  /** Call a custom element's method, after committing pending props, then
+   *  deliver the events it raised. */
+  callElement(elementId: number, method: string, argsJson: string): string
   clearSelection(): void
   dragSelect(x1: number, y1: number, x2: number, y2: number): string | null
   captureScreenshot(path: string): void
@@ -212,6 +216,16 @@ export function createSolidNativeTestRoot(): SolidNativeTestRoot {
     return map
   }
 
+  // The runtime calls element methods (a textarea controller's) through its
+  // renderer; route them through the root so their events are delivered.
+  const runtimeRenderer = new Proxy(native, {
+    get(target, property, receiver) {
+      if (property === "callElement") return root.callElement
+      const value = Reflect.get(target, property, receiver) as unknown
+      return typeof value === "function" ? value.bind(target) : value
+    },
+  })
+
   const root: SolidNativeTestRoot = {
     renderer: native as SolidNativeTestRendererApi,
     render(code) {
@@ -220,7 +234,7 @@ export function createSolidNativeTestRoot(): SolidNativeTestRoot {
       setWindowHost(native as never)
       resetIdCounter()
       clearEventHandlers()
-      dispose = mountTree(code as never, native as never)
+      dispose = mountTree(code as never, runtimeRenderer as never)
       settle()
     },
     unmount() {
@@ -250,7 +264,9 @@ export function createSolidNativeTestRoot(): SolidNativeTestRoot {
       native.focusElement(elementId)
       native.simulateKeystrokes(keystrokes, elementId)
       dispatchNativeEvents()
-      native.flush()
+      // The draw reports what layout decides, such as a text editor's
+      // selectionChange; settle delivers it before returning.
+      settle()
     },
 
     nativeSimulateClick(x, y, elementId) {
@@ -353,6 +369,14 @@ export function createSolidNativeTestRoot(): SolidNativeTestRoot {
       return native.getScrollOffset(elementId)
     },
 
+    callElement(elementId: number, method: string, argsJson: string) {
+      flushSolid()
+      flushMutations()
+      const result = native.callElement(elementId, method, argsJson)
+      settle()
+      return result
+    },
+
     clearSelection() {
       native.clearSelection()
       native.flush()
@@ -372,6 +396,7 @@ export function createSolidNativeTestRoot(): SolidNativeTestRoot {
         case "getPaintedText": return root.getPaintedText
         case "scrollToItem": return root.scrollToItem
         case "scrollTo": return root.scrollTo
+        case "callElement": return root.callElement
         case "captureScreenshot": return root.captureScreenshot
         case "dragSelect": return root.dragSelect
         case "simulateKeystrokes": return root.simulateKeystrokes

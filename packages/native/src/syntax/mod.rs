@@ -65,6 +65,7 @@ pub enum LanguageId {
     Css,
     Yaml,
     C,
+    Sql,
 }
 
 /// A capture class. One per theme colour.
@@ -429,6 +430,28 @@ fn rust_configuration() -> Result<HighlightConfiguration, HighlightError> {
     )
 }
 
+#[cfg(all(feature = "syntax", feature = "syntax-sql"))]
+fn sql_configuration() -> Result<HighlightConfiguration, HighlightError> {
+    // The SQL query uses nvim-treesitter's capture names. Map the ones with
+    // no entry in `CAPTURE_NAMES` onto the nearest kind, or they stay plain.
+    let highlights = tree_sitter_sequel::HIGHLIGHTS_QUERY
+        // `@spell` marks spell-checked text; as a second capture it takes the
+        // comment's highlight away.
+        .replace(" @spell", "")
+        .replace("@conditional", "@keyword")
+        .replace("@storageclass", "@keyword")
+        .replace("@field", "@property")
+        .replace("@float", "@number")
+        .replace("@parameter", "@variable.parameter");
+    make_configuration(
+        tree_sitter_sequel::LANGUAGE.into(),
+        "sql",
+        &highlights,
+        "",
+        "",
+    )
+}
+
 #[cfg(feature = "syntax")]
 fn configuration(language: LanguageId) -> Result<HighlightConfiguration, HighlightError> {
     #[allow(unused_imports)]
@@ -567,6 +590,8 @@ fn configuration(language: LanguageId) -> Result<HighlightConfiguration, Highlig
             "",
             "",
         ),
+        #[cfg(feature = "syntax-sql")]
+        Sql => sql_configuration(),
         _ => Err(HighlightError::UnknownLanguage),
     }
 }
@@ -665,6 +690,7 @@ pub fn language_for_alias(alias: &str) -> Option<LanguageId> {
         "css" => LanguageId::Css,
         "yaml" | "yml" => LanguageId::Yaml,
         "c" | "h" => LanguageId::C,
+        "sql" => LanguageId::Sql,
         _ => return None,
     })
 }
@@ -767,6 +793,31 @@ mod tests {
         // Line 0 is 16 bytes ("café" is 5), so nothing may reach past it and
         // in particular no span may swallow the newline.
         assert!(document.lines[0].iter().all(|s| s.range.end <= 16));
+    }
+
+    #[test]
+    fn sql_highlights_keywords_strings_numbers_and_comments() {
+        let source = "-- top\nSELECT name FROM users WHERE id = 42 AND note = 'x';";
+        let document = highlight(HighlightRequest {
+            source,
+            path: Some("query.sql"),
+            fence_tag: None,
+        })
+        .unwrap();
+        assert_eq!(document.language, LanguageId::Sql);
+        let line = "SELECT name FROM users WHERE id = 42 AND note = 'x';";
+        let kind_of = |text: &str| {
+            let start = line.find(text).unwrap();
+            document.lines[1]
+                .iter()
+                .find(|span| span.range.start <= start && start < span.range.end)
+                .map(|span| span.kind)
+        };
+        assert_eq!(document.lines[0].first().map(|span| span.kind), Some(HighlightKind::Comment));
+        assert_eq!(kind_of("SELECT"), Some(HighlightKind::Keyword));
+        assert_eq!(kind_of("WHERE"), Some(HighlightKind::Keyword));
+        assert_eq!(kind_of("42"), Some(HighlightKind::Number));
+        assert_eq!(kind_of("'x'"), Some(HighlightKind::String));
     }
 
     #[test]

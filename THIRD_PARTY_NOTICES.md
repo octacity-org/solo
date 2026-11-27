@@ -51,6 +51,7 @@ following Tree-sitter components. Versions are pinned in
 | TOML grammar and queries | MIT | https://github.com/tree-sitter-grammars/tree-sitter-toml |
 | Markdown grammar and queries | MIT | https://github.com/tree-sitter-grammars/tree-sitter-markdown |
 | YAML grammar and queries | MIT | https://github.com/tree-sitter-grammars/tree-sitter-yaml |
+| SQL grammar and queries (`tree-sitter-sequel`) | MIT | https://github.com/derekstride/tree-sitter-sql |
 
 ## Other dependencies
 

@@ -20,6 +20,7 @@ pub mod diff;
 pub mod img;
 pub mod input;
 pub mod markdown;
+pub mod text_editor;
 /// `<webview>` is backed by a real WKWebView on macOS, a WebKitGTK child
 /// window on Linux (X11), and WebView2 on Windows. Off those platforms the type
 /// is not registered, so `build_element` falls through to its "unknown element
@@ -89,6 +90,16 @@ impl CustomRenderContext<'_> {
     }
 }
 
+/// What `CustomElement::call` gets besides its arguments: what a render would
+/// get, for an element that may not have rendered yet.
+pub struct CustomCallContext<'a> {
+    pub id: u64,
+    /// Event types registered by Solid.
+    pub events: &'a HashSet<String>,
+    pub event_callback: &'a Option<EventCallback>,
+    pub focus_handle: Option<&'a gpui::FocusHandle>,
+}
+
 // ── Traits ───────────────────────────────────────────────────────────
 
 /// A custom element that renders native GPUI content.
@@ -123,6 +134,20 @@ pub trait CustomElement: 'static {
 
     /// Clean up resources (GPUI entities, subscriptions, etc.)
     fn destroy(&mut self);
+
+    /// Run an imperative method from JS (`callElement`). Arguments and result
+    /// are JSON; an error is a message for the JS exception.
+    fn call(
+        &mut self,
+        ctx: CustomCallContext,
+        method: &str,
+        args: serde_json::Value,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<crate::renderer::SoloView>,
+    ) -> Result<serde_json::Value, String> {
+        let _ = (ctx, args, window, cx);
+        Err(format!("This element has no method {method:?}"))
+    }
 }
 
 /// Factory for creating CustomElement instances.

@@ -350,6 +350,8 @@ export function TasksApp() {
   // property in place so only that row's style/marker updates natively.
   const [tasks, setTasks] = createStore<Task[]>(makeTasks())
   const [draft, setDraft] = createSignal("")
+  const [query, setQuery] = createSignal("SELECT title FROM tasks WHERE completed = false")
+  const [querySelection, setQuerySelection] = createSignal("none")
   const [menuStatus, setMenuStatus] = createSignal("idle")
 
   const openMenu = (taskId: number, anchor: ContextMenuAnchor) => {
@@ -548,6 +550,23 @@ export function TasksApp() {
           <Text style={{ fontSize: 14, fontWeight: "bold", color: "#1e1e2e" }}>+ Add task</Text>
         </Button>
       </View>
+
+      {/* Saved query: a SQL editor that reports its selection */}
+      <textarea
+        value={query()}
+        language="sql"
+        maxRows={3}
+        onChange={(e) => setQuery(String(e.value ?? ""))}
+        onSelectionChange={(e) => {
+          const selection = e.selections?.[0]
+          if (selection) setQuerySelection(`${selection.anchor}-${selection.head}`)
+        }}
+        testId="query-editor"
+        style={{ marginTop: 8 }}
+      />
+      <Text testId="query-selection" style={{ fontSize: 12, color: "#a6adc8" }}>
+        {`Selection ${querySelection()}`}
+      </Text>
     </View>
   )
 }

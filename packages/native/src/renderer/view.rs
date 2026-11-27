@@ -575,6 +575,73 @@ impl SoloView {
 }
 
 impl SoloView {
+    /// Bring focus handles and per-element state up to date with the tree, if
+    /// it changed since the last sync.
+    fn sync_tree(
+        &mut self,
+        tree: &RetainedTree,
+        callback: &Option<EventCallback>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let has_commands = crate::application_commands::has_commands(cx);
+        let synced = Some((tree.generation(), has_commands, self.root_id(tree)));
+        if self.synced == synced {
+            return;
+        }
+        self.synced = synced;
+        // Sync focus handles before building elements.
+        self.sync_focus_handles(tree, callback, window, cx);
+
+        // Ensure custom element instances are destroyed when their IDs disappear.
+        self.custom_registry
+            .prune_missing(|id| tree.elements.contains_key(&id));
+
+        // Clean up scroll handles for destroyed elements (IDs removed from tree).
+        // Scrollability-based cleanup (element still exists but style changed
+        // from scroll to non-scroll) is handled inside build_div().
+        self.scroll_handles
+            .retain(|id, _| tree.elements.contains_key(id));
+        self.virtual_lists
+            .retain(|id, _| tree.elements.contains_key(id));
+        self.motion_states
+            .retain(|id, _| tree.elements.contains_key(id));
+    }
+
+    /// Call `method` on the custom element `id` with its props as of the
+    /// latest committed tree, whether or not it has painted yet.
+    pub(crate) fn call_element(
+        &mut self,
+        id: u64,
+        method: &str,
+        args: serde_json::Value,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> std::result::Result<serde_json::Value, String> {
+        let tree_arc = self.tree.clone();
+        let tree = tree_arc.lock().unwrap();
+        let callback = self.event_callback.clone();
+        self.sync_tree(&tree, &callback, window, cx);
+        let element = tree
+            .elements
+            .get(&id)
+            .ok_or_else(|| format!("Element {id} does not exist"))?;
+        let focus_handle = self.focus_handles.get(&id).cloned();
+        let (instance, events) = self
+            .custom_registry
+            .sync(element)
+            .ok_or_else(|| format!("<{}> has no methods", element.element_type))?;
+        let ctx = crate::custom_elements::CustomCallContext {
+            id,
+            events,
+            event_callback: &callback,
+            focus_handle: focus_handle.as_ref(),
+        };
+        let result = instance.call(ctx, method, args, window, cx);
+        cx.notify();
+        result
+    }
+
     /// Sync focus handles with the current element tree.
     /// Creates handles for new focusable elements, subscribes on_focus/on_blur,
     /// and cleans up handles for destroyed elements.
@@ -709,26 +776,7 @@ impl gpui::Render for SoloView {
 
         let has_commands = crate::application_commands::has_commands(cx);
         let root_id = self.root_id(&tree);
-        let synced = Some((tree.generation(), has_commands, root_id));
-        if self.synced != synced {
-            self.synced = synced;
-            // Sync focus handles before building elements.
-            self.sync_focus_handles(&tree, &callback, window, cx);
-
-            // Ensure custom element instances are destroyed when their IDs disappear.
-            self.custom_registry
-                .prune_missing(|id| tree.elements.contains_key(&id));
-
-            // Clean up scroll handles for destroyed elements (IDs removed from tree).
-            // Scrollability-based cleanup (element still exists but style changed
-            // from scroll to non-scroll) is handled inside build_div().
-            self.scroll_handles
-                .retain(|id, _| tree.elements.contains_key(id));
-            self.virtual_lists
-                .retain(|id, _| tree.elements.contains_key(id));
-            self.motion_states
-                .retain(|id, _| tree.elements.contains_key(id));
-        }
+        self.sync_tree(&tree, &callback, window, cx);
 
         // Route global shortcuts through the root capture listener before the
         // first control is focused, without stealing focus from native views.
