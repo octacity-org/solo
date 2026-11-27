@@ -43,6 +43,7 @@ tree-sitter-yaml = { version = "0.7.2", optional = true }
 tree-sitter-c = { version = "0.24.2", optional = true }
 pulldown-cmark = { version = "0.12", default-features = false }
 unicode-segmentation = "1"
+tree-sitter-sequel = { version = "0.3.13", optional = true }
 
 # macOS text/graphics deps - pinned to avoid core-graphics version conflicts
 # core-text 21.1.0 uses core-graphics 0.25 which conflicts with font-kit's core-graphics 0.24
@@ -149,6 +150,9 @@ syntax-html = ["syntax", "dep:tree-sitter-html"]
 syntax-css = ["syntax", "dep:tree-sitter-css"]
 syntax-yaml = ["syntax", "dep:tree-sitter-yaml"]
 syntax-c = ["syntax", "dep:tree-sitter-c"]
+# Not in syntax-all: the SQL grammar alone compiles to about 13 MB, more than
+# every grammar in syntax-all together.
+syntax-sql = ["syntax", "dep:tree-sitter-sequel"]
 syntax-all = [
     "syntax-rust",
     "syntax-javascript",
@@ -168,6 +172,7 @@ test-support = [
     "automation",
     "profiling",
     "syntax-all",
+    "syntax-sql",
     "webview-linux",
     "gpui/test-support",
     "gpui_platform/test-support",

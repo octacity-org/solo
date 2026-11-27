@@ -68,6 +68,12 @@ export type { SoloSolidNode } from "./runtime.js"
 export type { StyleDesc } from "@solo/core"
 export type { EventPayload } from "@solo/native"
 export type {
+  ApplyEditsResult,
+  TextareaController,
+  TextEdit,
+  TextSelection,
+} from "./textarea.js"
+export type {
   WebviewController,
   WebviewNavigationRequestEvent,
   WebviewValue,

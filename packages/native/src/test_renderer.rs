@@ -1688,6 +1688,17 @@ impl TestSoloRenderer {
         Ok(offset.map(|[x, y]| vec![x, y]))
     }
 
+    /// Call `method` on a custom element. Mirrors `SoloRenderer::call_element`.
+    #[napi]
+    pub fn call_element(&self, element_id: f64, method: String, args_json: String) -> Result<String> {
+        let id = to_element_id(element_id)?;
+        let args = crate::renderer::parse_call_args(&args_json)?;
+        let result = in_view(self.window_root_of(Some(element_id))?, move |view, window, cx| {
+            view.call_element(id, &method, args, window, cx)
+        })?;
+        crate::renderer::call_result_json(result)
+    }
+
     /// Capture a screenshot of the current rendered state and save as PNG.
     /// macOS renders through Metal, Linux through the wgpu headless renderer.
     #[napi]
@@ -1812,9 +1823,20 @@ impl TestSoloRenderer {
         self.with_clock(move |clock| clock.set_ms(now_ms))
     }
 
+    /// Move the automation clock forward, and GPUI's own timers (debounces,
+    /// caret blink) with it: the test dispatcher's clock only moves when told.
     #[napi]
     pub fn clock_fast_forward(&self, delta_ms: f64) -> Result<f64> {
-        self.with_clock(move |clock| clock.fast_forward_ms(delta_ms))
+        let now_ms = self.with_clock(move |clock| clock.fast_forward_ms(delta_ms))?;
+        if delta_ms > 0.0 {
+            with_test_state(|cx, _window, _view| {
+                cx.background_executor
+                    .advance_clock(std::time::Duration::from_secs_f64(delta_ms / 1000.0));
+                cx.run_until_parked();
+                Ok(())
+            })?;
+        }
+        Ok(now_ms)
     }
 
     #[napi]

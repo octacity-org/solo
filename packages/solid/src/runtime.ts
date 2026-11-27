@@ -26,6 +26,7 @@ import {
   createWebviewController,
   type InternalWebviewController,
 } from "./webview.js"
+import { createTextareaController } from "./textarea.js"
 
 // ── Node bookkeeping ─────────────────────────────────────────────────
 
@@ -217,6 +218,10 @@ export function createElement(tag: string, staticProps?: Record<string, unknown>
       allowNavigation: controller.allowNavigation,
       cancelNavigation: controller.cancelNavigation,
     })
+  } else if (node.type === "textarea" || node.type === "input") {
+    // As for WebView refs: the host node carries the controller's methods.
+    const { id: _id, ...methods } = createTextareaController(node.id, r, flushMutations)
+    Object.assign(node, methods)
   }
   r.createElement(node.id, node.type)
   // Solid 2 passes static (non-reactive) props at creation instead of via

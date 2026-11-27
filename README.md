@@ -144,8 +144,13 @@ Set `overscrollBehavior: "contain"` (or `overscrollBehaviorX` /
 
 **Syntax highlighting.** Tree-sitter highlighting for `code`, `diff` and
 markdown code blocks is opt-in: build `@solo/native` with a `syntax-*`
-feature (`syntax-all` adds every grammar, about 8 MB). Without one, code
-renders as plain text.
+feature (`syntax-all` adds the common grammars, about 8 MB; `syntax-sql`
+adds SQL, about 13 MB on its own). Without one, code renders as plain text.
+
+**Text editors.** `<input>` and `<textarea>` report each change as edits with
+a revision, report caret and selection moves, keep the caret when `value`
+changes, highlight a `language` such as SQL, and take edits and selections
+from code through their `ref`. See [text-editor.md](docs/text-editor.md).
 
 **Desktop integration.** Everything below works on macOS. Linux and Windows
 coverage is listed under [Platform status](#platform-status).

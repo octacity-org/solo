@@ -206,6 +206,11 @@ export declare class SoloRenderer {
    */
   getScrollOffset(elementId: number): Array<number> | null
   /**
+   * Call `method` on a custom element, such as a `<textarea>` controller
+   * method. `args_json` and the result are JSON; a failed call throws.
+   */
+  callElement(elementId: number, method: string, argsJson: string): string
+  /**
    * Draw the latest committed tree in every window before returning, so
    * automation input and reads see it. The live counterpart of
    * `TestSoloRenderer::flush`. Off macOS the draw runs on the UI thread,
@@ -531,6 +536,8 @@ export declare class TestSoloRenderer {
    * Returns [x, y] or null if the element has no scroll handle.
    */
   getScrollOffset(elementId: number): Array<number> | null
+  /** Call `method` on a custom element. Mirrors `SoloRenderer::call_element`. */
+  callElement(elementId: number, method: string, argsJson: string): string
   /**
    * Capture a screenshot of the current rendered state and save as PNG.
    * macOS renders through Metal, Linux through the wgpu headless renderer.
@@ -557,6 +564,10 @@ export declare class TestSoloRenderer {
   getElementBounds(id: number): Array<number> | null
   clockPause(): number
   clockSet(nowMs: number): number
+  /**
+   * Move the automation clock forward, and GPUI's own timers (debounces,
+   * caret blink) with it: the test dispatcher's clock only moves when told.
+   */
   clockFastForward(deltaMs: number): number
   clockResume(): number
   /** Get the root element ID, or null if no root is set. */
@@ -738,6 +749,26 @@ export interface EventPayload {
    * `file://` URLs, unvalidated. Populated for: openUrls (element 0).
    */
   urls?: Array<string>
+  /**
+   * The text's revision after the event. Populated for: `<input>` and
+   * `<textarea>` change and selectionChange.
+   */
+  revision?: number
+  /**
+   * The edits that produced this revision, in the order they were applied;
+   * each one's offsets are in the text as the edits before it left it.
+   * Populated for: `<input>` and `<textarea>` change.
+   */
+  edits?: Array<TextEditPayload>
+  /**
+   * What caused a change: "user", "undo", "redo", "api" or "value".
+   * Populated for: `<input>` and `<textarea>` change.
+   */
+  origin?: string
+  /** The selections, primary last. Populated for: selectionChange. */
+  selections?: Array<TextSelectionPayload>
+  /** Where the primary caret is drawn. Populated for: selectionChange. */
+  caret?: TextCaretPayload
   modifiers?: EventModifiers
 }
 
@@ -897,6 +928,29 @@ export declare function showAllApplications(): void
  * permission; once denied, nothing is shown.
  */
 export declare function showNotification(options: NotificationOptions): void
+
+/** A caret's position and height in window coordinates (pixels). */
+export interface TextCaretPayload {
+  x: number
+  y: number
+  height: number
+}
+
+/** A replacement of `start..end` with `text`. Offsets are UTF-16 code units. */
+export interface TextEditPayload {
+  start: number
+  end: number
+  text: string
+}
+
+/**
+ * A selection by UTF-16 offsets. `head` is where the caret is; it equals
+ * `anchor` when nothing is selected.
+ */
+export interface TextSelectionPayload {
+  anchor: number
+  head: number
+}
 
 /** The outcome of moving one path to the Trash. */
 export interface TrashResult {

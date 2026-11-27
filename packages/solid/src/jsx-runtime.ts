@@ -13,6 +13,7 @@ import type {
   WebviewController,
   WebviewNavigationRequestEvent,
 } from "./webview.js"
+import type { TextareaController } from "./textarea.js"
 
 export interface SoloIntrinsicProps {
   style?: StyleDesc
@@ -35,8 +36,18 @@ export interface SoloIntrinsicProps {
   onFocus?: (event: EventPayload) => void
   onBlur?: (event: EventPayload) => void
   onScroll?: (event: EventPayload) => void
-  /** `<input>`/`<textarea>`: the text changed. `value` is the new text. */
+  /**
+   * `<input>`/`<textarea>`: the text changed. `value` is the new text,
+   * `revision` its revision, `edits` the edits that made it (apply them in
+   * order) and `origin` what caused them.
+   */
   onChange?: (event: EventPayload) => void
+  /**
+   * `<input>`/`<textarea>`: the selection or caret moved. `selections` holds
+   * UTF-16 offsets, primary last; `caret` is where the primary caret is drawn,
+   * in window coordinates. At most one per frame.
+   */
+  onSelectionChange?: (event: EventPayload) => void
   /** `<input>`/`<textarea>`: the text was submitted. `value` is the text. */
   onSubmit?: (event: EventPayload) => void
   onToggleFile?: (event: EventPayload) => void
@@ -86,6 +97,18 @@ export interface WebviewProps extends SoloIntrinsicProps {
   ref?: (controller: WebviewController) => void
 }
 
+/// `<input>` and `<textarea>`: native text editors.
+export interface TextEditorProps extends SoloIntrinsicProps {
+  /**
+   * Highlight the text as this language, such as `"sql"`. Highlighting runs
+   * off the main thread once typing pauses. Grammars are opt-in native
+   * features; without the one asked for, the text stays plain.
+   */
+  language?: string
+  /** Stable controller for the mounted editor. */
+  ref?: (controller: TextareaController) => void
+}
+
 export namespace JSX {
   // Solid's own element type, so <Show>, <For> and render() accept Solo JSX.
   export type Element = SolidElement
@@ -96,8 +119,8 @@ export namespace JSX {
     img: SoloIntrinsicProps
     svg: SoloIntrinsicProps
     canvas: SoloIntrinsicProps
-    input: SoloIntrinsicProps
-    textarea: SoloIntrinsicProps
+    input: TextEditorProps
+    textarea: TextEditorProps
     anchored: SoloIntrinsicProps
     code: SoloIntrinsicProps
     diff: SoloIntrinsicProps

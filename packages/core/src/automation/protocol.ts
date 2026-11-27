@@ -173,6 +173,15 @@ export const methods = {
       offset: v.tuple([v.number(), v.number()]).nullable(),
     }),
   },
+  /** Call a custom element's method, such as a `<textarea>`'s `applyEdits`. */
+  callElement: {
+    params: v.object({
+      elementId: v.number(),
+      method: v.string(),
+      args: v.unknown(),
+    }),
+    result: v.object({ result: v.unknown() }),
+  },
   getTree: {
     params: v.object({}),
     result: v.object({

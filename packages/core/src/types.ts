@@ -259,6 +259,11 @@ export interface NativeRenderer {
   allowWebviewNavigation?(elementId: number, navigationId: number): void
   /** Cancel a native WebView navigation request. */
   cancelWebviewNavigation?(elementId: number, navigationId: number): void
+  /**
+   * Call a method of a custom element, such as a text editor's `applyEdits`.
+   * Arguments and result are JSON; a failed call throws.
+   */
+  callElement?(elementId: number, method: string, argsJson: string): string
   /** Show the native file-open dialog. Resolves null only when cancelled. */
   selectFiles?(optionsJson: string): Promise<string[] | null>
   /** Show a native alert; resolves to the clicked button's index. */
